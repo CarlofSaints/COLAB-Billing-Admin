@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { Users, Plus, Pencil, Upload, Trash2, Search } from "lucide-react";
+import { Users, Plus, Pencil, Upload, Trash2, Search, Download } from "lucide-react";
 import {
   createStaff,
   updateStaff,
@@ -129,11 +129,17 @@ function ImportForm({ onDone }: { onDone: () => void }) {
   return (
     <form action={formAction} className="space-y-4">
       <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-        <p className="font-medium text-slate-700">Expected columns (headers, any order):</p>
-        <p className="mt-1">First Name · Surname · Cell · Email · Position · Company</p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="font-medium text-slate-700">Expected columns (headers, any order):</p>
+          <a href="/api/staff/template" className="font-medium text-brand-700 hover:text-brand-800">
+            Download template
+          </a>
+        </div>
+        <p className="mt-1">Sub Company · Name · Surname · Email · Cell Number</p>
         <p className="mt-1 text-muted">
-          The <strong>Company</strong> value must match a company name exactly (COLAB or a
-          sub-company). Rows with an unknown company are skipped.
+          <strong>Sub Company</strong> must match a company name exactly (COLAB or a sub-company).
+          People are matched by email (or name + company) and <strong>updated in place</strong> — no
+          duplicates. Rows with an unknown company are skipped.
         </p>
       </div>
       <Field label="Excel or CSV file">
@@ -144,7 +150,8 @@ function ImportForm({ onDone }: { onDone: () => void }) {
       )}
       {done && (
         <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          Imported {state.imported}. Skipped {state.skipped}.
+          <strong>{state.imported}</strong> added · <strong>{state.updated}</strong> updated
+          (duplicates merged) · {state.skipped} skipped.
           {state.unknownCompanies && state.unknownCompanies.length > 0 && (
             <div className="mt-1 text-amber-700">
               Unmatched companies: {state.unknownCompanies.join(", ")}
@@ -200,7 +207,13 @@ export function StaffManager({
           />
         </div>
         {canManage && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <a
+              href="/api/staff/template"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              <Download className="h-4 w-4" /> Template
+            </a>
             <Button variant="outline" onClick={() => setImporting(true)}>
               <Upload className="h-4 w-4" /> Import Excel
             </Button>

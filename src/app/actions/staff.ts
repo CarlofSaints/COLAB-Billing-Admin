@@ -85,13 +85,18 @@ export async function deleteStaff(id: number) {
 export type ImportState = {
   error?: string;
   imported?: number;
+  updated?: number;
   skipped?: number;
   unknownCompanies?: string[];
 };
 
 /**
  * Bulk import staff from an Excel/CSV file. Expected columns (case-insensitive,
- * flexible headers): First Name, Surname/Last Name, Cell/Phone, Email, Company.
+ * flexible headers): Sub Company, Name, Surname, Email, Cell Number.
+ *
+ * Upserts: an existing person (matched by email, else by name + company) is
+ * updated in place rather than duplicated. Returns how many were added vs
+ * updated (the "duplicates" that were merged).
  */
 export async function importStaff(_prev: ImportState, formData: FormData): Promise<ImportState> {
   const user = await requirePermission("staff.manage");
@@ -114,6 +119,26 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
   const allCompanies = await db.select().from(companies);
   const companyByName = new Map(allCompanies.map((c) => [c.name.trim().toLowerCase(), c.id]));
 
+  // Existing staff, for de-dupe / upsert.
+  const existing = await db
+    .select({
+      id: staff.id,
+      email: staff.email,
+      firstName: staff.firstName,
+      lastName: staff.lastName,
+      companyId: staff.companyId,
+    })
+    .from(staff);
+
+  const byEmail = new Map<string, number>();
+  const byNameCompany = new Map<string, number>();
+  const nameKey = (f: string, l: string, c: number) =>
+    `${f.trim().toLowerCase()}|${l.trim().toLowerCase()}|${c}`;
+  for (const s of existing) {
+    if (s.email) byEmail.set(s.email.trim().toLowerCase(), s.id);
+    byNameCompany.set(nameKey(s.firstName, s.lastName, s.companyId), s.id);
+  }
+
   const pick = (row: Record<string, unknown>, keys: string[]): string => {
     for (const k of Object.keys(row)) {
       const norm = k.trim().toLowerCase().replace(/[\s_]+/g, "");
@@ -123,9 +148,9 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
   };
 
   let imported = 0;
+  let updated = 0;
   let skipped = 0;
   const unknown = new Set<string>();
-  const toInsert: (typeof staff.$inferInsert)[] = [];
 
   for (const row of rows) {
     const firstName = pick(row, ["firstname", "name", "first"]);
@@ -145,29 +170,43 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
       skipped++;
       continue;
     }
-    toInsert.push({
+
+    const emailKey = email ? email.trim().toLowerCase() : "";
+    const matchId =
+      (emailKey && byEmail.get(emailKey)) || byNameCompany.get(nameKey(firstName, lastName, companyId));
+
+    const values = {
       firstName,
       lastName,
       cellNumber: cellNumber || null,
       email: email || null,
       position: position || null,
       companyId,
-    });
-    imported++;
-  }
+    };
 
-  if (toInsert.length > 0) {
-    await db.insert(staff).values(toInsert);
+    if (matchId) {
+      await db
+        .update(staff)
+        .set({ ...values, updatedAt: new Date() })
+        .where(eq(staff.id, matchId));
+      updated++;
+    } else {
+      const [inserted] = await db.insert(staff).values(values).returning({ id: staff.id });
+      imported++;
+      // Keep maps current so later rows in the same file de-dupe against this one.
+      if (emailKey) byEmail.set(emailKey, inserted.id);
+      byNameCompany.set(nameKey(firstName, lastName, companyId), inserted.id);
+    }
   }
 
   await logEvent({
     action: "staff.import",
-    summary: `Imported ${imported} staff member(s) from ${file.name}`,
+    summary: `Imported staff from ${file.name}: ${imported} added, ${updated} updated`,
     actor: user,
     entityType: "staff",
-    metadata: { imported, skipped, file: file.name, unknownCompanies: Array.from(unknown) },
+    metadata: { imported, updated, skipped, file: file.name, unknownCompanies: Array.from(unknown) },
   });
 
   revalidatePath("/staff");
-  return { imported, skipped, unknownCompanies: Array.from(unknown) };
+  return { imported, updated, skipped, unknownCompanies: Array.from(unknown) };
 }

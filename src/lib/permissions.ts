@@ -91,6 +91,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "controls.view",
     "companies.view",
     "staff.view",
+    "staff.manage",
     "groups.view",
     "billing.view",
     "users.view",
