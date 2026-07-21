@@ -10,11 +10,15 @@ export function SubCompanyCard({
   name,
   href,
   staffCount,
+  sqm,
+  fixedItems,
   className,
 }: {
   name: string;
   href?: string;
   staffCount?: number;
+  sqm?: number;
+  fixedItems?: { name: string; quantity: number }[];
   className?: string;
 }) {
   const brand = brandFor(name);
@@ -53,11 +57,34 @@ export function SubCompanyCard({
           </div>
         </div>
       </div>
-      {typeof staffCount === "number" && (
-        <div className="mt-3 text-xs text-muted">
-          {staffCount} {staffCount === 1 ? "person" : "people"}
-        </div>
-      )}
+      <div className="mt-4 space-y-1.5 border-t border-line pt-3 text-xs">
+        {typeof staffCount === "number" && (
+          <div className="flex items-center justify-between">
+            <span className="text-muted">Staff</span>
+            <span className="font-medium text-slate-700">
+              {staffCount} {staffCount === 1 ? "person" : "people"}
+            </span>
+          </div>
+        )}
+        {typeof sqm === "number" && (
+          <div className="flex items-center justify-between">
+            <span className="text-muted">Occupied space</span>
+            <span className="font-medium text-slate-700">
+              {sqm.toLocaleString()} m²
+            </span>
+          </div>
+        )}
+        {fixedItems && fixedItems.length > 0 && (
+          <div className="flex items-start justify-between gap-3">
+            <span className="text-muted">Fixed items</span>
+            <span className="text-right font-medium text-slate-700">
+              {fixedItems
+                .map((f) => `${f.name}${f.quantity && f.quantity !== 1 ? ` ×${f.quantity}` : ""}`)
+                .join(", ")}
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 

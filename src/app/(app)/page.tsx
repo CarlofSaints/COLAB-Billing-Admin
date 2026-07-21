@@ -2,7 +2,14 @@ import Link from "next/link";
 import { asc, eq, sql } from "drizzle-orm";
 import { Building2, Users, Mails, SlidersHorizontal, ArrowRight } from "lucide-react";
 import { db } from "@/db";
-import { companies, staff, emailGroups, users } from "@/db/schema";
+import {
+  companies,
+  staff,
+  emailGroups,
+  users,
+  companyAllocations,
+  fixedLineItems,
+} from "@/db/schema";
 import { requireUser, hasPermission } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { SubCompanyCard } from "@/components/sub-company-card";
@@ -38,6 +45,25 @@ export default async function Dashboard({
     .groupBy(staff.companyId);
   const staffByCompany = new Map(staffCounts.map((r) => [r.companyId, r.n]));
   const canSeeCompanies = hasPermission(user, "companies.view");
+
+  const allocations = await db
+    .select({ companyId: companyAllocations.companyId, sqm: companyAllocations.squareMetres })
+    .from(companyAllocations);
+  const sqmByCompany = new Map(allocations.map((a) => [a.companyId, Number(a.sqm)]));
+
+  const fixedRows = await db
+    .select({
+      companyId: fixedLineItems.companyId,
+      name: fixedLineItems.name,
+      quantity: fixedLineItems.quantity,
+    })
+    .from(fixedLineItems)
+    .where(eq(fixedLineItems.active, true));
+  const fixedByCompany = new Map<number, { name: string; quantity: number }[]>();
+  for (const f of fixedRows) {
+    if (!fixedByCompany.has(f.companyId)) fixedByCompany.set(f.companyId, []);
+    fixedByCompany.get(f.companyId)!.push({ name: f.name, quantity: Number(f.quantity) });
+  }
 
   const stats = [
     { label: "Sub-Companies", value: companyCount?.n ?? 0, icon: Building2, href: "/companies", perm: "companies.view" },
@@ -109,6 +135,8 @@ export default async function Dashboard({
                 name={c.name}
                 href={canSeeCompanies ? "/companies" : undefined}
                 staffCount={staffByCompany.get(c.id) ?? 0}
+                sqm={sqmByCompany.get(c.id) ?? 0}
+                fixedItems={fixedByCompany.get(c.id) ?? []}
               />
             ))}
           </div>
