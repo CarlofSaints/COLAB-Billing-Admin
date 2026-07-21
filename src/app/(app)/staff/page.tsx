@@ -21,10 +21,10 @@ export default async function StaffPage() {
   const staffRows = await db
     .select({
       id: staff.id,
-      firstName: staff.firstName,
-      lastName: staff.lastName,
+      name: staff.name,
       cellNumber: staff.cellNumber,
       email: staff.email,
+      gender: staff.gender,
       position: staff.position,
       companyId: staff.companyId,
       active: staff.active,
@@ -32,14 +32,14 @@ export default async function StaffPage() {
     })
     .from(staff)
     .innerJoin(companies, eq(staff.companyId, companies.id))
-    .orderBy(asc(staff.lastName), asc(staff.firstName));
+    .orderBy(asc(staff.name));
 
   const data = staffRows.map((s) => ({
     id: s.id,
-    firstName: s.firstName,
-    lastName: s.lastName,
+    name: s.name,
     cellNumber: s.cellNumber ?? "",
     email: s.email ?? "",
+    gender: s.gender ?? "",
     position: s.position ?? "",
     companyId: s.companyId,
     companyName: s.companyName,

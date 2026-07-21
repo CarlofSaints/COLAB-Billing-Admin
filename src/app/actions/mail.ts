@@ -29,7 +29,7 @@ export async function sendAnnouncement(_prev: MailState, formData: FormData): Pr
 
   // Distinct recipient emails from the chosen groups.
   const rows = await db
-    .selectDistinct({ email: staff.email, name: staff.firstName })
+    .selectDistinct({ email: staff.email, name: staff.name })
     .from(emailGroupMembers)
     .innerJoin(staff, eq(emailGroupMembers.staffId, staff.id))
     .where(

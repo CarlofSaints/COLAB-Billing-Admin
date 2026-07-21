@@ -22,10 +22,10 @@ import { Table, THead, TH, TR, TD } from "@/components/ui/table";
 type CompanyOpt = { id: number; name: string; type: "colab" | "sub" };
 export type StaffRow = {
   id: number;
-  firstName: string;
-  lastName: string;
+  name: string;
   cellNumber: string;
   email: string;
+  gender: string;
   position: string;
   companyId: number;
   companyName: string;
@@ -87,25 +87,30 @@ function StaffForm({
   return (
     <form action={formAction} className="space-y-4">
       {person && <input type="hidden" name="id" value={person.id} />}
+      <Field label="Name">
+        <Input name="name" defaultValue={person?.name} required autoFocus />
+      </Field>
       <div className="grid grid-cols-2 gap-4">
-        <Field label="First name">
-          <Input name="firstName" defaultValue={person?.firstName} required autoFocus />
+        <Field label="Gender">
+          <Select name="gender" defaultValue={person?.gender ?? ""}>
+            <option value="">—</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
+          </Select>
         </Field>
-        <Field label="Surname">
-          <Input name="lastName" defaultValue={person?.lastName} required />
-        </Field>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
         <Field label="Cell number">
           <Input name="cellNumber" defaultValue={person?.cellNumber} />
         </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
         <Field label="Email address">
           <Input name="email" type="email" defaultValue={person?.email} />
         </Field>
+        <Field label="Position (optional)">
+          <Input name="position" defaultValue={person?.position} />
+        </Field>
       </div>
-      <Field label="Position (optional)">
-        <Input name="position" defaultValue={person?.position} />
-      </Field>
       <Field label="Company">
         <CompanySelect companies={companies} defaultValue={person?.companyId} />
       </Field>
@@ -135,7 +140,7 @@ function ImportForm({ onDone }: { onDone: () => void }) {
             Download template
           </a>
         </div>
-        <p className="mt-1">Sub Company · Name · Surname · Email · Cell Number</p>
+        <p className="mt-1">Sub Company · Name · Gender · Email · Cell Number</p>
         <p className="mt-1 text-muted">
           Only <strong>Name</strong> and <strong>Sub Company</strong> are required — any other field
           can be blank. <strong>Sub Company</strong> must match a company name exactly (COLAB or a
@@ -189,7 +194,7 @@ export function StaffManager({
     const q = query.trim().toLowerCase();
     if (!q) return staff;
     return staff.filter((s) =>
-      [s.firstName, s.lastName, s.email, s.companyName, s.position]
+      [s.name, s.email, s.companyName, s.position, s.gender]
         .join(" ")
         .toLowerCase()
         .includes(q),
@@ -240,6 +245,7 @@ export function StaffManager({
               <tr>
                 <TH>Name</TH>
                 <TH>Company</TH>
+                <TH>Gender</TH>
                 <TH>Cell</TH>
                 <TH>Email</TH>
                 {canManage && <TH className="text-right">Actions</TH>}
@@ -249,14 +255,13 @@ export function StaffManager({
               {filtered.map((s) => (
                 <TR key={s.id}>
                   <TD>
-                    <div className="font-medium text-slate-900">
-                      {s.firstName} {s.lastName}
-                    </div>
+                    <div className="font-medium text-slate-900">{s.name}</div>
                     {s.position && <div className="text-xs text-muted">{s.position}</div>}
                   </TD>
                   <TD>
                     <Badge tone="brand">{s.companyName}</Badge>
                   </TD>
+                  <TD>{s.gender || "—"}</TD>
                   <TD>{s.cellNumber || "—"}</TD>
                   <TD>{s.email || "—"}</TD>
                   {canManage && (
@@ -269,7 +274,7 @@ export function StaffManager({
                           variant="ghost"
                           size="sm"
                           onClick={() => {
-                            if (confirm(`Remove ${s.firstName} ${s.lastName}?`)) deleteStaff(s.id);
+                            if (confirm(`Remove ${s.name}?`)) deleteStaff(s.id);
                           }}
                         >
                           <Trash2 className="h-3.5 w-3.5 text-red-500" />
@@ -291,7 +296,7 @@ export function StaffManager({
       )}
       {editing && (
         <Modal
-          title={`Edit ${editing.firstName} ${editing.lastName}`}
+          title={`Edit ${editing.name}`}
           open
           onOpenChange={(o) => !o && setEditing(null)}
         >

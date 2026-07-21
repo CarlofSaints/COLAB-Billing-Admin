@@ -121,10 +121,10 @@ export const staff = pgTable(
   "staff",
   {
     id: serial("id").primaryKey(),
-    firstName: text("first_name").notNull(),
-    lastName: text("last_name").notNull(),
+    name: text("name").notNull(),
     cellNumber: text("cell_number"),
     email: text("email"),
+    gender: text("gender"),
     // Which company the person belongs to (COLAB is a valid assignment).
     companyId: integer("company_id")
       .notNull()

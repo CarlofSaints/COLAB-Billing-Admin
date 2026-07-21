@@ -27,15 +27,14 @@ export default async function EmailGroupsPage() {
   const staffRows = await db
     .select({
       id: staff.id,
-      firstName: staff.firstName,
-      lastName: staff.lastName,
+      name: staff.name,
       email: staff.email,
       companyName: companies.name,
     })
     .from(staff)
     .innerJoin(companies, eq(staff.companyId, companies.id))
     .where(eq(staff.active, true))
-    .orderBy(asc(companies.name), asc(staff.lastName));
+    .orderBy(asc(companies.name), asc(staff.name));
 
   const groupData = groups.map((g) => ({
     id: g.id,
@@ -46,7 +45,7 @@ export default async function EmailGroupsPage() {
 
   const allStaff = staffRows.map((s) => ({
     id: s.id,
-    name: `${s.firstName} ${s.lastName}`,
+    name: s.name,
     email: s.email ?? "",
     companyName: s.companyName,
   }));

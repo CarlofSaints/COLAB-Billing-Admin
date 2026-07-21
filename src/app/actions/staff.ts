@@ -10,10 +10,10 @@ import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 
 const staffSchema = z.object({
-  firstName: z.string().trim().min(1, "First name is required"),
-  lastName: z.string().trim().min(1, "Surname is required"),
+  name: z.string().trim().min(1, "Name is required"),
   cellNumber: z.string().trim().optional(),
   email: z.string().trim().optional(),
+  gender: z.string().trim().optional(),
   position: z.string().trim().optional(),
   companyId: z.coerce.number().int().positive("Choose a company"),
 });
@@ -22,10 +22,10 @@ export type ActionState = { error?: string; ok?: boolean };
 
 function parse(formData: FormData) {
   return staffSchema.safeParse({
-    firstName: formData.get("firstName"),
-    lastName: formData.get("lastName"),
+    name: formData.get("name"),
     cellNumber: formData.get("cellNumber") || undefined,
     email: formData.get("email") || undefined,
+    gender: formData.get("gender") || undefined,
     position: formData.get("position") || undefined,
     companyId: formData.get("companyId"),
   });
@@ -39,7 +39,7 @@ export async function createStaff(_prev: ActionState, formData: FormData): Promi
   const [row] = await db.insert(staff).values(parsed.data).returning();
   await logEvent({
     action: "staff.create",
-    summary: `Added staff member ${row.firstName} ${row.lastName}`,
+    summary: `Added staff member ${row.name}`,
     actor: user,
     entityType: "staff",
     entityId: row.id,
@@ -59,7 +59,7 @@ export async function updateStaff(_prev: ActionState, formData: FormData): Promi
   await db.update(staff).set({ ...parsed.data, updatedAt: new Date() }).where(eq(staff.id, id));
   await logEvent({
     action: "staff.update",
-    summary: `Updated staff member ${parsed.data.firstName} ${parsed.data.lastName}`,
+    summary: `Updated staff member ${parsed.data.name}`,
     actor: user,
     entityType: "staff",
     entityId: id,
@@ -92,7 +92,7 @@ export type ImportState = {
 
 /**
  * Bulk import staff from an Excel/CSV file. Expected columns (case-insensitive,
- * flexible headers): Sub Company, Name, Surname, Email, Cell Number.
+ * flexible headers): Sub Company, Name, Gender, Email, Cell Number.
  *
  * Upserts: an existing person (matched by email, else by name + company) is
  * updated in place rather than duplicated. Returns how many were added vs
@@ -124,19 +124,17 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
     .select({
       id: staff.id,
       email: staff.email,
-      firstName: staff.firstName,
-      lastName: staff.lastName,
+      name: staff.name,
       companyId: staff.companyId,
     })
     .from(staff);
 
   const byEmail = new Map<string, number>();
   const byNameCompany = new Map<string, number>();
-  const nameKey = (f: string, l: string, c: number) =>
-    `${f.trim().toLowerCase()}|${l.trim().toLowerCase()}|${c}`;
+  const nameKey = (n: string, c: number) => `${n.trim().toLowerCase()}|${c}`;
   for (const s of existing) {
     if (s.email) byEmail.set(s.email.trim().toLowerCase(), s.id);
-    byNameCompany.set(nameKey(s.firstName, s.lastName, s.companyId), s.id);
+    byNameCompany.set(nameKey(s.name, s.companyId), s.id);
   }
 
   const pick = (row: Record<string, unknown>, keys: string[]): string => {
@@ -153,15 +151,15 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
   const unknown = new Set<string>();
 
   for (const row of rows) {
-    const firstName = pick(row, ["firstname", "name", "first"]);
-    const lastName = pick(row, ["surname", "lastname", "last"]);
+    const name = pick(row, ["name", "fullname", "firstname", "first"]);
     const cellNumber = pick(row, ["cell", "cellnumber", "phone", "mobile", "cellphone"]);
     const email = pick(row, ["email", "emailaddress", "mail"]);
+    const gender = pick(row, ["gender", "sex"]);
     const position = pick(row, ["position", "role", "title", "jobtitle"]);
     const companyName = pick(row, ["company", "subcompany", "business", "entity"]);
 
     // Only a Name and a valid Sub Company are required; everything else is optional.
-    if (!firstName) {
+    if (!name) {
       skipped++;
       continue;
     }
@@ -174,13 +172,13 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
 
     const emailKey = email ? email.trim().toLowerCase() : "";
     const matchId =
-      (emailKey && byEmail.get(emailKey)) || byNameCompany.get(nameKey(firstName, lastName, companyId));
+      (emailKey && byEmail.get(emailKey)) || byNameCompany.get(nameKey(name, companyId));
 
     const values = {
-      firstName,
-      lastName,
+      name,
       cellNumber: cellNumber || null,
       email: email || null,
+      gender: gender || null,
       position: position || null,
       companyId,
     };
@@ -196,7 +194,7 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
       imported++;
       // Keep maps current so later rows in the same file de-dupe against this one.
       if (emailKey) byEmail.set(emailKey, inserted.id);
-      byNameCompany.set(nameKey(firstName, lastName, companyId), inserted.id);
+      byNameCompany.set(nameKey(name, companyId), inserted.id);
     }
   }
 
