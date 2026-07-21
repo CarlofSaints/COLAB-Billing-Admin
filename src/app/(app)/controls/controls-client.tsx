@@ -6,7 +6,7 @@ import { Ruler, Users, Receipt, Plus, Trash2, Pencil, DoorOpen } from "lucide-re
 import {
   saveSquareMetres,
   saveHeadcounts,
-  addFixedItem,
+  saveFixedItem,
   deleteFixedItem,
   saveCommonSpace,
   deleteCommonSpace,
@@ -20,7 +20,14 @@ import { Modal } from "@/components/ui/modal";
 import { Table, THead, TH, TR, TD } from "@/components/ui/table";
 import { formatCurrency, cn } from "@/lib/utils";
 
-type FixedItem = { id: number; name: string; quantity: number; unitAmount: number; notes: string };
+type FixedAllocation = { companyId: number; companyName: string; quantity: number };
+type FixedItemRow = {
+  id: number;
+  name: string;
+  unitAmount: number;
+  notes: string;
+  allocations: FixedAllocation[];
+};
 type ControlCompany = {
   id: number;
   name: string;
@@ -28,7 +35,6 @@ type ControlCompany = {
   headcountOverride: number | null;
   liveHeadcount: number;
   effectiveHeadcount: number;
-  fixedItems: FixedItem[];
 };
 type CommonSpaceRow = {
   id: number;
@@ -569,12 +575,22 @@ function HeadcountTab({ companies, canManage }: { companies: ControlCompany[]; c
 }
 
 /* -------------------- Fixed line items -------------------- */
-function FixedTab({ companies, canManage }: { companies: ControlCompany[]; canManage: boolean }) {
+function itemTotal(it: FixedItemRow) {
+  return it.allocations.reduce((t, a) => t + a.quantity * it.unitAmount, 0);
+}
+
+function FixedTab({
+  items,
+  companies,
+  canManage,
+}: {
+  items: FixedItemRow[];
+  companies: ControlCompany[];
+  canManage: boolean;
+}) {
   const [adding, setAdding] = useState(false);
-  const grandTotal = companies.reduce(
-    (s, c) => s + c.fixedItems.reduce((t, i) => t + i.quantity * i.unitAmount, 0),
-    0,
-  );
+  const [editing, setEditing] = useState<FixedItemRow | null>(null);
+  const grandTotal = items.reduce((s, it) => s + itemTotal(it), 0);
 
   return (
     <Card>
@@ -582,7 +598,8 @@ function FixedTab({ companies, canManage }: { companies: ControlCompany[]; canMa
         <div>
           <CardTitle>Fixed line items</CardTitle>
           <CardDescription>
-            Costs billed directly to one company — e.g. the parking bays each company takes.
+            Costs billed directly to companies — e.g. parking. One item (shared name & price) can
+            cover several companies, each with its own quantity.
           </CardDescription>
         </div>
         <div className="flex items-center gap-3">
@@ -594,74 +611,83 @@ function FixedTab({ companies, canManage }: { companies: ControlCompany[]; canMa
           )}
         </div>
       </CardHeader>
-      <CardContent className="space-y-6">
-        {companies.every((c) => c.fixedItems.length === 0) ? (
+      <CardContent className="space-y-4">
+        {items.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted">
-            No fixed line items yet. Add one to bill a company for something like parking.
+            No fixed line items yet. Add one — e.g. Parking — and assign it to the relevant
+            companies with a quantity each.
           </p>
         ) : (
-          companies
-            .filter((c) => c.fixedItems.length > 0)
-            .map((c) => {
-              const subtotal = c.fixedItems.reduce((t, i) => t + i.quantity * i.unitAmount, 0);
-              return (
-                <div key={c.id}>
-                  <div className="mb-2 flex items-center justify-between">
-                    <h4 className="text-sm font-semibold text-slate-900">{c.name}</h4>
-                    <span className="text-sm font-medium text-slate-600">
-                      {formatCurrency(subtotal)}
-                    </span>
-                  </div>
-                  <div className="overflow-hidden rounded-lg border border-line">
-                    <Table>
-                      <THead>
-                        <tr>
-                          <TH>Description</TH>
-                          <TH className="w-24 text-right">Qty</TH>
-                          <TH className="w-32 text-right">Unit</TH>
-                          <TH className="w-32 text-right">Total</TH>
-                          {canManage && <TH className="w-16"></TH>}
-                        </tr>
-                      </THead>
-                      <tbody>
-                        {c.fixedItems.map((i) => (
-                          <TR key={i.id}>
-                            <TD>
-                              <div className="font-medium text-slate-800">{i.name}</div>
-                              {i.notes && <div className="text-xs text-muted">{i.notes}</div>}
-                            </TD>
-                            <TD className="text-right">{i.quantity}</TD>
-                            <TD className="text-right">{formatCurrency(i.unitAmount)}</TD>
-                            <TD className="text-right font-medium">
-                              {formatCurrency(i.quantity * i.unitAmount)}
-                            </TD>
-                            {canManage && (
-                              <TD className="text-right">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    if (confirm(`Remove “${i.name}”?`)) deleteFixedItem(i.id);
-                                  }}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                                </Button>
-                              </TD>
-                            )}
-                          </TR>
-                        ))}
-                      </tbody>
-                    </Table>
+          items.map((it) => (
+            <div key={it.id} className="overflow-hidden rounded-lg border border-line">
+              <div className="flex items-center justify-between gap-4 bg-slate-50 px-4 py-3">
+                <div>
+                  <div className="font-medium text-slate-900">{it.name}</div>
+                  <div className="text-xs text-muted">
+                    {formatCurrency(it.unitAmount)} each
+                    {it.notes ? ` · ${it.notes}` : ""}
                   </div>
                 </div>
-              );
-            })
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-slate-700">
+                    {formatCurrency(itemTotal(it))}
+                  </span>
+                  {canManage && (
+                    <>
+                      <Button variant="ghost" size="sm" onClick={() => setEditing(it)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (confirm(`Remove “${it.name}”?`)) deleteFixedItem(it.id);
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="divide-y divide-line">
+                {it.allocations.length === 0 ? (
+                  <div className="px-4 py-2 text-xs text-muted">Not assigned to any company.</div>
+                ) : (
+                  it.allocations.map((a) => (
+                    <div
+                      key={a.companyId}
+                      className="flex items-center justify-between px-4 py-2 text-sm"
+                    >
+                      <span className="text-slate-700">{a.companyName}</span>
+                      <span className="text-muted">
+                        {a.quantity} × {formatCurrency(it.unitAmount)} ={" "}
+                        <span className="font-medium text-slate-800">
+                          {formatCurrency(a.quantity * it.unitAmount)}
+                        </span>
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ))
         )}
       </CardContent>
 
       {adding && (
-        <Modal title="Add fixed line item" open onOpenChange={setAdding}>
+        <Modal title="Add fixed line item" open onOpenChange={setAdding} wide>
           <FixedItemForm companies={companies} onDone={() => setAdding(false)} />
+        </Modal>
+      )}
+      {editing && (
+        <Modal
+          title={`Edit ${editing.name}`}
+          open
+          onOpenChange={(o) => !o && setEditing(null)}
+          wide
+        >
+          <FixedItemForm item={editing} companies={companies} onDone={() => setEditing(null)} />
         </Modal>
       )}
     </Card>
@@ -669,45 +695,103 @@ function FixedTab({ companies, canManage }: { companies: ControlCompany[]; canMa
 }
 
 function FixedItemForm({
+  item,
   companies,
   onDone,
 }: {
+  item?: FixedItemRow;
   companies: ControlCompany[];
   onDone: () => void;
 }) {
-  const [state, action] = useActionState<ActionState, FormData>(addFixedItem, {});
+  const [state, action] = useActionState<ActionState, FormData>(saveFixedItem, {});
+  const [selected, setSelected] = useState<Set<number>>(
+    new Set(item?.allocations.map((a) => a.companyId) ?? []),
+  );
+  const [qty, setQty] = useState<Record<number, string>>(
+    Object.fromEntries(
+      companies.map((c) => [
+        c.id,
+        (item?.allocations.find((a) => a.companyId === c.id)?.quantity ?? 1).toString(),
+      ]),
+    ),
+  );
   useEffect(() => {
     if (state.ok) onDone();
   }, [state.ok, onDone]);
 
+  const toggle = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
   return (
     <form action={action} className="space-y-4">
-      <Field label="Company">
-        <Select name="companyId" required defaultValue="">
-          <option value="" disabled>
-            Select a sub-company…
-          </option>
-          {companies.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
-      </Field>
+      {item && <input type="hidden" name="id" value={item.id} />}
       <Field label="Description">
-        <Input name="name" placeholder="e.g. Parking bays" required />
+        <Input name="name" defaultValue={item?.name} placeholder="e.g. Parking bays" required autoFocus />
       </Field>
       <div className="grid grid-cols-2 gap-4">
-        <Field label="Quantity">
-          <Input name="quantity" type="number" step="0.01" min="0" defaultValue="1" />
-        </Field>
         <Field label="Unit amount (excl. VAT)">
-          <Input name="unitAmount" type="number" step="0.01" min="0" defaultValue="0" />
+          <Input
+            name="unitAmount"
+            type="number"
+            step="0.01"
+            min="0"
+            defaultValue={item?.unitAmount ?? 0}
+          />
+        </Field>
+        <Field label="Notes (optional)">
+          <Input name="notes" defaultValue={item?.notes} />
         </Field>
       </div>
-      <Field label="Notes (optional)">
-        <Input name="notes" />
-      </Field>
+
+      <div>
+        <p className="mb-1.5 text-sm font-medium text-slate-700">
+          Assign to sub-companies &amp; quantity
+        </p>
+        <div className="space-y-1 rounded-lg border border-line p-2">
+          {companies.map((c) => {
+            const on = selected.has(c.id);
+            return (
+              <div
+                key={c.id}
+                className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 hover:bg-slate-50"
+              >
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    name="companyId"
+                    value={c.id}
+                    checked={on}
+                    onChange={() => toggle(c.id)}
+                    className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                  />
+                  {c.name}
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted">Qty</span>
+                  <Input
+                    name={`qty_${c.id}`}
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={qty[c.id] ?? ""}
+                    disabled={!on}
+                    onChange={(e) => setQty((s) => ({ ...s, [c.id]: e.target.value }))}
+                    className="w-20 text-right"
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-1 text-xs text-muted">
+          Tick each company that shares this cost and set how many units it takes.
+        </p>
+      </div>
+
       {state.error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
       )}
@@ -715,7 +799,7 @@ function FixedItemForm({
         <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
         </Button>
-        <Button type="submit">Add item</Button>
+        <Button type="submit">{item ? "Save item" : "Add item"}</Button>
       </div>
     </form>
   );
@@ -744,11 +828,13 @@ export function ControlsManager({
   canManage,
   totalSqm,
   commonSpaces,
+  fixedItems,
 }: {
   companies: ControlCompany[];
   canManage: boolean;
   totalSqm: number;
   commonSpaces: CommonSpaceRow[];
+  fixedItems: FixedItemRow[];
 }) {
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("sqm");
 
@@ -797,7 +883,9 @@ export function ControlsManager({
         />
       )}
       {tab === "headcount" && <HeadcountTab companies={companies} canManage={canManage} />}
-      {tab === "fixed" && <FixedTab companies={companies} canManage={canManage} />}
+      {tab === "fixed" && (
+        <FixedTab items={fixedItems} companies={companies} canManage={canManage} />
+      )}
     </div>
   );
 }

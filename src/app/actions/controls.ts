@@ -7,6 +7,7 @@ import { db } from "@/db";
 import {
   companyAllocations,
   fixedLineItems,
+  fixedLineAllocations,
   appSettings,
   commonSpaces,
   commonSpaceSplits,
@@ -209,42 +210,66 @@ export async function saveHeadcounts(
   return { ok: true };
 }
 
-const fixedSchema = z.object({
-  companyId: z.coerce.number().int().positive("Choose a company"),
-  name: z.string().trim().min(1, "Description is required"),
-  quantity: z.coerce.number().nonnegative(),
-  unitAmount: z.coerce.number().nonnegative(),
-  notes: z.string().trim().optional(),
-});
-
-export async function addFixedItem(_prev: ActionState, formData: FormData): Promise<ActionState> {
+/**
+ * Create or update a fixed line item (shared name + unit price) and its
+ * per-company quantity allocations. Companies arrive as repeated `companyId`
+ * fields; each selected company's quantity as `qty_<companyId>` (defaults to 1).
+ */
+export async function saveFixedItem(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   const user = await requirePermission("controls.manage");
-  const parsed = fixedSchema.safeParse({
-    companyId: formData.get("companyId"),
-    name: formData.get("name"),
-    quantity: formData.get("quantity") || 1,
-    unitAmount: formData.get("unitAmount") || 0,
-    notes: formData.get("notes") || undefined,
-  });
-  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const id = formData.get("id") ? Number(formData.get("id")) : null;
 
-  const [row] = await db
-    .insert(fixedLineItems)
-    .values({
-      companyId: parsed.data.companyId,
-      name: parsed.data.name,
-      quantity: parsed.data.quantity.toFixed(2),
-      unitAmount: parsed.data.unitAmount.toFixed(2),
-      notes: parsed.data.notes ?? null,
-    })
-    .returning();
+  const name = String(formData.get("name") ?? "").trim();
+  const unitAmount = Number(formData.get("unitAmount") || 0);
+  const notes = String(formData.get("notes") ?? "").trim() || null;
+
+  if (!name) return { error: "Description is required." };
+  if (!Number.isFinite(unitAmount) || unitAmount < 0) return { error: "Enter a valid amount." };
+
+  const companyIds = formData
+    .getAll("companyId")
+    .map((v) => Number(v))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  if (companyIds.length === 0) return { error: "Assign at least one sub-company." };
+
+  const allocations = companyIds.map((cid) => {
+    const q = Number(formData.get(`qty_${cid}`));
+    return { companyId: cid, quantity: Number.isFinite(q) && q >= 0 ? q : 1 };
+  });
+
+  let itemId = id;
+  if (id) {
+    await db
+      .update(fixedLineItems)
+      .set({ name, unitAmount: unitAmount.toFixed(2), notes, updatedAt: new Date() })
+      .where(eq(fixedLineItems.id, id));
+  } else {
+    const [row] = await db
+      .insert(fixedLineItems)
+      .values({ name, unitAmount: unitAmount.toFixed(2), notes })
+      .returning();
+    itemId = row.id;
+  }
+
+  // Replace the allocation set.
+  await db.delete(fixedLineAllocations).where(eq(fixedLineAllocations.fixedLineItemId, itemId!));
+  await db.insert(fixedLineAllocations).values(
+    allocations.map((a) => ({
+      fixedLineItemId: itemId!,
+      companyId: a.companyId,
+      quantity: a.quantity.toFixed(2),
+    })),
+  );
 
   await logEvent({
-    action: "controls.fixed_add",
-    summary: `Added fixed line item “${row.name}”`,
+    action: id ? "controls.fixed_update" : "controls.fixed_add",
+    summary: `${id ? "Updated" : "Added"} fixed line item “${name}” (${allocations.length} companies)`,
     actor: user,
     entityType: "fixed_line_item",
-    entityId: row.id,
+    entityId: itemId ?? undefined,
   });
 
   revalidatePath("/controls");

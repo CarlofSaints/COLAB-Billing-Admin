@@ -9,6 +9,7 @@ import {
   users,
   companyAllocations,
   fixedLineItems,
+  fixedLineAllocations,
 } from "@/db/schema";
 import { requireUser, hasPermission } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
@@ -53,11 +54,12 @@ export default async function Dashboard({
 
   const fixedRows = await db
     .select({
-      companyId: fixedLineItems.companyId,
+      companyId: fixedLineAllocations.companyId,
       name: fixedLineItems.name,
-      quantity: fixedLineItems.quantity,
+      quantity: fixedLineAllocations.quantity,
     })
-    .from(fixedLineItems)
+    .from(fixedLineAllocations)
+    .innerJoin(fixedLineItems, eq(fixedLineAllocations.fixedLineItemId, fixedLineItems.id))
     .where(eq(fixedLineItems.active, true));
   const fixedByCompany = new Map<number, { name: string; quantity: number }[]>();
   for (const f of fixedRows) {

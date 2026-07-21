@@ -4,6 +4,7 @@ import {
   companies,
   companyAllocations,
   fixedLineItems,
+  fixedLineAllocations,
   staff,
   appSettings,
   commonSpaces,
@@ -37,11 +38,34 @@ export default async function ControlsPage() {
     .groupBy(staff.companyId);
   const countMap = new Map(counts.map((c) => [c.companyId, c.count]));
 
-  const fixed = await db
+  const items = await db
     .select()
     .from(fixedLineItems)
     .where(eq(fixedLineItems.active, true))
     .orderBy(asc(fixedLineItems.name));
+  const fixedAllocs = await db
+    .select({
+      itemId: fixedLineAllocations.fixedLineItemId,
+      companyId: fixedLineAllocations.companyId,
+      quantity: fixedLineAllocations.quantity,
+      companyName: companies.name,
+    })
+    .from(fixedLineAllocations)
+    .innerJoin(companies, eq(fixedLineAllocations.companyId, companies.id));
+
+  const fixedData = items.map((it) => ({
+    id: it.id,
+    name: it.name,
+    unitAmount: Number(it.unitAmount),
+    notes: it.notes ?? "",
+    allocations: fixedAllocs
+      .filter((a) => a.itemId === it.id)
+      .map((a) => ({
+        companyId: a.companyId,
+        companyName: a.companyName,
+        quantity: Number(a.quantity),
+      })),
+  }));
 
   const totalSetting = await db
     .select()
@@ -77,15 +101,6 @@ export default async function ControlsPage() {
       headcountOverride: override,
       liveHeadcount: live,
       effectiveHeadcount: override ?? live,
-      fixedItems: fixed
-        .filter((f) => f.companyId === c.id)
-        .map((f) => ({
-          id: f.id,
-          name: f.name,
-          quantity: Number(f.quantity),
-          unitAmount: Number(f.unitAmount),
-          notes: f.notes ?? "",
-        })),
     };
   });
 
@@ -100,6 +115,7 @@ export default async function ControlsPage() {
         canManage={canManage}
         totalSqm={totalSqm}
         commonSpaces={spacesData}
+        fixedItems={fixedData}
       />
     </div>
   );

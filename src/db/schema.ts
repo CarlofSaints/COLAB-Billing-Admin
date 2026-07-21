@@ -184,23 +184,32 @@ export const companyAllocations = pgTable(
   (t) => [uniqueIndex("company_alloc_company_unique").on(t.companyId)],
 );
 
-// Fixed line items billed straight to a specific company (e.g. parking bays).
-export const fixedLineItems = pgTable(
-  "fixed_line_items",
+// A fixed line item billed directly to companies (e.g. parking bays).
+// The name + unit price are shared; each assigned company gets its own quantity.
+export const fixedLineItems = pgTable("fixed_line_items", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  unitAmount: numeric("unit_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  notes: text("notes"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Per-company quantity for a fixed line item (e.g. Parking: OuterJoin ×3, iRam ×8).
+export const fixedLineAllocations = pgTable(
+  "fixed_line_allocations",
   {
     id: serial("id").primaryKey(),
+    fixedLineItemId: integer("fixed_line_item_id")
+      .notNull()
+      .references(() => fixedLineItems.id, { onDelete: "cascade" }),
     companyId: integer("company_id")
       .notNull()
       .references(() => companies.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
     quantity: numeric("quantity", { precision: 12, scale: 2 }).notNull().default("1"),
-    unitAmount: numeric("unit_amount", { precision: 12, scale: 2 }).notNull().default("0"),
-    notes: text("notes"),
-    active: boolean("active").notNull().default(true),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("fixed_line_company_idx").on(t.companyId)],
+  (t) => [uniqueIndex("fixed_alloc_unique").on(t.fixedLineItemId, t.companyId)],
 );
 
 /* ------------------------------------------------------------------ */
@@ -278,7 +287,7 @@ export const companiesRelations = relations(companies, ({ many, one }) => ({
     fields: [companies.id],
     references: [companyAllocations.companyId],
   }),
-  fixedLineItems: many(fixedLineItems),
+  fixedLineAllocations: many(fixedLineAllocations),
 }));
 
 export const rolesRelations = relations(roles, ({ many }) => ({
@@ -319,9 +328,17 @@ export const emailGroupMembersRelations = relations(emailGroupMembers, ({ one })
   staff: one(staff, { fields: [emailGroupMembers.staffId], references: [staff.id] }),
 }));
 
-export const fixedLineItemsRelations = relations(fixedLineItems, ({ one }) => ({
+export const fixedLineItemsRelations = relations(fixedLineItems, ({ many }) => ({
+  allocations: many(fixedLineAllocations),
+}));
+
+export const fixedLineAllocationsRelations = relations(fixedLineAllocations, ({ one }) => ({
+  item: one(fixedLineItems, {
+    fields: [fixedLineAllocations.fixedLineItemId],
+    references: [fixedLineItems.id],
+  }),
   company: one(companies, {
-    fields: [fixedLineItems.companyId],
+    fields: [fixedLineAllocations.companyId],
     references: [companies.id],
   }),
 }));
@@ -359,6 +376,7 @@ export type User = typeof users.$inferSelect;
 export type Staff = typeof staff.$inferSelect;
 export type EmailGroup = typeof emailGroups.$inferSelect;
 export type FixedLineItem = typeof fixedLineItems.$inferSelect;
+export type FixedLineAllocation = typeof fixedLineAllocations.$inferSelect;
 export type CompanyAllocation = typeof companyAllocations.$inferSelect;
 export type CommonSpace = typeof commonSpaces.$inferSelect;
 export type CommonSpaceSplit = typeof commonSpaceSplits.$inferSelect;
