@@ -20,7 +20,7 @@ export default async function IntegrationsPage({
     <div>
       <PageHeader
         title="Integrations"
-        description="Connect Xero and Dext. Credentials are encrypted before they're stored."
+        description="Connect Xero. Credentials are encrypted before they're stored."
       />
       <IntegrationsClient statuses={statuses} xero={xero} xeroResult={xeroResult ?? null} />
     </div>

@@ -12,14 +12,8 @@ export type IntegrationField = {
 };
 
 export const XERO_FIELDS: IntegrationField[] = [
-  { key: "xero_client_id", label: "Client ID", placeholder: "From your Xero Custom Connection" },
+  { key: "xero_client_id", label: "Client ID", placeholder: "From your Xero Web app" },
   { key: "xero_client_secret", label: "Client Secret", secret: true },
-  {
-    key: "xero_tenant_id",
-    label: "Tenant / Organisation ID",
-    optional: true,
-    placeholder: "Optional — auto-detected for Custom Connections",
-  },
 ];
 
 export const DEXT_FIELDS: IntegrationField[] = [
@@ -33,15 +27,8 @@ export const INTEGRATIONS = [
     id: "xero",
     name: "Xero",
     blurb:
-      "Create a Custom Connection in the Xero developer portal (developer.xero.com) for automated, single-organisation access, then paste its Client ID and Client Secret here.",
+      "Paste the Client ID and Client Secret from your Xero Web app (developer.xero.com), save, then use the connection panel above to connect the COLAB organisation.",
     fields: XERO_FIELDS,
-  },
-  {
-    id: "dext",
-    name: "Dext",
-    blurb:
-      "Add your Dext API credentials. API access is provided by Dext to partners — paste the API key (and client id/secret if you were given them).",
-    fields: DEXT_FIELDS,
   },
 ] as const;
 

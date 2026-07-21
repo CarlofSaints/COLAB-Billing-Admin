@@ -251,8 +251,8 @@ export function IntegrationsClient({
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
           Credentials are encrypted (AES-256-GCM) before storage and never shown again in full —
-          only a masked hint. Saving these here lets COLAB pull bills from Dext and push invoices to
-          Xero automatically (that wiring comes next).
+          only a masked hint. Connecting Xero lets COLAB read your costs and push the monthly
+          invoices automatically (that wiring comes next).
         </div>
       </div>
 
