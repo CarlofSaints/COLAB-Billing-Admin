@@ -11,7 +11,7 @@ import {
   commonSpaceSplits,
 } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
-import { TOTAL_SQM_KEY } from "@/lib/controls";
+import { TOTAL_SQM_KEY, RENT_AMOUNT_KEY } from "@/lib/controls";
 import { PageHeader } from "@/components/ui/page";
 import { ControlsManager } from "./controls-client";
 
@@ -74,6 +74,13 @@ export default async function ControlsPage() {
     .limit(1);
   const totalSqm = totalSetting[0]?.value ? Number(totalSetting[0].value) : 0;
 
+  const rentSetting = await db
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.key, RENT_AMOUNT_KEY))
+    .limit(1);
+  const rentAmount = rentSetting[0]?.value ? Number(rentSetting[0].value) : 0;
+
   const spaceRows = await db
     .select()
     .from(commonSpaces)
@@ -114,6 +121,7 @@ export default async function ControlsPage() {
         companies={data}
         canManage={canManage}
         totalSqm={totalSqm}
+        rentAmount={rentAmount}
         commonSpaces={spacesData}
         fixedItems={fixedData}
       />

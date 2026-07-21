@@ -14,7 +14,7 @@ import {
 } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
-import { TOTAL_SQM_KEY } from "@/lib/controls";
+import { TOTAL_SQM_KEY, RENT_AMOUNT_KEY } from "@/lib/controls";
 
 export type ActionState = { error?: string; ok?: boolean };
 
@@ -38,6 +38,15 @@ export async function saveSquareMetres(
     const total = Number(totalRaw);
     if (Number.isFinite(total) && total >= 0) {
       await setSetting(TOTAL_SQM_KEY, total.toFixed(2));
+    }
+  }
+
+  // Monthly rent — split across companies by their effective floor-space share.
+  const rentRaw = formData.get("rent_amount");
+  if (rentRaw != null) {
+    const rent = Number(rentRaw);
+    if (Number.isFinite(rent) && rent >= 0) {
+      await setSetting(RENT_AMOUNT_KEY, rent.toFixed(2));
     }
   }
 

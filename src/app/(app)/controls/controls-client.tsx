@@ -114,14 +114,17 @@ function SqmTab({
   companies,
   canManage,
   totalSqm,
+  rentAmount,
   commonSpaces,
 }: {
   companies: ControlCompany[];
   canManage: boolean;
   totalSqm: number;
+  rentAmount: number;
   commonSpaces: CommonSpaceRow[];
 }) {
   const [total, setTotal] = useState<string>(totalSqm ? String(totalSqm) : "");
+  const [rent, setRent] = useState<string>(rentAmount ? String(rentAmount) : "");
   const [occupied, setOccupied] = useState<Record<number, string>>(
     Object.fromEntries(companies.map((c) => [c.id, c.sqm ? String(c.sqm) : ""])),
   );
@@ -134,6 +137,8 @@ function SqmTab({
     [companies, occupied],
   );
   const totalNum = Number(total) || 0;
+  const rentNum = Number(rent) || 0;
+  const rentFor = (eff: number) => (totalNum > 0 ? (eff / totalNum) * rentNum : 0);
 
   const { effective, totalOccupied, common, itemised, unallocatedCommon } = useMemo(
     () => computeEffectiveAreas(companies, occupiedNum, commonSpaces, totalNum),
@@ -158,7 +163,7 @@ function SqmTab({
         <form action={action}>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-end gap-4">
-              <Field label="Total building area (m²)" className="w-56">
+              <Field label="Total building area (m²)" className="w-44">
                 <Input
                   name="total_sqm"
                   type="number"
@@ -167,6 +172,18 @@ function SqmTab({
                   value={total}
                   disabled={!canManage}
                   onChange={(e) => setTotal(e.target.value)}
+                />
+              </Field>
+              <Field label="Monthly rent (excl. VAT)" className="w-44">
+                <Input
+                  name="rent_amount"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="e.g. 120000"
+                  value={rent}
+                  disabled={!canManage}
+                  onChange={(e) => setRent(e.target.value)}
                 />
               </Field>
               <div className="flex flex-wrap gap-2 pb-2">
@@ -324,10 +341,11 @@ function SqmTab({
           <THead>
             <tr>
               <TH>Sub-Company</TH>
-              <TH className="w-32 text-right">Private m²</TH>
-              <TH className="w-32 text-right">+ Common m²</TH>
-              <TH className="w-32 text-right">Effective m²</TH>
-              <TH className="w-40">Billed share</TH>
+              <TH className="w-28 text-right">Private m²</TH>
+              <TH className="w-28 text-right">+ Common m²</TH>
+              <TH className="w-28 text-right">Effective m²</TH>
+              <TH className="w-36">Billed share</TH>
+              <TH className="w-32 text-right">Monthly rent</TH>
             </tr>
           </THead>
           <tbody>
@@ -347,10 +365,27 @@ function SqmTab({
                   <TD>
                     <ShareBar value={pct(eff, totalNum)} />
                   </TD>
+                  <TD className="text-right font-medium text-slate-900">
+                    {rentNum > 0 ? formatCurrency(rentFor(eff)) : "—"}
+                  </TD>
                 </TR>
               );
             })}
           </tbody>
+          {rentNum > 0 && (
+            <tfoot>
+              <tr>
+                <TD className="font-semibold text-slate-900" colSpan={5}>
+                  Total rent
+                </TD>
+                <TD className="text-right font-semibold text-slate-900">
+                  {formatCurrency(
+                    companies.reduce((s, c) => s + rentFor(effective[c.id] ?? 0), 0),
+                  )}
+                </TD>
+              </tr>
+            </tfoot>
+          )}
         </Table>
       </Card>
 
@@ -832,12 +867,14 @@ export function ControlsManager({
   companies,
   canManage,
   totalSqm,
+  rentAmount,
   commonSpaces,
   fixedItems,
 }: {
   companies: ControlCompany[];
   canManage: boolean;
   totalSqm: number;
+  rentAmount: number;
   commonSpaces: CommonSpaceRow[];
   fixedItems: FixedItemRow[];
 }) {
@@ -884,6 +921,7 @@ export function ControlsManager({
           companies={companies}
           canManage={canManage}
           totalSqm={totalSqm}
+          rentAmount={rentAmount}
           commonSpaces={commonSpaces}
         />
       )}
