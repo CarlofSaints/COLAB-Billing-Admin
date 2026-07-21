@@ -31,6 +31,10 @@ export const allocationMethodEnum = pgEnum("allocation_method", [
 // Who/what triggered a logged event.
 export const actorTypeEnum = pgEnum("actor_type", ["user", "system", "api"]);
 
+// How a common space is divided across the sub-companies.
+// "occupancy" = pro-rata by each company's occupied m²; "custom" = fixed % per company.
+export const splitMethodEnum = pgEnum("split_method", ["occupancy", "custom"]);
+
 /* ------------------------------------------------------------------ */
 /* Companies (COLAB + the 4 sub-companies)                            */
 /* ------------------------------------------------------------------ */
@@ -200,6 +204,46 @@ export const fixedLineItems = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* App settings (key/value) — e.g. total building floor area          */
+/* ------------------------------------------------------------------ */
+
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/* ------------------------------------------------------------------ */
+/* Common spaces (boardroom, training room, general common, …)        */
+/* ------------------------------------------------------------------ */
+
+export const commonSpaces = pgTable("common_spaces", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  squareMetres: numeric("square_metres", { precision: 12, scale: 2 }).notNull().default("0"),
+  splitMethod: splitMethodEnum("split_method").notNull().default("occupancy"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Per-company percentage for a common space using the "custom" split method.
+export const commonSpaceSplits = pgTable(
+  "common_space_splits",
+  {
+    id: serial("id").primaryKey(),
+    commonSpaceId: integer("common_space_id")
+      .notNull()
+      .references(() => commonSpaces.id, { onDelete: "cascade" }),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    percent: numeric("percent", { precision: 6, scale: 2 }).notNull().default("0"),
+  },
+  (t) => [uniqueIndex("common_split_unique").on(t.commonSpaceId, t.companyId)],
+);
+
+/* ------------------------------------------------------------------ */
 /* Activity / Audit Log                                               */
 /* ------------------------------------------------------------------ */
 
@@ -289,6 +333,21 @@ export const companyAllocationsRelations = relations(companyAllocations, ({ one 
   }),
 }));
 
+export const commonSpacesRelations = relations(commonSpaces, ({ many }) => ({
+  splits: many(commonSpaceSplits),
+}));
+
+export const commonSpaceSplitsRelations = relations(commonSpaceSplits, ({ one }) => ({
+  space: one(commonSpaces, {
+    fields: [commonSpaceSplits.commonSpaceId],
+    references: [commonSpaces.id],
+  }),
+  company: one(companies, {
+    fields: [commonSpaceSplits.companyId],
+    references: [companies.id],
+  }),
+}));
+
 /* ------------------------------------------------------------------ */
 /* Inferred types                                                     */
 /* ------------------------------------------------------------------ */
@@ -301,4 +360,6 @@ export type Staff = typeof staff.$inferSelect;
 export type EmailGroup = typeof emailGroups.$inferSelect;
 export type FixedLineItem = typeof fixedLineItems.$inferSelect;
 export type CompanyAllocation = typeof companyAllocations.$inferSelect;
+export type CommonSpace = typeof commonSpaces.$inferSelect;
+export type CommonSpaceSplit = typeof commonSpaceSplits.$inferSelect;
 export type ActivityLogEntry = typeof activityLog.$inferSelect;

@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { Building2, Users, Mails, SlidersHorizontal, ArrowRight } from "lucide-react";
 import { db } from "@/db";
 import { companies, staff, emailGroups, users } from "@/db/schema";
 import { requireUser, hasPermission } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
+import { SubCompanyCard } from "@/components/sub-company-card";
 
 export default async function Dashboard({
   searchParams,
@@ -24,6 +25,19 @@ export default async function Dashboard({
     .where(eq(staff.active, true));
   const [groupCount] = await db.select({ n: sql<number>`count(*)::int` }).from(emailGroups);
   const [userCount] = await db.select({ n: sql<number>`count(*)::int` }).from(users);
+
+  const subCompanies = await db
+    .select({ id: companies.id, name: companies.name })
+    .from(companies)
+    .where(eq(companies.type, "sub"))
+    .orderBy(asc(companies.name));
+  const staffCounts = await db
+    .select({ companyId: staff.companyId, n: sql<number>`count(*)::int` })
+    .from(staff)
+    .where(eq(staff.active, true))
+    .groupBy(staff.companyId);
+  const staffByCompany = new Map(staffCounts.map((r) => [r.companyId, r.n]));
+  const canSeeCompanies = hasPermission(user, "companies.view");
 
   const stats = [
     { label: "Sub-Companies", value: companyCount?.n ?? 0, icon: Building2, href: "/companies", perm: "companies.view" },
@@ -72,6 +86,34 @@ export default async function Dashboard({
             );
           })}
       </div>
+
+      {subCompanies.length > 0 && (
+        <div className="mt-8">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
+              The sub-companies
+            </h2>
+            {canSeeCompanies && (
+              <Link
+                href="/companies"
+                className="text-sm font-medium text-brand-700 hover:text-brand-800"
+              >
+                Manage
+              </Link>
+            )}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {subCompanies.map((c) => (
+              <SubCompanyCard
+                key={c.id}
+                name={c.name}
+                href={canSeeCompanies ? "/companies" : undefined}
+                staffCount={staffByCompany.get(c.id) ?? 0}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mt-8 grid gap-4 lg:grid-cols-2">
         <Card>

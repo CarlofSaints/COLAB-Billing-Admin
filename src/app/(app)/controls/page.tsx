@@ -1,7 +1,16 @@
 import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { companies, companyAllocations, fixedLineItems, staff } from "@/db/schema";
+import {
+  companies,
+  companyAllocations,
+  fixedLineItems,
+  staff,
+  appSettings,
+  commonSpaces,
+  commonSpaceSplits,
+} from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
+import { TOTAL_SQM_KEY } from "@/lib/controls";
 import { PageHeader } from "@/components/ui/page";
 import { ControlsManager } from "./controls-client";
 
@@ -34,6 +43,29 @@ export default async function ControlsPage() {
     .where(eq(fixedLineItems.active, true))
     .orderBy(asc(fixedLineItems.name));
 
+  const totalSetting = await db
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.key, TOTAL_SQM_KEY))
+    .limit(1);
+  const totalSqm = totalSetting[0]?.value ? Number(totalSetting[0].value) : 0;
+
+  const spaceRows = await db
+    .select()
+    .from(commonSpaces)
+    .where(eq(commonSpaces.active, true))
+    .orderBy(asc(commonSpaces.name));
+  const splitRows = await db.select().from(commonSpaceSplits);
+  const spacesData = spaceRows.map((s) => ({
+    id: s.id,
+    name: s.name,
+    sqm: Number(s.squareMetres),
+    splitMethod: s.splitMethod as "occupancy" | "custom",
+    splits: splitRows
+      .filter((sp) => sp.commonSpaceId === s.id)
+      .map((sp) => ({ companyId: sp.companyId, percent: Number(sp.percent) })),
+  }));
+
   const data = subs.map((c) => {
     const alloc = allocMap.get(c.id);
     const live = countMap.get(c.id) ?? 0;
@@ -63,7 +95,12 @@ export default async function ControlsPage() {
         title="Billing Controls"
         description="Configure how each month's shared expenses are split across the sub-companies."
       />
-      <ControlsManager companies={data} canManage={canManage} />
+      <ControlsManager
+        companies={data}
+        canManage={canManage}
+        totalSqm={totalSqm}
+        commonSpaces={spacesData}
+      />
     </div>
   );
 }
