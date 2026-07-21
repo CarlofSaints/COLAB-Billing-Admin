@@ -137,9 +137,11 @@ function ImportForm({ onDone }: { onDone: () => void }) {
         </div>
         <p className="mt-1">Sub Company · Name · Surname · Email · Cell Number</p>
         <p className="mt-1 text-muted">
-          <strong>Sub Company</strong> must match a company name exactly (COLAB or a sub-company).
-          People are matched by email (or name + company) and <strong>updated in place</strong> — no
-          duplicates. Rows with an unknown company are skipped.
+          Only <strong>Name</strong> and <strong>Sub Company</strong> are required — any other field
+          can be blank. <strong>Sub Company</strong> must match a company name exactly (COLAB or a
+          sub-company). People are matched by email (or name + company) and{" "}
+          <strong>updated in place</strong> — no duplicates. Rows with no name or an unknown company
+          are skipped and counted.
         </p>
       </div>
       <Field label="Excel or CSV file">

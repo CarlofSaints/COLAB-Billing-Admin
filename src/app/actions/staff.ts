@@ -160,7 +160,8 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
     const position = pick(row, ["position", "role", "title", "jobtitle"]);
     const companyName = pick(row, ["company", "subcompany", "business", "entity"]);
 
-    if (!firstName || !lastName) {
+    // Only a Name and a valid Sub Company are required; everything else is optional.
+    if (!firstName) {
       skipped++;
       continue;
     }
