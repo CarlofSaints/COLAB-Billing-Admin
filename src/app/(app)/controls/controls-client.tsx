@@ -176,6 +176,11 @@ function SqmTab({
                 <Stat label="Unallocated" value={`${unallocatedCommon.toLocaleString()} m²`} />
               </div>
             </div>
+            {totalNum === 0 && (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Enter the total building area to calculate each company&apos;s share.
+              </p>
+            )}
             {overItemised && (
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 Itemised common space ({itemised.toLocaleString()} m²) exceeds available common
