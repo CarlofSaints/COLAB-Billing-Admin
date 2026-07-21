@@ -101,7 +101,7 @@ function ProviderCard({
         </div>
         {configured ? (
           <Badge tone="green">
-            <CheckCircle2 className="mr-1 h-3 w-3" /> Connected
+            <CheckCircle2 className="mr-1 h-3 w-3" /> Credentials saved
           </Badge>
         ) : (
           <Badge tone="neutral">Not configured</Badge>
