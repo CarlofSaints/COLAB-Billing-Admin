@@ -1,0 +1,69 @@
+import { asc, eq, sql } from "drizzle-orm";
+import { db } from "@/db";
+import { companies, companyAllocations, fixedLineItems, staff } from "@/db/schema";
+import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
+import { PageHeader } from "@/components/ui/page";
+import { ControlsManager } from "./controls-client";
+
+export const metadata = { title: "Controls — COLAB" };
+
+export default async function ControlsPage() {
+  await requirePermission("controls.view");
+  const user = await getCurrentUser();
+  const canManage = user ? hasPermission(user, "controls.manage") : false;
+
+  const subs = await db
+    .select()
+    .from(companies)
+    .where(eq(companies.type, "sub"))
+    .orderBy(asc(companies.name));
+
+  const allocs = await db.select().from(companyAllocations);
+  const allocMap = new Map(allocs.map((a) => [a.companyId, a]));
+
+  const counts = await db
+    .select({ companyId: staff.companyId, count: sql<number>`count(*)::int` })
+    .from(staff)
+    .where(eq(staff.active, true))
+    .groupBy(staff.companyId);
+  const countMap = new Map(counts.map((c) => [c.companyId, c.count]));
+
+  const fixed = await db
+    .select()
+    .from(fixedLineItems)
+    .where(eq(fixedLineItems.active, true))
+    .orderBy(asc(fixedLineItems.name));
+
+  const data = subs.map((c) => {
+    const alloc = allocMap.get(c.id);
+    const live = countMap.get(c.id) ?? 0;
+    const override = alloc?.headcountOverride ?? null;
+    return {
+      id: c.id,
+      name: c.name,
+      sqm: alloc ? Number(alloc.squareMetres) : 0,
+      headcountOverride: override,
+      liveHeadcount: live,
+      effectiveHeadcount: override ?? live,
+      fixedItems: fixed
+        .filter((f) => f.companyId === c.id)
+        .map((f) => ({
+          id: f.id,
+          name: f.name,
+          quantity: Number(f.quantity),
+          unitAmount: Number(f.unitAmount),
+          notes: f.notes ?? "",
+        })),
+    };
+  });
+
+  return (
+    <div>
+      <PageHeader
+        title="Billing Controls"
+        description="Configure how each month's shared expenses are split across the sub-companies."
+      />
+      <ControlsManager companies={data} canManage={canManage} />
+    </div>
+  );
+}
