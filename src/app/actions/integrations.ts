@@ -5,8 +5,28 @@ import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { setSecretValue, removeSecretValue } from "@/lib/integrations";
 import { XERO_FIELDS, DEXT_FIELDS, type IntegrationField } from "@/lib/integrations-fields";
+import { fetchOrganisationName, disconnectXero } from "@/lib/xero";
 
 export type IntegrationState = { error?: string; ok?: boolean };
+
+/** Live-check the Xero connection by fetching the connected org's name. */
+export async function testXeroConnection(): Promise<{ ok: boolean; name?: string; error?: string }> {
+  await requirePermission("integrations.manage");
+  return fetchOrganisationName();
+}
+
+export async function disconnectXeroAction() {
+  const user = await requirePermission("integrations.manage");
+  await disconnectXero();
+  await logEvent({
+    action: "integration.xero_disconnected",
+    summary: "Disconnected Xero",
+    actor: user,
+    entityType: "integration",
+    entityId: "xero",
+  });
+  revalidatePath("/integrations");
+}
 
 async function saveFields(
   provider: string,
