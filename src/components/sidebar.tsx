@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   UserCog,
   ScrollText,
+  Plug,
   LogOut,
 } from "lucide-react";
 import { Logo } from "./logo";
@@ -49,6 +50,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { href: "/users", label: "Users", icon: UserCog, perm: "users.view" },
       { href: "/roles", label: "Roles & Permissions", icon: ShieldCheck, perm: "roles.manage" },
+      { href: "/integrations", label: "Integrations", icon: Plug, perm: "integrations.manage" },
       { href: "/logs", label: "Activity Log", icon: ScrollText, perm: "logs.view" },
     ],
   },

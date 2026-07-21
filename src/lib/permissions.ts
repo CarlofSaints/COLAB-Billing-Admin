@@ -40,6 +40,9 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "users.manage", label: "Create / edit users", category: "Users & Access", sort: 130 },
   { key: "roles.manage", label: "Manage roles & permissions", category: "Users & Access", sort: 140 },
 
+  // Integrations
+  { key: "integrations.manage", label: "Manage Xero / Dext credentials", category: "Integrations", sort: 145 },
+
   // Logs
   { key: "logs.view", label: "View activity log", category: "Activity Log", sort: 150 },
 ];
