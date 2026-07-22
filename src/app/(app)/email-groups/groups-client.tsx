@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useState } from "react";
-import { Mails, Plus, Pencil, Trash2, Users2 } from "lucide-react";
+import { Mails, Plus, Pencil, Trash2, Users2, Search } from "lucide-react";
 import {
   createGroup,
   updateGroup,
@@ -65,18 +65,28 @@ function MembersForm({
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(saveGroupMembers, {});
   const [selected, setSelected] = useState<Set<number>>(new Set(group.memberIds));
+  const [query, setQuery] = useState("");
   useEffect(() => {
     if (state.ok) onDone();
   }, [state.ok, onDone]);
 
+  // Search across name, email and company so "iram" or a surname both work.
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allStaff;
+    return allStaff.filter((s) =>
+      [s.name, s.email, s.companyName].some((v) => (v ?? "").toLowerCase().includes(q)),
+    );
+  }, [allStaff, query]);
+
   const byCompany = useMemo(() => {
     const map = new Map<string, StaffOpt[]>();
-    for (const s of allStaff) {
+    for (const s of matches) {
       if (!map.has(s.companyName)) map.set(s.companyName, []);
       map.get(s.companyName)!.push(s);
     }
     return Array.from(map.entries());
-  }, [allStaff]);
+  }, [matches]);
 
   const toggle = (id: number) =>
     setSelected((prev) => {
@@ -93,16 +103,33 @@ function MembersForm({
           <input key={id} type="hidden" name="member" value={id} />
         ))}
 
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <Input
+          placeholder="Search staff by name, email or company…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="pl-9"
+          autoFocus
+        />
+      </div>
+
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted">{selected.size} selected</p>
+        <p className="text-sm text-muted">
+          {selected.size} selected
+          {query.trim() && ` · ${matches.length} match${matches.length === 1 ? "" : "es"}`}
+        </p>
         <div className="flex gap-2">
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => setSelected(new Set(allStaff.map((s) => s.id)))}
+            onClick={() =>
+              // With a search active, only add the people currently listed.
+              setSelected((prev) => new Set([...prev, ...matches.map((s) => s.id)]))
+            }
           >
-            Select all
+            {query.trim() ? "Select matches" : "Select all"}
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
             Clear
@@ -112,7 +139,9 @@ function MembersForm({
 
       <div className="max-h-80 space-y-4 overflow-y-auto rounded-lg border border-line p-3">
         {byCompany.length === 0 && (
-          <p className="py-6 text-center text-sm text-muted">No active staff to add.</p>
+          <p className="py-6 text-center text-sm text-muted">
+            {query.trim() ? `No staff match “${query.trim()}”.` : "No active staff to add."}
+          </p>
         )}
         {byCompany.map(([company, people]) => (
           <div key={company}>

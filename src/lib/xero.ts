@@ -10,7 +10,8 @@ import { getSecretValue, setSecretValue, removeSecretValue } from "./integration
 const AUTHORIZE_URL = "https://login.xero.com/identity/connect/authorize";
 const TOKEN_URL = "https://identity.xero.com/connect/token";
 const CONNECTIONS_URL = "https://api.xero.com/connections";
-const ORG_URL = "https://api.xero.com/api.xro/2.0/Organisation";
+const API_BASE = "https://api.xero.com/api.xro/2.0";
+const ORG_URL = `${API_BASE}/Organisation`;
 
 export const XERO_SCOPES = [
   "offline_access",
@@ -162,6 +163,69 @@ export async function disconnectXero(): Promise<void> {
   await removeSecretValue(K.expiresAt);
   await removeSecretValue(K.tenantId);
   await removeSecretValue(K.tenantName);
+}
+
+/** Authenticated GET against the Xero Accounting API for the pinned tenant. */
+async function xeroGet<T>(path: string): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  const token = await getValidAccessToken();
+  const tenantId = await getTenantId();
+  if (!token || !tenantId) return { ok: false, error: "Not connected to Xero." };
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Xero-tenant-id": tenantId,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    return { ok: false, error: `Xero returned ${res.status} for ${path}` };
+  }
+  return { ok: true, data: (await res.json()) as T };
+}
+
+export type XeroAccount = {
+  accountId: string;
+  code: string | null;
+  name: string;
+  type: string | null;
+  description: string | null;
+};
+
+type RawAccount = {
+  AccountID: string;
+  Code?: string;
+  Name: string;
+  Type?: string;
+  Class?: string;
+  Status?: string;
+  Description?: string;
+};
+
+/**
+ * Every active expense account on the chart of accounts — i.e. the P&L cost
+ * lines COLAB can recharge. Xero groups these under Class = EXPENSE, which
+ * spans the EXPENSE / OVERHEADS / DIRECTCOSTS / DEPRECIATN types.
+ */
+export async function fetchExpenseAccounts(): Promise<
+  { ok: true; accounts: XeroAccount[] } | { ok: false; error: string }
+> {
+  const res = await xeroGet<{ Accounts?: RawAccount[] }>("/Accounts");
+  if (!res.ok) return res;
+
+  const accounts = (res.data.Accounts ?? [])
+    .filter((a) => a.Class === "EXPENSE" && (a.Status ?? "ACTIVE") === "ACTIVE")
+    .map((a) => ({
+      accountId: a.AccountID,
+      code: a.Code ?? null,
+      name: a.Name,
+      type: a.Type ?? null,
+      description: a.Description ?? null,
+    }))
+    .sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true }));
+
+  return { ok: true, accounts };
 }
 
 /** Live check: fetch the connected organisation's name from Xero. */

@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   SlidersHorizontal,
   Building2,
+  Wallet,
   Users,
   Mails,
   Send,
@@ -34,6 +35,12 @@ const SECTIONS: NavSection[] = [
     heading: "Billing",
     items: [
       { href: "/controls", label: "Controls", icon: SlidersHorizontal, perm: "controls.view" },
+      {
+        href: "/expense-accounts",
+        label: "Expense Accounts",
+        icon: Wallet,
+        perm: "controls.view",
+      },
       { href: "/companies", label: "Sub-Companies", icon: Building2, perm: "companies.view" },
     ],
   },

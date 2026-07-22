@@ -8,8 +8,17 @@ import { db } from "@/db";
 import { users, roles } from "@/db/schema";
 import { requirePermission, hashPassword } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
+import { appBaseUrl, credentialsEmail, mailConfigured, sendMail } from "@/lib/mailer";
 
-export type UserActionState = { error?: string; ok?: boolean; tempPassword?: string };
+export type UserActionState = {
+  error?: string;
+  ok?: boolean;
+  tempPassword?: string;
+  /** Set when the credentials email was requested: did it actually go out? */
+  emailed?: boolean;
+  emailError?: string;
+  emailTo?: string;
+};
 
 function tempPassword(): string {
   // Readable-ish temporary password.
@@ -38,6 +47,10 @@ export async function createUser(
   const existing = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (existing[0]) return { error: "A user with that email already exists." };
 
+  // Both default on: the admin ticks them off deliberately.
+  const sendCredentials = formData.get("sendCredentials") != null;
+  const mustChangePassword = formData.get("mustChangePassword") != null;
+
   const pw = tempPassword();
   const passwordHash = await hashPassword(pw);
   const [row] = await db
@@ -47,7 +60,7 @@ export async function createUser(
       email,
       roleId: parsed.data.roleId,
       passwordHash,
-      mustChangePassword: true,
+      mustChangePassword,
     })
     .returning();
 
@@ -57,10 +70,67 @@ export async function createUser(
     actor,
     entityType: "user",
     entityId: row.id,
+    metadata: { sendCredentials, mustChangePassword },
   });
 
+  const mail = sendCredentials
+    ? await mailCredentials({
+        name: row.name,
+        email: row.email,
+        password: pw,
+        mustChangePassword,
+        isReset: false,
+        actorId: row.id,
+      })
+    : null;
+
   revalidatePath("/users");
-  return { ok: true, tempPassword: pw };
+  return {
+    ok: true,
+    tempPassword: pw,
+    ...(mail ?? {}),
+  };
+}
+
+/**
+ * Emails a user their sign-in details and records the outcome. Never throws —
+ * a failed send must not undo the account it belongs to.
+ */
+async function mailCredentials(input: {
+  name: string;
+  email: string;
+  password: string;
+  mustChangePassword: boolean;
+  isReset: boolean;
+  actorId: number;
+}): Promise<{ emailed: boolean; emailError?: string; emailTo: string }> {
+  if (!mailConfigured()) {
+    const error = "Email isn't configured yet — add RESEND_API_KEY and MAIL_FROM in Vercel.";
+    await logEvent({
+      action: "user.credentials_email_blocked",
+      summary: `Could not email sign-in details to ${input.email} — email not configured`,
+      entityType: "user",
+      entityId: input.actorId,
+    });
+    return { emailed: false, emailError: error, emailTo: input.email };
+  }
+
+  const loginUrl = `${await appBaseUrl()}/login`;
+  const { subject, html, text } = credentialsEmail({ ...input, loginUrl });
+  const res = await sendMail({ to: input.email, subject, html, text });
+
+  await logEvent({
+    action: res.ok ? "user.credentials_emailed" : "user.credentials_email_failed",
+    summary: res.ok
+      ? `Emailed sign-in details to ${input.email}`
+      : `Failed to email sign-in details to ${input.email}: ${res.error}`,
+    entityType: "user",
+    entityId: input.actorId,
+  });
+
+  return res.ok
+    ? { emailed: true, emailTo: input.email }
+    : { emailed: false, emailError: res.error, emailTo: input.email };
 }
 
 export async function updateUserRole(userId: number, roleId: number) {

@@ -35,6 +35,20 @@ export const actorTypeEnum = pgEnum("actor_type", ["user", "system", "api"]);
 // "occupancy" = pro-rata by each company's occupied m²; "custom" = fixed % per company.
 export const splitMethodEnum = pgEnum("split_method", ["occupancy", "custom"]);
 
+// How the cost sitting on one Xero P&L expense account is recharged.
+//   per_sqm   — split by effective floor-space share (rent-style)
+//   headcount — split by staff count
+//   fixed     — recovered through a fixed line item (parking etc.), not pro-rata
+//   direct    — billed 100% to a single sub-company
+//   exclude   — COLAB's own cost, never recharged
+export const accountMethodEnum = pgEnum("account_method", [
+  "per_sqm",
+  "headcount",
+  "fixed",
+  "direct",
+  "exclude",
+]);
+
 /* ------------------------------------------------------------------ */
 /* Companies (COLAB + the 4 sub-companies)                            */
 /* ------------------------------------------------------------------ */
@@ -213,6 +227,40 @@ export const fixedLineAllocations = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Xero expense account → split method mapping                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One row per mapped Xero P&L expense account. The account list itself lives
+ * in Xero (fetched live); this table only records the billing decision, plus
+ * a snapshot of the code/name so the mapping still reads sensibly when Xero
+ * is unreachable or an account is later renamed.
+ *
+ * No row for an account = unmapped = left out of the billing run.
+ */
+export const expenseAccountMappings = pgTable(
+  "expense_account_mappings",
+  {
+    id: serial("id").primaryKey(),
+    // Xero AccountID (GUID) — stable even if the code or name changes.
+    xeroAccountId: text("xero_account_id").notNull(),
+    accountCode: text("account_code"),
+    accountName: text("account_name").notNull(),
+    accountType: text("account_type"), // EXPENSE / OVERHEADS / DIRECTCOSTS / …
+    method: accountMethodEnum("method").notNull(),
+    // Only for method = "direct": the sub-company that carries the whole cost.
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    // Only for method = "fixed": which fixed line item recovers this account.
+    fixedLineItemId: integer("fixed_line_item_id").references(() => fixedLineItems.id, {
+      onDelete: "set null",
+    }),
+    notes: text("notes"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("expense_account_map_unique").on(t.xeroAccountId)],
+);
+
+/* ------------------------------------------------------------------ */
 /* App settings (key/value) — e.g. total building floor area          */
 /* ------------------------------------------------------------------ */
 
@@ -350,6 +398,17 @@ export const companyAllocationsRelations = relations(companyAllocations, ({ one 
   }),
 }));
 
+export const expenseAccountMappingsRelations = relations(expenseAccountMappings, ({ one }) => ({
+  company: one(companies, {
+    fields: [expenseAccountMappings.companyId],
+    references: [companies.id],
+  }),
+  fixedLineItem: one(fixedLineItems, {
+    fields: [expenseAccountMappings.fixedLineItemId],
+    references: [fixedLineItems.id],
+  }),
+}));
+
 export const commonSpacesRelations = relations(commonSpaces, ({ many }) => ({
   splits: many(commonSpaceSplits),
 }));
@@ -380,4 +439,5 @@ export type FixedLineAllocation = typeof fixedLineAllocations.$inferSelect;
 export type CompanyAllocation = typeof companyAllocations.$inferSelect;
 export type CommonSpace = typeof commonSpaces.$inferSelect;
 export type CommonSpaceSplit = typeof commonSpaceSplits.$inferSelect;
+export type ExpenseAccountMapping = typeof expenseAccountMappings.$inferSelect;
 export type ActivityLogEntry = typeof activityLog.$inferSelect;

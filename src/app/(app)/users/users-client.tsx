@@ -1,7 +1,7 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
-import { UserCog, Plus, KeyRound, Copy } from "lucide-react";
+import { useActionState, useState } from "react";
+import { UserCog, Plus, KeyRound, Copy, MailCheck, AlertTriangle } from "lucide-react";
 import {
   createUser,
   updateUserRole,
@@ -31,7 +31,7 @@ type UserRow = {
   roleKey: string;
 };
 
-function TempPasswordNote({ pw }: { pw: string }) {
+function TempPasswordNote({ pw, mustReset = true }: { pw: string; mustReset?: boolean }) {
   return (
     <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
       <p className="font-medium">Temporary password — share it securely:</p>
@@ -46,18 +46,66 @@ function TempPasswordNote({ pw }: { pw: string }) {
           <Copy className="h-3.5 w-3.5" /> Copy
         </Button>
       </div>
-      <p className="mt-1 text-xs">They&apos;ll be asked to change it on first sign-in.</p>
+      {mustReset && (
+        <p className="mt-1 text-xs">They&apos;ll be asked to change it on first sign-in.</p>
+      )}
     </div>
+  );
+}
+
+/** A labelled checkbox row, styled like the other option lists in the app. */
+function CheckOption({
+  name,
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  name: string;
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-line px-3 py-2.5 hover:bg-slate-50">
+      <input
+        type="checkbox"
+        name={name}
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+      />
+      <span>
+        <span className="block text-sm font-medium text-slate-800">{label}</span>
+        <span className="block text-xs text-muted">{hint}</span>
+      </span>
+    </label>
   );
 }
 
 function AddUserForm({ roles, onDone }: { roles: RoleOpt[]; onDone: () => void }) {
   const [state, action] = useActionState<UserActionState, FormData>(createUser, {});
+  const [sendCredentials, setSendCredentials] = useState(true);
+  const [mustChange, setMustChange] = useState(true);
 
   if (state.ok && state.tempPassword) {
     return (
       <div className="space-y-4">
-        <TempPasswordNote pw={state.tempPassword} />
+        {state.emailed && (
+          <p className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            <MailCheck className="mt-0.5 h-4 w-4 shrink-0" />
+            Sign-in details emailed to {state.emailTo}.
+          </p>
+        )}
+        {state.emailError && (
+          <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            The user was created, but the email didn&apos;t send: {state.emailError} Share the
+            password below instead.
+          </p>
+        )}
+        <TempPasswordNote pw={state.tempPassword} mustReset={mustChange} />
         <div className="flex justify-end">
           <Button onClick={onDone}>Done</Button>
         </div>
@@ -85,6 +133,24 @@ function AddUserForm({ roles, onDone }: { roles: RoleOpt[]; onDone: () => void }
           ))}
         </Select>
       </Field>
+
+      <div className="space-y-2">
+        <CheckOption
+          name="sendCredentials"
+          label="Send user credentials"
+          hint="Emails them the sign-in link, their email address and the temporary password."
+          checked={sendCredentials}
+          onChange={setSendCredentials}
+        />
+        <CheckOption
+          name="mustChangePassword"
+          label="Force user to reset password on first sign-in"
+          hint="They must choose their own password before they can use the portal."
+          checked={mustChange}
+          onChange={setMustChange}
+        />
+      </div>
+
       {state.error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
       )}

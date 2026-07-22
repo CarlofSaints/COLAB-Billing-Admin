@@ -61,18 +61,23 @@ export function RolesGrid({
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
       )}
 
-      <Card className="overflow-hidden">
-        <div className="w-full overflow-x-auto">
+      {/* No overflow wrapper: an overflow-x-auto/hidden ancestor is its own
+          scroll container and would stop the header sticking to the page. */}
+      <Card>
+        <div className="w-full [&_tbody_tr:last-child_td]:border-b-0 [&_tbody_tr:last-child_td:first-child]:rounded-bl-xl [&_tbody_tr:last-child_td:last-child]:rounded-br-xl">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="bg-slate-50">
-                <th className="sticky left-0 z-10 border-b border-line bg-slate-50 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                <th className="sticky left-0 top-0 z-30 rounded-tl-xl border-b border-line bg-slate-50 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
                   Permission
                 </th>
-                {roles.map((r) => (
+                {roles.map((r, i) => (
                   <th
                     key={r.id}
-                    className="border-b border-l border-line px-4 py-3 text-center align-bottom"
+                    className={cn(
+                      "sticky top-0 z-20 border-b border-l border-line bg-slate-50 px-4 py-3 text-center align-bottom",
+                      i === roles.length - 1 && "rounded-tr-xl",
+                    )}
                   >
                     <div className="text-sm font-semibold text-slate-900">{r.name}</div>
                     <div className="mx-auto mt-0.5 max-w-[9rem] text-[11px] font-normal leading-tight text-muted">
