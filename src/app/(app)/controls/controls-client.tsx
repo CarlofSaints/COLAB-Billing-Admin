@@ -146,17 +146,26 @@ function SqmTab({
                   onChange={(e) => setTotal(e.target.value)}
                 />
               </Field>
-              <Field label="Monthly rent (excl. VAT)" className="w-44">
-                <Input
-                  name="rent_amount"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="e.g. 120000"
-                  value={rent}
-                  disabled={!canManage}
-                  onChange={(e) => setRent(e.target.value)}
-                />
+              <Field label="Monthly rent (excl. VAT)" className="w-52">
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">
+                    R
+                  </span>
+                  <Input
+                    name="rent_amount"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="120000"
+                    value={rent}
+                    disabled={!canManage}
+                    onChange={(e) => setRent(e.target.value)}
+                    className="pl-7"
+                  />
+                </div>
+                {Number(rent) > 0 && (
+                  <p className="mt-1 text-xs text-muted">{formatCurrency(Number(rent))} / month</p>
+                )}
               </Field>
               <div className="flex flex-wrap gap-2 pb-2">
                 <Stat label="Occupied" value={`${totalOccupied.toLocaleString()} m²`} />

@@ -356,6 +356,8 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     let unsplitBalance = 0;
     let billedFromControls = 0;
     const unsplitBalanceSuppliers: string[] = [];
+    const creditedItems = new Set<number>();
+    const duplicateItemUse = new Set<number>();
 
     for (const row of costs.rows) {
       const own = explicit.get(row.key);
@@ -384,10 +386,17 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
 
       if (method === "fixed") {
         // The fixed line item recovers a set amount on the recurring invoice;
-        // only what it leaves behind belongs on this invoice.
-        const recovered = winner.fixedLineItemId
-          ? (recoveredByItem.get(winner.fixedLineItemId) ?? 0)
-          : 0;
+        // only what it leaves behind belongs on this invoice. If several lines
+        // point at the same item it must still only be credited once, or the
+        // recovery is multiplied and the companies are under-billed.
+        const itemId = winner.fixedLineItemId;
+        const alreadyCredited = itemId != null && creditedItems.has(itemId);
+        if (itemId != null) {
+          if (alreadyCredited) duplicateItemUse.add(itemId);
+          creditedItems.add(itemId);
+        }
+        const recovered =
+          itemId != null && !alreadyCredited ? (recoveredByItem.get(itemId) ?? 0) : 0;
         recoveredElsewhere += Math.min(recovered, row.amount);
         const balance = round2(row.amount - recovered);
         if (balance <= 0.005) continue;
@@ -478,6 +487,18 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       warnings.push({
         level: "info",
         message: `${formatRand(recoveredElsewhere)} is recovered by fixed line items and is billed on the recurring invoice instead, not here.`,
+      });
+    }
+
+    if (duplicateItemUse.size > 0) {
+      const names = [...duplicateItemUse]
+        .map((id) => fixedItemRows.find((i) => i.id === id)?.name ?? `item ${id}`)
+        .join(", ");
+      warnings.push({
+        level: "warn",
+        message: `More than one supplier line is linked to the same fixed line item (${names}). The item only recovers its amount once, so the extra lines have been billed in full here — link each item to the single line it covers.`,
+        href: `/supplier-splits?period=${period}`,
+        linkLabel: "Fix the links",
       });
     }
 

@@ -619,6 +619,15 @@ export function SupplierSplitsClient({
                           companies={companies}
                           canManage={canManage}
                           canUnlock={canUnlock}
+                          duplicateCount={
+                            d?.fixedLineItemId == null
+                              ? 0
+                              : rows.filter(
+                                  (other) =>
+                                    draft[other.key]?.method === "fixed" &&
+                                    draft[other.key]?.fixedLineItemId === d.fixedLineItemId,
+                                ).length
+                          }
                           onItemChange={(id) => setRow(r.key, { fixedLineItemId: id })}
                           onBalanceMethod={(m) => changeBalanceMethod(r.key, m)}
                           onBalanceCompany={(id) => setRow(r.key, { balanceCompanyId: id })}
@@ -666,6 +675,7 @@ function FixedWithBalance({
   companies,
   canManage,
   canUnlock,
+  duplicateCount,
   onItemChange,
   onBalanceMethod,
   onBalanceCompany,
@@ -677,12 +687,15 @@ function FixedWithBalance({
   companies: { id: number; name: string }[];
   canManage: boolean;
   canUnlock: boolean;
+  /** How many rows this month point at the same fixed line item. */
+  duplicateCount: number;
   onItemChange: (id: number | null) => void;
   onBalanceMethod: (m: MethodChoice) => void;
   onBalanceCompany: (id: number | null) => void;
   onBalancePercentages: (p: PercentEntry[]) => void;
 }) {
   const item = fixedItems.find((f) => f.id === draft?.fixedLineItemId) ?? null;
+  const sharedWith = item ? duplicateCount - 1 : 0;
   const recovered = item?.allocatedTotal ?? 0;
   // With the amount restricted we can't show the balance without disclosing
   // the figure — the balance method is still editable.
@@ -706,6 +719,17 @@ function FixedWithBalance({
           </option>
         ))}
       </Select>
+
+      {sharedWith > 0 && (
+        <p className="flex items-start gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs font-medium text-red-800">
+          <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span>
+            {item?.name} is linked to {sharedWith + 1} lines this month, but it only recovers its
+            amount <em>once</em>. Link it to the one line it actually covers, and split the others
+            directly.
+          </span>
+        </p>
+      )}
 
       {item && restricted ? (
         <div className="space-y-1.5 rounded-md border border-line bg-slate-50 px-2 py-1.5">

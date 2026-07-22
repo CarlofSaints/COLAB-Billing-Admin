@@ -329,6 +329,13 @@ export const expenseAccountMappings = pgTable(
     // Hide every amount on this account — its supplier lines, its journal
     // reconciliation, and the invoice lines it produces.
     sensitive: boolean("sensitive").notNull().default(false),
+    // With method = "fixed", how to split whatever the fixed line item doesn't
+    // recover. The rule holds whether or not the amount is known here.
+    balanceMethod: accountMethodEnum("balance_method"),
+    balanceCompanyId: integer("balance_company_id").references(() => companies.id, {
+      onDelete: "set null",
+    }),
+    balancePercentages: jsonb("balance_percentages").$type<PercentSplit[]>(),
     notes: text("notes"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

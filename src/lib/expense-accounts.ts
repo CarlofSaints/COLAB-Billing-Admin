@@ -155,6 +155,29 @@ export function percentSummary(
     .join(" · ");
 }
 
+export type FixedItemOption = {
+  id: number;
+  name: string;
+  splitMode: "quantity" | "percent";
+  /** null when the item's amount is restricted for this viewer. */
+  unitAmount: number | null;
+  allocatedTotal: number | null;
+};
+
+/**
+ * How a fixed line item reads in a dropdown. A restricted item shows its name
+ * only — the amount must not leak through the option label.
+ */
+export function fixedItemLabel(
+  item: FixedItemOption,
+  format: (n: number) => string,
+): string {
+  if (item.unitAmount === null) return `${item.name} · restricted`;
+  return item.splitMode === "percent"
+    ? `${item.name} · ${format(item.unitAmount)} total, split by %`
+    : `${item.name} · ${format(item.unitAmount)} each`;
+}
+
 /** Friendly label for a Xero account type (EXPENSE, OVERHEADS, DIRECTCOSTS, …). */
 export function accountTypeLabel(type: string | null | undefined): string {
   if (!type) return "Expense";

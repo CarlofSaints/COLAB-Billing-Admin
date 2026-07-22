@@ -28,6 +28,9 @@ type MappingInput = {
   fixedLineItemId: number | null;
   percentages: PercentEntry[] | null;
   sensitive: boolean;
+  balanceMethod: AccountMethod | null;
+  balanceCompanyId: number | null;
+  balancePercentages: PercentEntry[] | null;
 };
 
 function parsePayload(raw: FormDataEntryValue | null): MappingInput[] | null {
@@ -50,6 +53,7 @@ function parsePayload(raw: FormDataEntryValue | null): MappingInput[] | null {
 
     const rawMethod = typeof r.method === "string" ? r.method : "";
     const method = isAccountMethod(rawMethod) ? rawMethod : null;
+    const rawBalance = typeof r.balanceMethod === "string" ? r.balanceMethod : "";
     const num = (v: unknown) => {
       const n = Number(v);
       return Number.isInteger(n) && n > 0 ? n : null;
@@ -66,6 +70,13 @@ function parsePayload(raw: FormDataEntryValue | null): MappingInput[] | null {
       fixedLineItemId: method === "fixed" ? num(r.fixedLineItemId) : null,
       percentages: method === "percent" ? parsePercentages(r.percentages) : null,
       sensitive: r.sensitive === true,
+      balanceMethod: method === "fixed" && isAccountMethod(rawBalance) ? rawBalance : null,
+      balanceCompanyId:
+        method === "fixed" && rawBalance === "direct" ? num(r.balanceCompanyId) : null,
+      balancePercentages:
+        method === "fixed" && rawBalance === "percent"
+          ? parsePercentages(r.balancePercentages)
+          : null,
     });
   }
   return rows;
@@ -119,6 +130,9 @@ export async function saveAccountMappings(
       fixedLineItemId: r.fixedLineItemId,
       percentages: r.percentages,
       sensitive: r.sensitive,
+      balanceMethod: r.balanceMethod,
+      balanceCompanyId: r.balanceCompanyId,
+      balancePercentages: r.balancePercentages,
     };
     await db
       .insert(expenseAccountMappings)

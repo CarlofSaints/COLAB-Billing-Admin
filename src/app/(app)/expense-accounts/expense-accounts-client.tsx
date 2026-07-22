@@ -17,9 +17,12 @@ import { saveAccountMappings, type ActionState } from "@/app/actions/expense-acc
 import {
   METHODS,
   METHOD_BY_KEY,
+  BALANCE_METHODS,
   UNMAPPED,
   accountTypeLabel,
+  fixedItemLabel,
   type AccountMethod,
+  type FixedItemOption,
   type MethodChoice,
   type PercentEntry,
 } from "@/lib/expense-accounts";
@@ -44,10 +47,12 @@ type AccountRow = {
   fixedLineItemId: number | null;
   percentages: PercentEntry[] | null;
   sensitive: boolean;
+  balanceMethod: AccountMethod | null;
+  balanceCompanyId: number | null;
+  balancePercentages: PercentEntry[] | null;
 };
 
 type CompanyOption = { id: number; name: string };
-type FixedItemOption = { id: number; name: string; unitAmount: number };
 
 type Draft = {
   method: MethodChoice;
@@ -55,6 +60,9 @@ type Draft = {
   fixedLineItemId: number | null;
   percentages: PercentEntry[] | null;
   sensitive: boolean;
+  balanceMethod: MethodChoice;
+  balanceCompanyId: number | null;
+  balancePercentages: PercentEntry[] | null;
 };
 
 type Filter = "all" | "unmapped" | AccountMethod;
@@ -69,6 +77,9 @@ function toDraft(rows: AccountRow[]): Record<string, Draft> {
         fixedLineItemId: r.fixedLineItemId,
         percentages: r.percentages,
         sensitive: r.sensitive,
+        balanceMethod: (r.balanceMethod ?? UNMAPPED) as MethodChoice,
+        balanceCompanyId: r.balanceCompanyId,
+        balancePercentages: r.balancePercentages,
       },
     ]),
   );
@@ -80,7 +91,10 @@ function sameDraft(a: Draft, b: Draft) {
     a.companyId === b.companyId &&
     a.fixedLineItemId === b.fixedLineItemId &&
     a.sensitive === b.sensitive &&
-    JSON.stringify(a.percentages ?? []) === JSON.stringify(b.percentages ?? [])
+    a.balanceMethod === b.balanceMethod &&
+    a.balanceCompanyId === b.balanceCompanyId &&
+    JSON.stringify(a.percentages ?? []) === JSON.stringify(b.percentages ?? []) &&
+    JSON.stringify(a.balancePercentages ?? []) === JSON.stringify(b.balancePercentages ?? [])
   );
 }
 
@@ -89,12 +103,14 @@ export function ExpenseAccountsClient({
   companies,
   fixedItems,
   canManage,
+  canUnlock,
   xero,
 }: {
   rows: AccountRow[];
   companies: CompanyOption[];
   fixedItems: FixedItemOption[];
   canManage: boolean;
+  canUnlock: boolean;
   xero: { configured: boolean; connected: boolean; tenantName: string | null; error: string | null };
 }) {
   const router = useRouter();
@@ -164,6 +180,16 @@ export function ExpenseAccountsClient({
       companyId: method === "direct" ? (draft[id]?.companyId ?? null) : null,
       fixedLineItemId: method === "fixed" ? (draft[id]?.fixedLineItemId ?? null) : null,
       percentages: method === "percent" ? (draft[id]?.percentages ?? null) : null,
+      balanceMethod: method === "fixed" ? (draft[id]?.balanceMethod ?? UNMAPPED) : UNMAPPED,
+      balanceCompanyId: method === "fixed" ? (draft[id]?.balanceCompanyId ?? null) : null,
+      balancePercentages: method === "fixed" ? (draft[id]?.balancePercentages ?? null) : null,
+    });
+
+  const changeBalanceMethod = (id: string, method: MethodChoice) =>
+    setRow(id, {
+      balanceMethod: method,
+      balanceCompanyId: method === "direct" ? (draft[id]?.balanceCompanyId ?? null) : null,
+      balancePercentages: method === "percent" ? (draft[id]?.balancePercentages ?? null) : null,
     });
 
   const toggleRow = (id: string) =>
@@ -194,6 +220,9 @@ export function ExpenseAccountsClient({
           companyId: bulkMethod === "direct" ? next[id].companyId : null,
           fixedLineItemId: bulkMethod === "fixed" ? next[id].fixedLineItemId : null,
           percentages: bulkMethod === "percent" ? next[id].percentages : null,
+          balanceMethod: bulkMethod === "fixed" ? next[id].balanceMethod : UNMAPPED,
+          balanceCompanyId: bulkMethod === "fixed" ? next[id].balanceCompanyId : null,
+          balancePercentages: bulkMethod === "fixed" ? next[id].balancePercentages : null,
         };
       }
       return next;
@@ -215,6 +244,9 @@ export function ExpenseAccountsClient({
         fixedLineItemId: d.fixedLineItemId,
         percentages: d.percentages,
         sensitive: d.sensitive,
+        balanceMethod: d.balanceMethod === UNMAPPED ? null : d.balanceMethod,
+        balanceCompanyId: d.balanceCompanyId,
+        balancePercentages: d.balancePercentages,
       };
     }),
   );
@@ -524,22 +556,84 @@ export function ExpenseAccountsClient({
                           onChange={(entries) => setRow(r.accountId, { percentages: entries })}
                         />
                       ) : def?.needs === "fixedItem" ? (
-                        <Select
-                          value={d?.fixedLineItemId ?? ""}
-                          disabled={!canManage}
-                          onChange={(e) =>
-                            setRow(r.accountId, {
-                              fixedLineItemId: e.target.value ? Number(e.target.value) : null,
-                            })
-                          }
-                        >
-                          <option value="">Not linked to an item</option>
-                          {fixedItems.map((f) => (
-                            <option key={f.id} value={f.id}>
-                              {f.name} · {formatCurrency(f.unitAmount)} each
-                            </option>
-                          ))}
-                        </Select>
+                        <div className="space-y-1.5">
+                          <Select
+                            value={d?.fixedLineItemId ?? ""}
+                            disabled={!canManage}
+                            onChange={(e) =>
+                              setRow(r.accountId, {
+                                fixedLineItemId: e.target.value ? Number(e.target.value) : null,
+                              })
+                            }
+                          >
+                            <option value="">Not linked to an item</option>
+                            {fixedItems.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {fixedItemLabel(f, formatCurrency)}
+                              </option>
+                            ))}
+                          </Select>
+
+                          {/* The item rarely recovers the whole account, so the
+                              leftover needs a rule too — whatever it comes to. */}
+                          {d?.fixedLineItemId != null && (
+                            <div className="space-y-1.5 rounded-md border border-line bg-slate-50 px-2 py-1.5">
+                              <p className="text-[11px] text-muted">
+                                Split whatever the item doesn&apos;t cover:
+                              </p>
+                              <Select
+                                value={d?.balanceMethod ?? UNMAPPED}
+                                disabled={!canManage}
+                                onChange={(e) =>
+                                  changeBalanceMethod(r.accountId, e.target.value as MethodChoice)
+                                }
+                                className={cn(
+                                  "text-xs",
+                                  (d?.balanceMethod ?? UNMAPPED) === UNMAPPED &&
+                                    "border-amber-300 bg-amber-50 text-amber-800",
+                                )}
+                              >
+                                <option value={UNMAPPED}>— Balance not split —</option>
+                                {BALANCE_METHODS.map((m) => (
+                                  <option key={m.key} value={m.key}>
+                                    {m.label}
+                                  </option>
+                                ))}
+                              </Select>
+                              {d?.balanceMethod === "direct" && (
+                                <Select
+                                  value={d?.balanceCompanyId ?? ""}
+                                  disabled={!canManage}
+                                  onChange={(e) =>
+                                    setRow(r.accountId, {
+                                      balanceCompanyId: e.target.value
+                                        ? Number(e.target.value)
+                                        : null,
+                                    })
+                                  }
+                                  className={cn("text-xs", !d?.balanceCompanyId && "border-amber-300")}
+                                >
+                                  <option value="">Choose a sub-company…</option>
+                                  {companies.map((c) => (
+                                    <option key={c.id} value={c.id}>
+                                      {c.name}
+                                    </option>
+                                  ))}
+                                </Select>
+                              )}
+                              {d?.balanceMethod === "percent" && (
+                                <PercentCell
+                                  value={d?.balancePercentages ?? null}
+                                  companies={companies}
+                                  disabled={!canManage}
+                                  onChange={(entries) =>
+                                    setRow(r.accountId, { balancePercentages: entries })
+                                  }
+                                />
+                              )}
+                            </div>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-sm text-muted">{def?.applies ?? "—"}</span>
                       )}
