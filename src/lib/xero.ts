@@ -23,7 +23,11 @@ export const XERO_SCOPES = [
   "accounting.settings.read",
   // Needed for the month-end P&L per expense account. Added after the first
   // connection, so an existing connection must be re-consented to pick it up.
-  "accounting.reports.read",
+  //
+  // NB: the broad "accounting.reports.read" is rejected with invalid_scope —
+  // apps created on or after 2 Mar 2026 (this one was) must use the granular
+  // per-report scopes from the outset.
+  "accounting.reports.profitandloss.read",
 ].join(" ");
 
 const K = {
