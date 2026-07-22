@@ -148,11 +148,16 @@ export default async function SupplierSplitsPage({
         fixedItems={items.map((i) => ({
           id: i.id,
           name: i.name,
-          unitAmount: Number(i.unitAmount),
+          splitMode: i.splitMode as "quantity" | "percent",
+          unitAmount: maskAmount(Number(i.unitAmount), i.sensitive, reveal.unlocked),
           // What the item's per-company shares actually recover.
-          allocatedTotal: fixedItemTotal(
-            { splitMode: i.splitMode, unitAmount: Number(i.unitAmount) },
-            allocations.filter((a) => a.fixedLineItemId === i.id).map((a) => Number(a.quantity)),
+          allocatedTotal: maskAmount(
+            fixedItemTotal(
+              { splitMode: i.splitMode, unitAmount: Number(i.unitAmount) },
+              allocations.filter((a) => a.fixedLineItemId === i.id).map((a) => Number(a.quantity)),
+            ),
+            i.sensitive,
+            reveal.unlocked,
           ),
         }))}
         canManage={canManage}

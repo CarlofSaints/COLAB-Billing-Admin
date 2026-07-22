@@ -28,6 +28,7 @@ import {
   type MethodChoice,
   type PercentEntry,
 } from "@/lib/expense-accounts";
+import { fixedItemLabel } from "@/lib/expense-accounts";
 import { PercentCell } from "@/components/percent-split";
 import { periodLabel } from "@/lib/periods";
 import { Button } from "@/components/ui/button";
@@ -75,9 +76,11 @@ type Draft = {
 type FixedItemOption = {
   id: number;
   name: string;
-  unitAmount: number;
-  /** What the item's per-company quantities actually recover each month. */
-  allocatedTotal: number;
+  splitMode: "quantity" | "percent";
+  /** null when the item's amount is restricted for this viewer. */
+  unitAmount: number | null;
+  /** What the item's per-company shares recover each month; null if restricted. */
+  allocatedTotal: number | null;
 };
 type Filter = "all" | "unset" | "inherited" | AccountMethod;
 
@@ -697,9 +700,9 @@ function FixedWithBalance({
   const item = fixedItems.find((f) => f.id === draft?.fixedLineItemId) ?? null;
   const sharedWith = item ? duplicateCount - 1 : 0;
   const recovered = item?.allocatedTotal ?? 0;
-  // With the amount restricted we can't show the balance without disclosing
-  // the figure — the balance method is still editable.
-  const restricted = row.amount === null;
+  // With either figure restricted we can't show the balance without giving it
+  // away — the balance method is still editable.
+  const restricted = row.amount === null || (item != null && item.allocatedTotal === null);
   const balance = item && !restricted ? Math.round((row.amount! - recovered) * 100) / 100 : 0;
   const matched = item != null && !restricted && Math.abs(balance) < 0.005;
   const balanceMethod = draft?.balanceMethod ?? UNMAPPED;
@@ -715,7 +718,7 @@ function FixedWithBalance({
         <option value="">Not linked to an item</option>
         {fixedItems.map((f) => (
           <option key={f.id} value={f.id}>
-            {f.name} · {formatCurrency(f.allocatedTotal)} allocated
+            {fixedItemLabel(f, formatCurrency)}
           </option>
         ))}
       </Select>
