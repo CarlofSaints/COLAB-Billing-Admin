@@ -1,9 +1,10 @@
 import { asc, sql, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { emailGroups, emailGroupMembers, staff } from "@/db/schema";
+import { emailGroups, emailGroupMembers, mailSchedules, staff } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page";
-import { MailComposer } from "./mail-client";
+import { MailTabs } from "./mail-tabs";
+import type { ScheduleRow } from "./schedules-client";
 
 export const metadata = { title: "Mail Sender — COLAB" };
 
@@ -30,13 +31,33 @@ export default async function MailPage() {
 
   const configured = Boolean(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
 
+  const scheduleRows = await db
+    .select()
+    .from(mailSchedules)
+    .orderBy(asc(mailSchedules.name));
+  const schedules: ScheduleRow[] = scheduleRows.map((s) => ({
+    id: s.id,
+    name: s.name,
+    subject: s.subject,
+    body: s.body,
+    audience: s.audience,
+    groupIds: s.groupIds ?? [],
+    frequency: s.frequency,
+    dayOfMonth: s.dayOfMonth,
+    dayOfWeek: s.dayOfWeek,
+    active: s.active,
+    lastRunAt: s.lastRunAt ? s.lastRunAt.toISOString() : null,
+    lastStatus: s.lastStatus,
+    lastDetail: s.lastDetail,
+  }));
+
   return (
     <div>
       <PageHeader
         title="Mail Sender"
-        description="Send a one-way announcement to one or more email groups."
+        description="Send an announcement now, or schedule a recurring reminder."
       />
-      <MailComposer groups={groupData} configured={configured} />
+      <MailTabs groups={groupData} schedules={schedules} configured={configured} />
     </div>
   );
 }

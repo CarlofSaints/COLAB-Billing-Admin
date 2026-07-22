@@ -79,7 +79,9 @@ export function SubCompanyCard({
             <span className="text-muted">Fixed items</span>
             <span className="text-right font-medium text-slate-700">
               {fixedItems
-                .map((f) => `${f.name}${f.quantity && f.quantity !== 1 ? ` ×${f.quantity}` : ""}`)
+                // Always show the count — a bare "Parking Bays" next to a
+                // "Parking Bays ×3" reads as if the quantity is missing.
+                .map((f) => `${f.name} ×${f.quantity ?? 1}`)
                 .join(", ")}
             </span>
           </div>

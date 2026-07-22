@@ -31,6 +31,13 @@ export const allocationMethodEnum = pgEnum("allocation_method", [
 // Who/what triggered a logged event.
 export const actorTypeEnum = pgEnum("actor_type", ["user", "system", "api"]);
 
+// How often a scheduled mail goes out.
+export const mailFrequencyEnum = pgEnum("mail_frequency", ["monthly", "weekly"]);
+
+// Who a scheduled mail goes to: email groups, or each sub-company's own
+// contact person (the admin who maintains that company's staff list).
+export const mailAudienceEnum = pgEnum("mail_audience", ["groups", "company_contacts"]);
+
 // How a common space is divided across the sub-companies.
 // "occupancy" = pro-rata by each company's occupied m²; "custom" = fixed % per company.
 export const splitMethodEnum = pgEnum("split_method", ["occupancy", "custom"]);
@@ -179,6 +186,35 @@ export const emailGroupMembers = pgTable(
   },
   (t) => [primaryKey({ columns: [t.groupId, t.staffId] })],
 );
+
+/* ------------------------------------------------------------------ */
+/* Scheduled mail (recurring reminders)                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A recurring reminder — e.g. "on the 25th, ask each sub-company's admin to
+ * update their staff list before month-end billing". A single daily cron
+ * decides which schedules are due, so the day is stored, not a cron string.
+ */
+export const mailSchedules = pgTable("mail_schedules", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  audience: mailAudienceEnum("audience").notNull().default("company_contacts"),
+  // Which groups to mail when audience = "groups".
+  groupIds: jsonb("group_ids").$type<number[]>(),
+  frequency: mailFrequencyEnum("frequency").notNull().default("monthly"),
+  // monthly: 1–28 (clamped to the last day for short months). weekly: 0=Sun…6=Sat.
+  dayOfMonth: integer("day_of_month"),
+  dayOfWeek: integer("day_of_week"),
+  active: boolean("active").notNull().default(true),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  lastStatus: text("last_status"), // "sent" | "failed" | "skipped"
+  lastDetail: text("last_detail"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 /* ------------------------------------------------------------------ */
 /* Billing Controls                                                   */
@@ -444,4 +480,5 @@ export type CompanyAllocation = typeof companyAllocations.$inferSelect;
 export type CommonSpace = typeof commonSpaces.$inferSelect;
 export type CommonSpaceSplit = typeof commonSpaceSplits.$inferSelect;
 export type ExpenseAccountMapping = typeof expenseAccountMappings.$inferSelect;
+export type MailSchedule = typeof mailSchedules.$inferSelect;
 export type ActivityLogEntry = typeof activityLog.$inferSelect;

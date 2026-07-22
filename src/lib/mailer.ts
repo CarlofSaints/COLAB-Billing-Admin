@@ -42,12 +42,63 @@ export async function sendMail(input: {
   }
 }
 
+export type OutgoingMessage = { to: string; subject: string; html: string; text: string };
+
+/**
+ * Sends one personalised email per recipient via Resend's batch endpoint
+ * (100 per call). Each person gets their own message — no shared bcc — so
+ * merge tokens work and recipients never see each other.
+ */
+export async function sendBatch(
+  messages: OutgoingMessage[],
+): Promise<{ sent: number; failed: number; error?: string }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.MAIL_FROM;
+  if (!apiKey || !from) {
+    return { sent: 0, failed: messages.length, error: "Email isn't configured." };
+  }
+  if (messages.length === 0) return { sent: 0, failed: 0 };
+
+  const { Resend } = await import("resend");
+  const resend = new Resend(apiKey);
+
+  let sent = 0;
+  let failed = 0;
+  let firstError: string | undefined;
+
+  for (let i = 0; i < messages.length; i += 100) {
+    const chunk = messages.slice(i, i + 100);
+    try {
+      const { error } = await resend.batch.send(
+        chunk.map((m) => ({ from, to: [m.to], subject: m.subject, html: m.html, text: m.text })),
+      );
+      if (error) {
+        failed += chunk.length;
+        firstError ??= error.message;
+      } else {
+        sent += chunk.length;
+      }
+    } catch (err) {
+      failed += chunk.length;
+      firstError ??= err instanceof Error ? err.message : "Unknown send error";
+    }
+  }
+
+  return { sent, failed, error: firstError };
+}
+
 /** The app's public base URL, taken from the incoming request. */
 export async function appBaseUrl(): Promise<string> {
-  const h = await headers();
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
-  return `${proto}://${host}`;
+  try {
+    const h = await headers();
+    const proto = h.get("x-forwarded-proto") ?? "https";
+    const host = h.get("x-forwarded-host") ?? h.get("host");
+    if (host) return `${proto}://${host}`;
+  } catch {
+    // No request scope (e.g. a background invocation) — fall through.
+  }
+  const fallback = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  return fallback ? `https://${fallback}` : "https://colab-billing-admin.vercel.app";
 }
 
 function escapeHtml(value: string): string {
