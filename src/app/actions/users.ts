@@ -2,7 +2,7 @@
 
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { users, roles } from "@/db/schema";
@@ -161,6 +161,50 @@ export async function setUserActive(userId: number, active: boolean) {
     metadata: { active },
   });
   revalidatePath("/users");
+}
+
+/**
+ * Permanently removes a user. Their activity-log entries survive — the log
+ * stores actorId without a foreign key precisely so history isn't rewritten.
+ */
+export async function deleteUser(userId: number): Promise<{ error?: string; ok?: boolean }> {
+  const actor = await requirePermission("users.manage");
+  if (actor.id === userId) return { error: "You can't delete your own account." };
+
+  const [target] = await db
+    .select({ id: users.id, name: users.name, email: users.email, roleKey: roles.key })
+    .from(users)
+    .innerJoin(roles, eq(users.roleId, roles.id))
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!target) return { error: "That user no longer exists." };
+
+  // Never let the last super admin be deleted — that would lock everyone out
+  // of users, roles and integrations for good.
+  if (target.roleKey === "super_admin") {
+    const admins = await db
+      .select({ id: users.id })
+      .from(users)
+      .innerJoin(roles, eq(users.roleId, roles.id))
+      .where(and(eq(roles.key, "super_admin"), eq(users.active, true)));
+    if (admins.length <= 1) {
+      return { error: "This is the only Super Admin — create another one before deleting this." };
+    }
+  }
+
+  await db.delete(users).where(eq(users.id, userId));
+
+  await logEvent({
+    action: "user.delete",
+    summary: `Deleted user ${target.name} (${target.email})`,
+    actor,
+    entityType: "user",
+    entityId: userId,
+    metadata: { role: target.roleKey },
+  });
+
+  revalidatePath("/users");
+  return { ok: true };
 }
 
 export async function resetUserPassword(userId: number): Promise<UserActionState> {

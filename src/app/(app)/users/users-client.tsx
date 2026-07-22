@@ -1,12 +1,13 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { UserCog, Plus, KeyRound, Copy, MailCheck, AlertTriangle } from "lucide-react";
+import { UserCog, Plus, KeyRound, Copy, MailCheck, AlertTriangle, Trash2 } from "lucide-react";
 import {
   createUser,
   updateUserRole,
   setUserActive,
   resetUserPassword,
+  deleteUser,
   type UserActionState,
 } from "@/app/actions/users";
 import { Button } from "@/components/ui/button";
@@ -265,13 +266,32 @@ export function UsersManager({
                             <KeyRound className="h-3.5 w-3.5" />
                           </Button>
                           {!isSelf && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setUserActive(u.id, !u.active)}
-                            >
-                              {u.active ? "Disable" : "Enable"}
-                            </Button>
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setUserActive(u.id, !u.active)}
+                              >
+                                {u.active ? "Disable" : "Enable"}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="Delete user"
+                                onClick={async () => {
+                                  if (
+                                    !confirm(
+                                      `Permanently delete ${u.name} (${u.email})?\n\nThey lose access immediately and this can't be undone. To keep the account but block sign-in, use Disable instead.`,
+                                    )
+                                  )
+                                    return;
+                                  const res = await deleteUser(u.id);
+                                  if (res?.error) alert(res.error);
+                                }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                              </Button>
+                            </>
                           )}
                         </div>
                       </TD>
