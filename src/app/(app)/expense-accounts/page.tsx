@@ -61,6 +61,7 @@ export default async function ExpenseAccountsPage() {
       companyId: m?.companyId ?? null,
       fixedLineItemId: m?.fixedLineItemId ?? null,
       percentages: m?.percentages ?? null,
+      sensitive: m?.sensitive ?? false,
     };
   });
 

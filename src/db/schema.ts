@@ -270,6 +270,9 @@ export const fixedLineItems = pgTable("fixed_line_items", {
   splitMode: fixedSplitModeEnum("split_mode").notNull().default("quantity"),
   // A price per unit in "quantity" mode; the total cost in "percent" mode.
   unitAmount: numeric("unit_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  // Hide the rand values from anyone without "View restricted values" —
+  // salaries shouldn't be readable by everyone with billing access.
+  sensitive: boolean("sensitive").notNull().default(false),
   notes: text("notes"),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -323,6 +326,9 @@ export const expenseAccountMappings = pgTable(
     }),
     // Only for method = "percent".
     percentages: jsonb("percentages").$type<PercentSplit[]>(),
+    // Hide every amount on this account — its supplier lines, its journal
+    // reconciliation, and the invoice lines it produces.
+    sensitive: boolean("sensitive").notNull().default(false),
     notes: text("notes"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

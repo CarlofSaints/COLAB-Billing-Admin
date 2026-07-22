@@ -11,6 +11,8 @@ import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { fetchExpenseAccounts, xeroStatus } from "@/lib/xero";
 import { getMonthCosts } from "@/lib/month-costs";
 import { fixedItemTotal } from "@/lib/billing-calc";
+import { maskAmount, revealState } from "@/lib/sensitive";
+import { RevealToggle } from "@/components/sensitive-amount";
 import { defaultPeriod, isPeriod, recentPeriods } from "@/lib/periods";
 import type { AccountMethod } from "@/lib/expense-accounts";
 import { PageHeader } from "@/components/ui/page";
@@ -27,6 +29,7 @@ export default async function SupplierSplitsPage({
   const user = await getCurrentUser();
   const canManage = user ? hasPermission(user, "controls.manage") : false;
 
+  const reveal = await revealState();
   const { period: requested } = await searchParams;
   const period = requested && isPeriod(requested) ? requested : defaultPeriod();
 
@@ -113,7 +116,8 @@ export default async function SupplierSplitsPage({
       accountName: accountName.get(s.accountCode) ?? null,
       contactId: s.contactId,
       supplierName: s.supplierName,
-      amount: s.amount,
+      // Accounts marked restricted (salaries) never send their figures out.
+      amount: maskAmount(s.amount, accountDefault?.sensitive ?? false, reveal.unlocked),
       documents: s.documents,
       method,
       companyId,
@@ -134,6 +138,7 @@ export default async function SupplierSplitsPage({
       <PageHeader
         title="Supplier Splits"
         description="Split individual suppliers within an expense account. Anything you don't set carries forward from the month before."
+        actions={<RevealToggle unlocked={reveal.unlocked} canUnlock={reveal.canUnlock} />}
       />
       <SupplierSplitsClient
         period={period}
@@ -151,6 +156,7 @@ export default async function SupplierSplitsPage({
           ),
         }))}
         canManage={canManage}
+        canUnlock={reveal.canUnlock}
         hiddenNonExpense={hiddenNonExpense}
         xero={{
           connected: xero.connected,

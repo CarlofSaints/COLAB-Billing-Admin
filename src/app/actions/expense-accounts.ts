@@ -27,6 +27,7 @@ type MappingInput = {
   companyId: number | null;
   fixedLineItemId: number | null;
   percentages: PercentEntry[] | null;
+  sensitive: boolean;
 };
 
 function parsePayload(raw: FormDataEntryValue | null): MappingInput[] | null {
@@ -64,6 +65,7 @@ function parsePayload(raw: FormDataEntryValue | null): MappingInput[] | null {
       companyId: method === "direct" ? num(r.companyId) : null,
       fixedLineItemId: method === "fixed" ? num(r.fixedLineItemId) : null,
       percentages: method === "percent" ? parsePercentages(r.percentages) : null,
+      sensitive: r.sensitive === true,
     });
   }
   return rows;
@@ -116,6 +118,7 @@ export async function saveAccountMappings(
       companyId: r.companyId,
       fixedLineItemId: r.fixedLineItemId,
       percentages: r.percentages,
+      sensitive: r.sensitive,
     };
     await db
       .insert(expenseAccountMappings)

@@ -2,7 +2,8 @@
 
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { Ruler, Users, Receipt, Plus, Trash2, Pencil, DoorOpen } from "lucide-react";
+import { Ruler, Users, Receipt, Plus, Trash2, Pencil, DoorOpen, Lock } from "lucide-react";
+import { SensitiveAmount } from "@/components/sensitive-amount";
 import {
   saveSquareMetres,
   saveHeadcounts,
@@ -32,7 +33,9 @@ type FixedItemRow = {
   id: number;
   name: string;
   splitMode: FixedSplitMode;
-  unitAmount: number;
+  /** null when the amount is restricted and the viewer hasn't unlocked it. */
+  unitAmount: number | null;
+  sensitive: boolean;
   notes: string;
   allocations: FixedAllocation[];
 };
@@ -584,22 +587,32 @@ function HeadcountTab({ companies, canManage }: { companies: ControlCompany[]; c
 }
 
 /* -------------------- Fixed line items -------------------- */
-function itemTotal(it: FixedItemRow) {
-  return fixedItemTotal(it, it.allocations.map((a) => a.quantity));
+function itemTotal(it: FixedItemRow): number | null {
+  if (it.unitAmount === null) return null;
+  return fixedItemTotal(
+    { splitMode: it.splitMode, unitAmount: it.unitAmount },
+    it.allocations.map((a) => a.quantity),
+  );
 }
 
 function FixedTab({
   items,
   companies,
   canManage,
+  canUnlock,
 }: {
   items: FixedItemRow[];
   companies: ControlCompany[];
   canManage: boolean;
+  canUnlock: boolean;
 }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<FixedItemRow | null>(null);
-  const grandTotal = items.reduce((s, it) => s + itemTotal(it), 0);
+  // Restricted items are left out of the visible total rather than silently
+  // folded in — otherwise the total would leak the hidden figure.
+  const visibleItems = items.filter((it) => itemTotal(it) !== null);
+  const hiddenCount = items.length - visibleItems.length;
+  const grandTotal = visibleItems.reduce((s, it) => s + (itemTotal(it) ?? 0), 0);
 
   return (
     <Card>
@@ -612,7 +625,10 @@ function FixedTab({
           </CardDescription>
         </div>
         <div className="flex items-center gap-3">
-          <Badge tone="brand">{formatCurrency(grandTotal)} / month</Badge>
+          <Badge tone="brand">
+            {formatCurrency(grandTotal)} / month
+            {hiddenCount > 0 ? ` + ${hiddenCount} restricted` : ""}
+          </Badge>
           {canManage && (
             <Button size="sm" onClick={() => setAdding(true)}>
               <Plus className="h-4 w-4" /> Add item
@@ -631,17 +647,23 @@ function FixedTab({
             <div key={it.id} className="overflow-hidden rounded-lg border border-line">
               <div className="flex items-center justify-between gap-4 bg-slate-50 px-4 py-3">
                 <div>
-                  <div className="font-medium text-slate-900">{it.name}</div>
-                  <div className="text-xs text-muted">
-                    {it.splitMode === "percent"
-                      ? `${formatCurrency(it.unitAmount)} total, split by %`
-                      : `${formatCurrency(it.unitAmount)} each`}
-                    {it.notes ? ` · ${it.notes}` : ""}
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-slate-900">{it.name}</span>
+                    {it.sensitive && (
+                      <Badge tone="slate">
+                        <Lock className="mr-1 h-3 w-3" /> Restricted
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 text-xs text-muted">
+                    <SensitiveAmount amount={it.unitAmount} canUnlock={canUnlock} />
+                    <span>{it.splitMode === "percent" ? "total, split by %" : "each"}</span>
+                    {it.notes ? <span>· {it.notes}</span> : null}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-slate-700">
-                    {formatCurrency(itemTotal(it))}
+                    <SensitiveAmount amount={itemTotal(it)} canUnlock={canUnlock} />
                   </span>
                   {canManage && (
                     <>
@@ -671,13 +693,21 @@ function FixedTab({
                       className="flex items-center justify-between px-4 py-2 text-sm"
                     >
                       <span className="text-slate-700">{a.companyName}</span>
-                      <span className="text-muted">
-                        {it.splitMode === "percent"
-                          ? `${a.quantity}% of ${formatCurrency(it.unitAmount)}`
-                          : `${a.quantity} × ${formatCurrency(it.unitAmount)}`}{" "}
-                        ={" "}
+                      <span className="flex items-center gap-1 text-muted">
+                        {it.splitMode === "percent" ? `${a.quantity}% of` : `${a.quantity} ×`}
+                        <SensitiveAmount amount={it.unitAmount} canUnlock={canUnlock} />=
                         <span className="font-medium text-slate-800">
-                          {formatCurrency(fixedAllocationAmount(it, a.quantity))}
+                          <SensitiveAmount
+                            amount={
+                              it.unitAmount === null
+                                ? null
+                                : fixedAllocationAmount(
+                                    { splitMode: it.splitMode, unitAmount: it.unitAmount },
+                                    a.quantity,
+                                  )
+                            }
+                            canUnlock={canUnlock}
+                          />
                         </span>
                       </span>
                     </div>
@@ -806,6 +836,24 @@ function FixedItemForm({
         </Field>
       </div>
 
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-line px-3 py-2.5 hover:bg-slate-50">
+        <input
+          type="checkbox"
+          name="sensitive"
+          defaultChecked={item?.sensitive ?? false}
+          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+        />
+        <span>
+          <span className="block text-sm font-medium text-slate-800">
+            Restrict this amount
+          </span>
+          <span className="block text-xs text-muted">
+            The rand values show as ••••• to anyone without &ldquo;View restricted
+            values&rdquo;. Use this for salaries.
+          </span>
+        </span>
+      </label>
+
       <div>
         <p className="mb-1.5 text-sm font-medium text-slate-700">
           {mode === "percent"
@@ -901,6 +949,7 @@ function SavedNote() {
 export function ControlsManager({
   companies,
   canManage,
+  canUnlock,
   totalSqm,
   rentAmount,
   commonSpaces,
@@ -908,6 +957,7 @@ export function ControlsManager({
 }: {
   companies: ControlCompany[];
   canManage: boolean;
+  canUnlock: boolean;
   totalSqm: number;
   rentAmount: number;
   commonSpaces: CommonSpaceRow[];
@@ -962,7 +1012,12 @@ export function ControlsManager({
       )}
       {tab === "headcount" && <HeadcountTab companies={companies} canManage={canManage} />}
       {tab === "fixed" && (
-        <FixedTab items={fixedItems} companies={companies} canManage={canManage} />
+        <FixedTab
+          items={fixedItems}
+          companies={companies}
+          canManage={canManage}
+          canUnlock={canUnlock}
+        />
       )}
     </div>
   );

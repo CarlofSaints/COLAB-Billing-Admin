@@ -11,6 +11,7 @@ import {
   Plug,
   CheckCircle2,
   Wand2,
+  Lock,
 } from "lucide-react";
 import { saveAccountMappings, type ActionState } from "@/app/actions/expense-accounts";
 import {
@@ -42,6 +43,7 @@ type AccountRow = {
   companyId: number | null;
   fixedLineItemId: number | null;
   percentages: PercentEntry[] | null;
+  sensitive: boolean;
 };
 
 type CompanyOption = { id: number; name: string };
@@ -52,6 +54,7 @@ type Draft = {
   companyId: number | null;
   fixedLineItemId: number | null;
   percentages: PercentEntry[] | null;
+  sensitive: boolean;
 };
 
 type Filter = "all" | "unmapped" | AccountMethod;
@@ -65,6 +68,7 @@ function toDraft(rows: AccountRow[]): Record<string, Draft> {
         companyId: r.companyId,
         fixedLineItemId: r.fixedLineItemId,
         percentages: r.percentages,
+        sensitive: r.sensitive,
       },
     ]),
   );
@@ -75,6 +79,7 @@ function sameDraft(a: Draft, b: Draft) {
     a.method === b.method &&
     a.companyId === b.companyId &&
     a.fixedLineItemId === b.fixedLineItemId &&
+    a.sensitive === b.sensitive &&
     JSON.stringify(a.percentages ?? []) === JSON.stringify(b.percentages ?? [])
   );
 }
@@ -184,6 +189,7 @@ export function ExpenseAccountsClient({
       for (const id of selected) {
         if (!next[id]) continue;
         next[id] = {
+          ...next[id],
           method: bulkMethod,
           companyId: bulkMethod === "direct" ? next[id].companyId : null,
           fixedLineItemId: bulkMethod === "fixed" ? next[id].fixedLineItemId : null,
@@ -208,6 +214,7 @@ export function ExpenseAccountsClient({
         companyId: d.companyId,
         fixedLineItemId: d.fixedLineItemId,
         percentages: d.percentages,
+        sensitive: d.sensitive,
       };
     }),
   );
@@ -446,9 +453,31 @@ export function ExpenseAccountsClient({
                           </Badge>
                         )}
                       </div>
-                      <div className="text-xs text-muted">
-                        {accountTypeLabel(r.type)}
-                        {r.description ? ` · ${r.description}` : ""}
+                      <div className="flex items-center gap-2 text-xs text-muted">
+                        <span>
+                          {accountTypeLabel(r.type)}
+                          {r.description ? ` · ${r.description}` : ""}
+                        </span>
+                        {canManage && (
+                          <button
+                            type="button"
+                            onClick={() => setRow(r.accountId, { sensitive: !d?.sensitive })}
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors",
+                              d?.sensitive
+                                ? "bg-slate-800 text-white"
+                                : "text-slate-400 hover:bg-slate-100 hover:text-slate-600",
+                            )}
+                            title={
+                              d?.sensitive
+                                ? "Amounts on this account are restricted"
+                                : "Restrict the amounts on this account"
+                            }
+                          >
+                            <Lock className="h-3 w-3" />
+                            {d?.sensitive ? "Restricted" : "Restrict"}
+                          </button>
+                        )}
                       </div>
                     </TD>
                     <TD>

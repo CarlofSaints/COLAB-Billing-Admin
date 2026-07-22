@@ -43,6 +43,14 @@ export const PERMISSIONS: PermissionDef[] = [
   // Integrations
   { key: "integrations.manage", label: "Manage Xero / Dext credentials", category: "Integrations", sort: 145 },
 
+  // Restricted values
+  {
+    key: "values.restricted",
+    label: "View restricted values (hidden amounts, e.g. salaries)",
+    category: "Restricted Values",
+    sort: 147,
+  },
+
   // Logs
   { key: "logs.view", label: "View activity log", category: "Activity Log", sort: 150 },
 ];

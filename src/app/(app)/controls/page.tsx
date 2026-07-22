@@ -12,7 +12,9 @@ import {
 } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { TOTAL_SQM_KEY, RENT_AMOUNT_KEY } from "@/lib/controls";
+import { maskAmount, revealState } from "@/lib/sensitive";
 import { PageHeader } from "@/components/ui/page";
+import { RevealToggle } from "@/components/sensitive-amount";
 import { ControlsManager } from "./controls-client";
 
 export const metadata = { title: "Controls — COLAB" };
@@ -21,6 +23,7 @@ export default async function ControlsPage() {
   await requirePermission("controls.view");
   const user = await getCurrentUser();
   const canManage = user ? hasPermission(user, "controls.manage") : false;
+  const reveal = await revealState();
 
   const subs = await db
     .select()
@@ -59,7 +62,9 @@ export default async function ControlsPage() {
     id: it.id,
     name: it.name,
     splitMode: it.splitMode as "quantity" | "percent",
-    unitAmount: Number(it.unitAmount),
+    sensitive: it.sensitive,
+    // A restricted amount is replaced with null before it leaves the server.
+    unitAmount: maskAmount(Number(it.unitAmount), it.sensitive, reveal.unlocked),
     notes: it.notes ?? "",
     allocations: fixedAllocs
       .filter((a) => a.itemId === it.id)
@@ -119,10 +124,12 @@ export default async function ControlsPage() {
       <PageHeader
         title="Billing Controls"
         description="Configure how each month's shared expenses are split across the sub-companies."
+        actions={<RevealToggle unlocked={reveal.unlocked} canUnlock={reveal.canUnlock} />}
       />
       <ControlsManager
         companies={data}
         canManage={canManage}
+        canUnlock={reveal.canUnlock}
         totalSqm={totalSqm}
         rentAmount={rentAmount}
         commonSpaces={spacesData}

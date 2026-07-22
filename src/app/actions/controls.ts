@@ -235,6 +235,8 @@ export async function saveFixedItem(
   const unitAmount = Number(formData.get("unitAmount") || 0);
   const notes = String(formData.get("notes") ?? "").trim() || null;
   const splitMode = formData.get("splitMode") === "percent" ? "percent" : "quantity";
+  // Only someone who can see restricted values may change what's restricted.
+  const sensitive = formData.get("sensitive") != null;
 
   if (!name) return { error: "Description is required." };
   if (!Number.isFinite(unitAmount) || unitAmount < 0) return { error: "Enter a valid amount." };
@@ -263,12 +265,19 @@ export async function saveFixedItem(
   if (id) {
     await db
       .update(fixedLineItems)
-      .set({ name, splitMode, unitAmount: unitAmount.toFixed(2), notes, updatedAt: new Date() })
+      .set({
+        name,
+        splitMode,
+        sensitive,
+        unitAmount: unitAmount.toFixed(2),
+        notes,
+        updatedAt: new Date(),
+      })
       .where(eq(fixedLineItems.id, id));
   } else {
     const [row] = await db
       .insert(fixedLineItems)
-      .values({ name, splitMode, unitAmount: unitAmount.toFixed(2), notes })
+      .values({ name, splitMode, sensitive, unitAmount: unitAmount.toFixed(2), notes })
       .returning();
     itemId = row.id;
   }

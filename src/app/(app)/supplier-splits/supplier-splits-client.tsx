@@ -37,6 +37,7 @@ import { Input, Select } from "@/components/ui/field";
 import { Table, THead, TH, TR, TD } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/page";
 import { formatCurrency, cn } from "@/lib/utils";
+import { SensitiveAmount } from "@/components/sensitive-amount";
 
 /** Where a row's current split came from, before the user touches it. */
 type Source = "explicit" | "inherited" | "account" | "unset";
@@ -47,7 +48,8 @@ export type SupplierRow = {
   accountName: string | null;
   contactId: string;
   supplierName: string;
-  amount: number;
+  /** null when the account is restricted and the viewer hasn't unlocked it. */
+  amount: number | null;
   documents: number;
   method: AccountMethod | null;
   companyId: number | null;
@@ -122,6 +124,7 @@ export function SupplierSplitsClient({
   companies,
   fixedItems,
   canManage,
+  canUnlock,
   hiddenNonExpense,
   xero,
 }: {
@@ -131,6 +134,7 @@ export function SupplierSplitsClient({
   companies: { id: number; name: string }[];
   fixedItems: FixedItemOption[];
   canManage: boolean;
+  canUnlock: boolean;
   hiddenNonExpense: number;
   xero: { connected: boolean; tenantName: string | null; error: string | null };
 }) {
@@ -313,10 +317,13 @@ export function SupplierSplitsClient({
     );
   }
 
-  const totalSpend = rows.reduce((s, r) => s + r.amount, 0);
+  // Restricted rows are left out of the totals rather than folded in, so the
+  // total can't be used to work out the hidden figure.
+  const totalSpend = rows.reduce((s, r) => s + (r.amount ?? 0), 0);
+  const restrictedRows = rows.filter((r) => r.amount === null).length;
   const unsplitValue = rows
     .filter((r) => (draft[r.key]?.method ?? UNMAPPED) === UNMAPPED)
-    .reduce((s, r) => s + r.amount, 0);
+    .reduce((s, r) => s + (r.amount ?? 0), 0);
 
   return (
     <div className="space-y-4 pb-24">
@@ -354,7 +361,15 @@ export function SupplierSplitsClient({
 
           <div className="flex flex-wrap gap-2">
             <Stat label="Supplier lines" value={String(rows.length)} />
-            <Stat label="Total spend" value={formatCurrency(totalSpend)} tone="brand" />
+            <Stat
+              label="Total spend"
+              value={
+                restrictedRows > 0
+                  ? `${formatCurrency(totalSpend)} + ${restrictedRows} restricted`
+                  : formatCurrency(totalSpend)
+              }
+              tone="brand"
+            />
             <Stat
               label="Not split"
               value={counts.unset > 0 ? `${counts.unset} · ${formatCurrency(unsplitValue)}` : "None"}
@@ -548,10 +563,10 @@ export function SupplierSplitsClient({
                     <TD
                       className={cn(
                         "text-right font-medium tabular-nums",
-                        r.amount < 0 ? "text-emerald-700" : "text-slate-900",
+                        (r.amount ?? 0) < 0 ? "text-emerald-700" : "text-slate-900",
                       )}
                     >
-                      {formatCurrency(r.amount)}
+                      <SensitiveAmount amount={r.amount} canUnlock={canUnlock} />
                     </TD>
                     <TD>
                       <Select
@@ -603,6 +618,7 @@ export function SupplierSplitsClient({
                           fixedItems={fixedItems}
                           companies={companies}
                           canManage={canManage}
+                          canUnlock={canUnlock}
                           onItemChange={(id) => setRow(r.key, { fixedLineItemId: id })}
                           onBalanceMethod={(m) => changeBalanceMethod(r.key, m)}
                           onBalanceCompany={(id) => setRow(r.key, { balanceCompanyId: id })}
@@ -649,6 +665,7 @@ function FixedWithBalance({
   fixedItems,
   companies,
   canManage,
+  canUnlock,
   onItemChange,
   onBalanceMethod,
   onBalanceCompany,
@@ -659,6 +676,7 @@ function FixedWithBalance({
   fixedItems: FixedItemOption[];
   companies: { id: number; name: string }[];
   canManage: boolean;
+  canUnlock: boolean;
   onItemChange: (id: number | null) => void;
   onBalanceMethod: (m: MethodChoice) => void;
   onBalanceCompany: (id: number | null) => void;
@@ -666,8 +684,11 @@ function FixedWithBalance({
 }) {
   const item = fixedItems.find((f) => f.id === draft?.fixedLineItemId) ?? null;
   const recovered = item?.allocatedTotal ?? 0;
-  const balance = item ? Math.round((row.amount - recovered) * 100) / 100 : 0;
-  const matched = item != null && Math.abs(balance) < 0.005;
+  // With the amount restricted we can't show the balance without disclosing
+  // the figure — the balance method is still editable.
+  const restricted = row.amount === null;
+  const balance = item && !restricted ? Math.round((row.amount! - recovered) * 100) / 100 : 0;
+  const matched = item != null && !restricted && Math.abs(balance) < 0.005;
   const balanceMethod = draft?.balanceMethod ?? UNMAPPED;
   const balanceDef = balanceMethod === UNMAPPED ? null : METHOD_BY_KEY[balanceMethod];
 
@@ -686,7 +707,27 @@ function FixedWithBalance({
         ))}
       </Select>
 
-      {item && (
+      {item && restricted ? (
+        <div className="space-y-1.5 rounded-md border border-line bg-slate-50 px-2 py-1.5">
+          <p className="text-xs text-muted">
+            Amount restricted — unlock to see whether a balance is left over. Set how any balance
+            splits:
+          </p>
+          <Select
+            value={balanceMethod}
+            disabled={!canManage}
+            onChange={(e) => onBalanceMethod(e.target.value as MethodChoice)}
+            className="text-xs"
+          >
+            <option value={UNMAPPED}>— Split the balance… —</option>
+            {BALANCE_METHODS.map((m) => (
+              <option key={m.key} value={m.key}>
+                {m.label}
+              </option>
+            ))}
+          </Select>
+        </div>
+      ) : item ? (
         <>
           {matched ? (
             <p className="flex items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-1.5 text-xs font-medium text-emerald-800">
@@ -753,11 +794,11 @@ function FixedWithBalance({
             </div>
           )}
           <p className="text-[11px] text-muted">
-            {formatCurrency(row.amount)} charged · {formatCurrency(recovered)} recovered by{" "}
+            {formatCurrency(row.amount ?? 0)} charged · {formatCurrency(recovered)} recovered by{" "}
             {item.name}
           </p>
         </>
-      )}
+      ) : null}
     </div>
   );
 }
