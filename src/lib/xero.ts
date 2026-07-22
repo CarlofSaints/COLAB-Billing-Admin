@@ -239,13 +239,31 @@ export async function fetchExpenseAccounts(): Promise<
 /* Monthly spend, by supplier and expense account                     */
 /* ------------------------------------------------------------------ */
 
-type RawLine = { AccountCode?: string; LineAmount?: number; Description?: string };
+type RawLine = {
+  AccountCode?: string;
+  LineAmount?: number;
+  TaxAmount?: number;
+  Description?: string;
+};
 type RawDoc = {
   Type?: string;
   Status?: string;
+  /** "Exclusive" | "Inclusive" | "NoTax" — decides what LineAmount means. */
+  LineAmountTypes?: string;
   Contact?: { ContactID?: string; Name?: string };
   LineItems?: RawLine[];
 };
+
+/**
+ * The VAT-exclusive value of a line. On documents captured tax-inclusive,
+ * LineAmount already contains the VAT, so billing off it unchecked would
+ * recharge 15% too much.
+ */
+function netAmount(doc: RawDoc, line: RawLine): number {
+  const gross = line.LineAmount ?? 0;
+  if (doc.LineAmountTypes === "Inclusive") return gross - (line.TaxAmount ?? 0);
+  return gross;
+}
 
 /** Documents in these states never represent real spend. */
 const DEAD_STATUSES = new Set(["DELETED", "VOIDED"]);
@@ -324,8 +342,9 @@ export async function fetchSupplierSpend(
       let touched = false;
       for (const line of doc.LineItems ?? []) {
         const accountCode = line.AccountCode;
-        const amount = line.LineAmount;
-        if (!accountCode || typeof amount !== "number" || amount === 0) continue;
+        if (!accountCode) continue;
+        const amount = netAmount(doc, line);
+        if (!Number.isFinite(amount) || amount === 0) continue;
         const key = `${accountCode}|${contactId}`;
         const existing = byKey.get(key);
         if (existing) {
