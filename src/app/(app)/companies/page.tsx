@@ -2,6 +2,7 @@ import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { companies, staff } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
+import { fetchContacts, xeroStatus } from "@/lib/xero";
 import { PageHeader } from "@/components/ui/page";
 import { CompaniesManager } from "./companies-client";
 
@@ -38,7 +39,14 @@ export default async function CompaniesPage() {
     notes: c.notes ?? "",
     active: c.active,
     staffCount: countMap.get(c.id) ?? 0,
+    xeroContactId: c.xeroContactId,
+    xeroContactName: c.xeroContactName,
   }));
+
+  const xero = await xeroStatus();
+  const contacts = xero.connected
+    ? await fetchContacts()
+    : ({ ok: false, error: "Not connected to Xero." } as const);
 
   return (
     <div>
@@ -46,7 +54,21 @@ export default async function CompaniesPage() {
         title="Sub-Companies"
         description="The businesses billed by COLAB. These surface in the billing controls."
       />
-      <CompaniesManager companies={data} canManage={canManage} />
+      <CompaniesManager
+        companies={data}
+        canManage={canManage}
+        xeroContacts={
+          contacts.ok
+            ? contacts.contacts.map((c) => ({
+                contactId: c.contactId,
+                name: c.name,
+                email: c.email,
+                isCustomer: c.isCustomer,
+              }))
+            : []
+        }
+        xeroError={contacts.ok ? null : contacts.error}
+      />
     </div>
   );
 }

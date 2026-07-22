@@ -21,6 +21,53 @@ const companySchema = z.object({
 
 export type ActionState = { error?: string; ok?: boolean };
 
+/**
+ * Links (or unlinks) the Xero contact a sub-company is invoiced as. The name
+ * is stored alongside the id so the UI can still show what it points at when
+ * Xero is unreachable.
+ */
+export async function setXeroContact(
+  companyId: number,
+  contactId: string | null,
+  contactName: string | null,
+): Promise<{ error?: string; ok?: boolean }> {
+  const user = await requirePermission("companies.manage");
+
+  if (contactId) {
+    // One Xero contact can't front two sub-companies — their invoices would
+    // be indistinguishable in Xero.
+    const clash = await db
+      .select({ id: companies.id, name: companies.name })
+      .from(companies)
+      .where(eq(companies.xeroContactId, contactId));
+    const other = clash.find((c) => c.id !== companyId);
+    if (other) return { error: `That Xero contact is already linked to ${other.name}.` };
+  }
+
+  await db
+    .update(companies)
+    .set({
+      xeroContactId: contactId,
+      xeroContactName: contactId ? contactName : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(companies.id, companyId));
+
+  await logEvent({
+    action: contactId ? "company.xero_link" : "company.xero_unlink",
+    summary: contactId
+      ? `Linked a sub-company to Xero contact “${contactName}”`
+      : "Unlinked a sub-company from its Xero contact",
+    actor: user,
+    entityType: "company",
+    entityId: companyId,
+    metadata: { contactId },
+  });
+
+  revalidatePath("/companies");
+  return { ok: true };
+}
+
 function parse(formData: FormData) {
   return companySchema.safeParse({
     name: formData.get("name"),

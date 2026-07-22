@@ -74,6 +74,10 @@ export const companies = pgTable("companies", {
   contactName: text("contact_name"),
   contactEmail: text("contact_email"),
   contactPhone: text("contact_phone"),
+  // The Xero contact this company is invoiced as. Without it no invoice can
+  // be raised, so the billing run checks this first.
+  xeroContactId: text("xero_contact_id"),
+  xeroContactName: text("xero_contact_name"),
   notes: text("notes"),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -289,12 +289,18 @@ async function getAllPages<T>(
   path: string,
   where: string,
   collection: string,
+  extraQuery = "",
 ): Promise<{ ok: true; rows: T[] } | { ok: false; error: string }> {
   const rows: T[] = [];
   for (let page = 1; page <= 20; page++) {
-    const res = await xeroGet<Record<string, T[]>>(
-      `${path}?where=${encodeURIComponent(where)}&page=${page}`,
-    );
+    const query = [
+      where ? `where=${encodeURIComponent(where)}` : "",
+      extraQuery,
+      `page=${page}`,
+    ]
+      .filter(Boolean)
+      .join("&");
+    const res = await xeroGet<Record<string, T[]>>(`${path}?${query}`);
     if (!res.ok) return res;
     const batch = res.data[collection] ?? [];
     rows.push(...batch);
@@ -381,6 +387,49 @@ export async function fetchSupplierSpend(
   const total = rows.reduce((s, r) => s + r.amount, 0);
 
   return { ok: true, rows, total };
+}
+
+export type XeroContact = {
+  contactId: string;
+  name: string;
+  email: string | null;
+  isCustomer: boolean;
+  isSupplier: boolean;
+};
+
+/**
+ * Every active contact in the org, for linking a sub-company to the contact
+ * its invoices are raised against. Contacts that have only ever been billed
+ * *by* are still valid invoice targets — Xero flips IsCustomer on the first
+ * sales invoice — so suppliers are included rather than filtered out.
+ */
+export async function fetchContacts(): Promise<
+  { ok: true; contacts: XeroContact[] } | { ok: false; error: string }
+> {
+  type Raw = {
+    ContactID: string;
+    Name: string;
+    EmailAddress?: string;
+    IsCustomer?: boolean;
+    IsSupplier?: boolean;
+    ContactStatus?: string;
+  };
+
+  const res = await getAllPages<Raw>("/Contacts", "", "Contacts", "summaryOnly=true");
+  if (!res.ok) return res;
+
+  const contacts = res.rows
+    .filter((c) => (c.ContactStatus ?? "ACTIVE") === "ACTIVE")
+    .map((c) => ({
+      contactId: c.ContactID,
+      name: c.Name,
+      email: c.EmailAddress || null,
+      isCustomer: Boolean(c.IsCustomer),
+      isSupplier: Boolean(c.IsSupplier),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+
+  return { ok: true, contacts };
 }
 
 /** Live check: fetch the connected organisation's name from Xero. */
