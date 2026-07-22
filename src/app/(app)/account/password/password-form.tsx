@@ -16,16 +16,24 @@ function Submit() {
   );
 }
 
-export function PasswordForm({ firstTime }: { firstTime: boolean }) {
+export function PasswordForm({
+  firstTime,
+  // On the account page the form is one card among several, so it shouldn't
+  // bounce the user to the dashboard on success.
+  stayOnPage = false,
+}: {
+  firstTime: boolean;
+  stayOnPage?: boolean;
+}) {
   const [state, action] = useActionState<PasswordState, FormData>(changePassword, {});
   const router = useRouter();
 
   useEffect(() => {
-    if (state.ok) {
+    if (state.ok && !stayOnPage) {
       const t = setTimeout(() => router.push("/"), 800);
       return () => clearTimeout(t);
     }
-  }, [state.ok, router]);
+  }, [state.ok, router, stayOnPage]);
 
   return (
     <form action={action} className="space-y-4">
@@ -46,12 +54,12 @@ export function PasswordForm({ firstTime }: { firstTime: boolean }) {
       )}
       {state.ok && (
         <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          Password updated. Redirecting…
+          {stayOnPage ? "Password updated." : "Password updated. Redirecting…"}
         </p>
       )}
       <div className="flex items-center gap-3">
         <Submit />
-        {!firstTime && (
+        {!firstTime && !stayOnPage && (
           <Button type="button" variant="ghost" onClick={() => router.push("/")}>
             Cancel
           </Button>
