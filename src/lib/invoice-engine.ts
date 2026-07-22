@@ -359,6 +359,24 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     const creditedItems = new Set<number>();
     const duplicateItemUse = new Set<number>();
 
+    /**
+     * A fixed line item set on the *account* covers the account as a whole,
+     * not each supplier line on it. Salary lines arrive as a new Xero contact
+     * every month, so a per-line rule could never persist — the account rule
+     * has to recover the item once and split what's left.
+     */
+    const accountFixed = new Map<
+      string,
+      {
+        total: number;
+        itemId: number | null;
+        balanceMethod: AccountMethod | null;
+        balanceCompanyId: number | null;
+        balancePercentages: PercentEntry[] | null;
+        contributors: string[];
+      }
+    >();
+
     for (const row of costs.rows) {
       const own = explicit.get(row.key);
       const prior = inherited.get(row.key);
@@ -385,10 +403,26 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       let splitPercentages: PercentEntry[] | null = winner.percentages ?? null;
 
       if (method === "fixed") {
-        // The fixed line item recovers a set amount on the recurring invoice;
-        // only what it leaves behind belongs on this invoice. If several lines
-        // point at the same item it must still only be credited once, or the
-        // recovery is multiplied and the companies are under-billed.
+        const balanceMethod = (winner.balanceMethod ?? null) as AccountMethod | null;
+
+        // Rule from the account: pool the whole account, recover the item once.
+        if (!own && !prior) {
+          const entry = accountFixed.get(row.accountCode) ?? {
+            total: 0,
+            itemId: winner.fixedLineItemId,
+            balanceMethod,
+            balanceCompanyId: winner.balanceCompanyId,
+            balancePercentages: winner.percentages ? null : (winner.balancePercentages ?? null),
+            contributors: [] as string[],
+          };
+          entry.total += row.amount;
+          entry.contributors.push(`${row.supplierName} — ${formatRand(row.amount)}`);
+          accountFixed.set(row.accountCode, entry);
+          continue;
+        }
+
+        // Rule set against this specific supplier line: it covers that line
+        // only, and the item can still only be credited once.
         const itemId = winner.fixedLineItemId;
         const alreadyCredited = itemId != null && creditedItems.has(itemId);
         if (itemId != null) {
@@ -401,9 +435,6 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
         const balance = round2(row.amount - recovered);
         if (balance <= 0.005) continue;
 
-        const balanceMethod = ("balanceMethod" in winner ? winner.balanceMethod : null) as
-          | AccountMethod
-          | null;
         if (!balanceMethod || balanceMethod === "fixed") {
           unsplitBalance += balance;
           unsplitBalanceSuppliers.push(`${row.supplierName} (${formatRand(balance)})`);
@@ -411,8 +442,8 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
         }
         splitAmount = balance;
         splitMethod = balanceMethod;
-        splitCompanyId = "balanceCompanyId" in winner ? winner.balanceCompanyId : null;
-        splitPercentages = ("balancePercentages" in winner ? winner.balancePercentages : null) ?? null;
+        splitCompanyId = winner.balanceCompanyId;
+        splitPercentages = winner.balancePercentages ?? null;
       }
 
       const shares = allocate(splitAmount, splitMethod, basis, {
@@ -434,6 +465,43 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
           : `${row.supplierName} — ${formatRand(splitAmount)}`,
       );
       perAccount.set(row.accountCode, entry);
+    }
+
+    // Accounts whose rule is a fixed line item: recover the item once against
+    // the account's whole cost, then split the remainder.
+    for (const [code, pooled] of accountFixed) {
+      const recovered = pooled.itemId != null ? (recoveredByItem.get(pooled.itemId) ?? 0) : 0;
+      const credited = Math.min(recovered, pooled.total);
+      recoveredElsewhere += credited;
+      const balance = round2(pooled.total - credited);
+      if (balance <= 0.005) continue;
+
+      if (!pooled.balanceMethod || pooled.balanceMethod === "fixed") {
+        unsplitBalance += balance;
+        unsplitBalanceSuppliers.push(
+          `${accountNameByCode.get(code) ?? code} (${formatRand(balance)})`,
+        );
+        continue;
+      }
+
+      const shares = allocate(balance, pooled.balanceMethod, basis, {
+        companyId: pooled.balanceCompanyId,
+        percentages: pooled.balancePercentages,
+      });
+      const entry =
+        perAccount.get(code) ??
+        { company: {} as Record<number, number>, contributors: [] as string[], total: 0 };
+      for (const [idStr, value] of Object.entries(shares)) {
+        const id = Number(idStr);
+        entry.company[id] = (entry.company[id] ?? 0) + value;
+      }
+      entry.total += balance;
+      const itemName = fixedItemRows.find((i) => i.id === pooled.itemId)?.name ?? "a fixed item";
+      entry.contributors.push(
+        `${formatRand(pooled.total)} on this account, less ${formatRand(credited)} recovered by ${itemName} on the recurring invoice`,
+        ...pooled.contributors,
+      );
+      perAccount.set(code, entry);
     }
 
     const sortedAccounts = [...perAccount.entries()].sort(

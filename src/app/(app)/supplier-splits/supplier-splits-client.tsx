@@ -13,6 +13,7 @@ import {
   Pin,
   CalendarRange,
   TriangleAlert,
+  Info,
 } from "lucide-react";
 import {
   saveSupplierSplits,
@@ -622,6 +623,7 @@ export function SupplierSplitsClient({
                           companies={companies}
                           canManage={canManage}
                           canUnlock={canUnlock}
+                          dirty={isDirty}
                           duplicateCount={
                             d?.fixedLineItemId == null
                               ? 0
@@ -679,6 +681,7 @@ function FixedWithBalance({
   canManage,
   canUnlock,
   duplicateCount,
+  dirty,
   onItemChange,
   onBalanceMethod,
   onBalanceCompany,
@@ -692,13 +695,17 @@ function FixedWithBalance({
   canUnlock: boolean;
   /** How many rows this month point at the same fixed line item. */
   duplicateCount: number;
+  /** Whether this row has been edited away from its inherited rule. */
+  dirty: boolean;
   onItemChange: (id: number | null) => void;
   onBalanceMethod: (m: MethodChoice) => void;
   onBalanceCompany: (id: number | null) => void;
   onBalancePercentages: (p: PercentEntry[]) => void;
 }) {
   const item = fixedItems.find((f) => f.id === draft?.fixedLineItemId) ?? null;
-  const sharedWith = item ? duplicateCount - 1 : 0;
+  // Inherited straight from the account's own rule, untouched on this row.
+  const fromAccountRule = row.source === "account" && !dirty;
+  const sharedWith = item && !fromAccountRule ? duplicateCount - 1 : 0;
   const recovered = item?.allocatedTotal ?? 0;
   // With either figure restricted we can't show the balance without giving it
   // away — the balance method is still editable.
@@ -723,18 +730,30 @@ function FixedWithBalance({
         ))}
       </Select>
 
-      {sharedWith > 0 && (
+      {fromAccountRule && item ? (
+        // The rule belongs to the account, not this line: the item is recovered
+        // once against the account's whole cost and the rest is split.
+        <p className="flex items-start gap-1.5 rounded-md border border-line bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
+          <Info className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span>
+            Set on account {row.accountCode}: {item.name} is recovered once across the whole
+            account, and whatever is left splits{" "}
+            {balanceMethod === UNMAPPED ? "— no balance rule set yet" : "as set there"}. Change it
+            on Expense Accounts, or override just this line here.
+          </span>
+        </p>
+      ) : sharedWith > 0 ? (
         <p className="flex items-start gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs font-medium text-red-800">
           <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
           <span>
-            {item?.name} is linked to {sharedWith + 1} lines this month, but it only recovers its
-            amount <em>once</em>. Link it to the one line it actually covers, and split the others
-            directly.
+            You&apos;ve linked {item?.name} to {sharedWith + 1} separate lines this month. It only
+            recovers its amount <em>once</em>, so the rest would be under-recovered — link it to
+            the single line it covers.
           </span>
         </p>
-      )}
+      ) : null}
 
-      {item && restricted ? (
+      {fromAccountRule ? null : item && restricted ? (
         <div className="space-y-1.5 rounded-md border border-line bg-slate-50 px-2 py-1.5">
           <p className="text-xs text-muted">
             Amount restricted — unlock to see whether a balance is left over. Set how any balance
