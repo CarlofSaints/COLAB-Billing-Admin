@@ -300,6 +300,42 @@ export const expenseAccountMappings = pgTable(
   (t) => [uniqueIndex("expense_account_map_unique").on(t.xeroAccountId)],
 );
 
+/**
+ * A per-month split decision for one supplier's spend on one expense account
+ * — the finer-grained override of `expense_account_mappings`, for accounts
+ * that are too broad to split as a whole (e.g. Cost of sales covers both a
+ * water supplier and a grocery run).
+ *
+ * One row per (supplier, account, month). A month with no row inherits the
+ * most recent earlier month's decision, so recurring costs only have to be
+ * split once; genuinely ad-hoc ones get set as they appear.
+ */
+export const supplierSplits = pgTable(
+  "supplier_splits",
+  {
+    id: serial("id").primaryKey(),
+    // Billing month this decision applies to, as "YYYY-MM".
+    period: text("period").notNull(),
+    xeroContactId: text("xero_contact_id").notNull(),
+    supplierName: text("supplier_name").notNull(),
+    accountCode: text("account_code").notNull(),
+    accountName: text("account_name"),
+    method: accountMethodEnum("method").notNull(),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    fixedLineItemId: integer("fixed_line_item_id").references(() => fixedLineItems.id, {
+      onDelete: "set null",
+    }),
+    // What the supplier's spend on this account came to that month — kept so
+    // a past decision can still be explained after the Xero data moves on.
+    amount: numeric("amount", { precision: 14, scale: 2 }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("supplier_split_unique").on(t.period, t.xeroContactId, t.accountCode),
+    index("supplier_split_period_idx").on(t.period),
+  ],
+);
+
 /* ------------------------------------------------------------------ */
 /* App settings (key/value) — e.g. total building floor area          */
 /* ------------------------------------------------------------------ */
@@ -481,4 +517,5 @@ export type CommonSpace = typeof commonSpaces.$inferSelect;
 export type CommonSpaceSplit = typeof commonSpaceSplits.$inferSelect;
 export type ExpenseAccountMapping = typeof expenseAccountMappings.$inferSelect;
 export type MailSchedule = typeof mailSchedules.$inferSelect;
+export type SupplierSplit = typeof supplierSplits.$inferSelect;
 export type ActivityLogEntry = typeof activityLog.$inferSelect;

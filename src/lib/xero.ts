@@ -231,6 +231,135 @@ export async function fetchExpenseAccounts(): Promise<
   return { ok: true, accounts };
 }
 
+/* ------------------------------------------------------------------ */
+/* Monthly spend, by supplier and expense account                     */
+/* ------------------------------------------------------------------ */
+
+type RawLine = { AccountCode?: string; LineAmount?: number; Description?: string };
+type RawDoc = {
+  Type?: string;
+  Status?: string;
+  Contact?: { ContactID?: string; Name?: string };
+  LineItems?: RawLine[];
+};
+
+/** Documents in these states never represent real spend. */
+const DEAD_STATUSES = new Set(["DELETED", "VOIDED"]);
+
+export type SupplierSpendRow = {
+  /** Composite key: `${accountCode}|${contactId}`. */
+  key: string;
+  accountCode: string;
+  contactId: string;
+  supplierName: string;
+  /** Excluding VAT — the correct basis for a recharge. */
+  amount: number;
+  /** How many source documents contributed. */
+  documents: number;
+};
+
+function xeroDate(year: number, monthIndex0: number, day: number) {
+  return `DateTime(${year},${String(monthIndex0 + 1).padStart(2, "0")},${String(day).padStart(2, "0")})`;
+}
+
+/** Fetches every page of a Xero collection endpoint (100 rows per page). */
+async function getAllPages<T>(
+  path: string,
+  where: string,
+  collection: string,
+): Promise<{ ok: true; rows: T[] } | { ok: false; error: string }> {
+  const rows: T[] = [];
+  for (let page = 1; page <= 20; page++) {
+    const res = await xeroGet<Record<string, T[]>>(
+      `${path}?where=${encodeURIComponent(where)}&page=${page}`,
+    );
+    if (!res.ok) return res;
+    const batch = res.data[collection] ?? [];
+    rows.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return { ok: true, rows };
+}
+
+/**
+ * Every supplier's spend for a billing month, broken down by expense account.
+ *
+ * Covers supplier bills, spend money out of the bank, and supplier credit
+ * notes (which subtract). Manual journals are NOT included — that scope isn't
+ * granted — so these figures can differ from the P&L; treat the P&L as the
+ * control total and surface any gap rather than hiding it.
+ */
+export async function fetchSupplierSpend(
+  period: string,
+): Promise<{ ok: true; rows: SupplierSpendRow[]; total: number } | { ok: false; error: string }> {
+  const [yearStr, monthStr] = period.split("-");
+  const year = Number(yearStr);
+  const month0 = Number(monthStr) - 1;
+  if (!Number.isInteger(year) || !Number.isInteger(month0)) {
+    return { ok: false, error: `Invalid period "${period}".` };
+  }
+  const nextYear = month0 === 11 ? year + 1 : year;
+  const nextMonth0 = month0 === 11 ? 0 : month0 + 1;
+
+  const range = `Date>=${xeroDate(year, month0, 1)} AND Date<${xeroDate(nextYear, nextMonth0, 1)}`;
+
+  const [bills, credits, spend] = await Promise.all([
+    getAllPages<RawDoc>("/Invoices", `Type=="ACCPAY" AND ${range}`, "Invoices"),
+    getAllPages<RawDoc>("/CreditNotes", `Type=="ACCPAYCREDIT" AND ${range}`, "CreditNotes"),
+    getAllPages<RawDoc>("/BankTransactions", `Type=="SPEND" AND ${range}`, "BankTransactions"),
+  ]);
+  for (const r of [bills, credits, spend]) if (!r.ok) return r;
+
+  const byKey = new Map<string, SupplierSpendRow>();
+
+  const absorb = (docs: RawDoc[], sign: 1 | -1) => {
+    for (const doc of docs) {
+      if (DEAD_STATUSES.has(doc.Status ?? "")) continue;
+      const contactId = doc.Contact?.ContactID ?? "unknown";
+      const supplierName = doc.Contact?.Name ?? "(no supplier)";
+      let touched = false;
+      for (const line of doc.LineItems ?? []) {
+        const accountCode = line.AccountCode;
+        const amount = line.LineAmount;
+        if (!accountCode || typeof amount !== "number" || amount === 0) continue;
+        const key = `${accountCode}|${contactId}`;
+        const existing = byKey.get(key);
+        if (existing) {
+          existing.amount += amount * sign;
+        } else {
+          byKey.set(key, {
+            key,
+            accountCode,
+            contactId,
+            supplierName,
+            amount: amount * sign,
+            documents: 0,
+          });
+        }
+        touched = true;
+      }
+      if (!touched) continue;
+      // Count the document once per account/supplier combination it touched.
+      for (const line of doc.LineItems ?? []) {
+        if (!line.AccountCode) continue;
+        const row = byKey.get(`${line.AccountCode}|${contactId}`);
+        if (row) row.documents += 1;
+      }
+    }
+  };
+
+  absorb((bills as { rows: RawDoc[] }).rows, 1);
+  absorb((credits as { rows: RawDoc[] }).rows, -1);
+  absorb((spend as { rows: RawDoc[] }).rows, 1);
+
+  const rows = [...byKey.values()]
+    .filter((r) => Math.abs(r.amount) > 0.005)
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  const total = rows.reduce((s, r) => s + r.amount, 0);
+
+  return { ok: true, rows, total };
+}
+
 /** Live check: fetch the connected organisation's name from Xero. */
 export async function fetchOrganisationName(): Promise<{ ok: boolean; name?: string; error?: string }> {
   const token = await getValidAccessToken();
