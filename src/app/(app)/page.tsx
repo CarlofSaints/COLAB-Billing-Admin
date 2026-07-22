@@ -145,7 +145,7 @@ export default async function Dashboard({
         </div>
       )}
 
-      <div className="mt-8 grid gap-4 lg:grid-cols-2">
+      <div className="mt-8 grid gap-4">
         <Card>
           <CardContent>
             <h3 className="font-semibold text-slate-900">Month-end billing</h3>
@@ -161,15 +161,6 @@ export default async function Dashboard({
                 Open controls <ArrowRight className="h-4 w-4" />
               </Link>
             )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <h3 className="font-semibold text-slate-900">Coming next</h3>
-            <p className="mt-1 text-sm text-muted">
-              Xero &amp; Dext integration and automatic monthly invoice generation. The controls you
-              set here feed straight into that.
-            </p>
           </CardContent>
         </Card>
       </div>
