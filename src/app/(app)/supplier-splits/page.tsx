@@ -8,7 +8,8 @@ import {
   supplierSplits,
 } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
-import { fetchSupplierSpend, fetchExpenseAccounts, xeroStatus } from "@/lib/xero";
+import { fetchExpenseAccounts, xeroStatus } from "@/lib/xero";
+import { getMonthCosts } from "@/lib/month-costs";
 import { defaultPeriod, isPeriod, recentPeriods } from "@/lib/periods";
 import type { AccountMethod } from "@/lib/expense-accounts";
 import { PageHeader } from "@/components/ui/page";
@@ -29,9 +30,19 @@ export default async function SupplierSplitsPage({
   const period = requested && isPeriod(requested) ? requested : defaultPeriod();
 
   const xero = await xeroStatus();
-  const [spend, accountList] = xero.connected
-    ? await Promise.all([fetchSupplierSpend(period), fetchExpenseAccounts()])
-    : [{ ok: false, error: "Not connected to Xero." } as const, { ok: false, error: "" } as const];
+  const [costs, accountList] = xero.connected
+    ? await Promise.all([getMonthCosts(period), fetchExpenseAccounts()])
+    : [
+        {
+          ok: false,
+          rows: [],
+          hiddenNonExpense: 0,
+          reconciled: false,
+          journalTotal: 0,
+          error: "Not connected to Xero.",
+        } as const,
+        { ok: false, error: "" } as const,
+      ];
 
   const [subs, items, allocations, thisMonth, earlier, accountDefaults] = await Promise.all([
     db.select().from(companies).where(eq(companies.type, "sub")).orderBy(asc(companies.name)),
@@ -67,17 +78,8 @@ export default async function SupplierSplitsPage({
   const inherited = new Map<string, (typeof earlier)[number]>();
   for (const r of earlier) inherited.set(`${r.accountCode}|${r.xeroContactId}`, r);
 
-  // Supplier payments also hit balance-sheet accounts (PAYE, salary control,
-  // loans). Those can never be recharged, so only P&L expense accounts are
-  // offered here — anything else would be permanent noise on the list.
-  const expenseCodes = new Set(
-    (accountList.ok ? accountList.accounts : []).map((a) => a.code).filter(Boolean) as string[],
-  );
-  const allRows = spend.ok ? spend.rows : [];
-  const spendRows = expenseCodes.size > 0
-    ? allRows.filter((r) => expenseCodes.has(r.accountCode))
-    : allRows;
-  const hiddenNonExpense = allRows.length - spendRows.length;
+  const spendRows = costs.rows;
+  const hiddenNonExpense = costs.hiddenNonExpense;
 
   const rows: SupplierRow[] = spendRows.map((s) => {
     const own = explicit.get(s.key);
@@ -151,7 +153,7 @@ export default async function SupplierSplitsPage({
         xero={{
           connected: xero.connected,
           tenantName: xero.tenantName,
-          error: spend.ok ? null : spend.error,
+          error: costs.ok ? null : (costs.error ?? null),
         }}
       />
     </div>

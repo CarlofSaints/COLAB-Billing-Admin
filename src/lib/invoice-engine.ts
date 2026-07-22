@@ -16,7 +16,8 @@ import {
 import { sql } from "drizzle-orm";
 import { computeEffectiveAreas, rentShare } from "./billing-calc";
 import { RENT_AMOUNT_KEY, TOTAL_SQM_KEY } from "./controls";
-import { fetchExpenseAccounts, fetchSupplierSpend } from "./xero";
+import { fetchExpenseAccounts } from "./xero";
+import { getMonthCosts } from "./month-costs";
 import { periodLabel } from "./periods";
 import type { AccountMethod, PercentEntry } from "./expense-accounts";
 
@@ -262,15 +263,15 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     }
   } else {
     // ---- Month-end: the Xero actuals, split by the mappings ---------
-    const [spend, accountList] = await Promise.all([
-      fetchSupplierSpend(period),
+    const [costs, accountList] = await Promise.all([
+      getMonthCosts(period),
       fetchExpenseAccounts(),
     ]);
 
-    if (!spend.ok) {
+    if (!costs.ok) {
       warnings.push({
         level: "warn",
-        message: `Couldn't read ${label} from Xero: ${spend.error}`,
+        message: `Couldn't read ${label} from Xero: ${costs.error}`,
       });
       return {
         period,
@@ -290,7 +291,14 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
 
     const accounts = accountList.ok ? accountList.accounts : [];
     const accountNameByCode = new Map(accounts.map((a) => [a.code ?? "", a.name]));
-    const expenseCodes = new Set(accounts.map((a) => a.code).filter(Boolean) as string[]);
+
+    if (!costs.reconciled) {
+      warnings.push({
+        level: "warn",
+        message:
+          "The P&L couldn't be read, so these figures are from supplier documents alone — anything posted by journal (such as payroll from Sage) is missing.",
+      });
+    }
 
     const [thisMonth, earlier, accountMappings] = await Promise.all([
       db.select().from(supplierSplits).where(eq(supplierSplits.period, period)),
@@ -337,9 +345,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     let billedFromControls = 0;
     const unsplitBalanceSuppliers: string[] = [];
 
-    for (const row of spend.rows) {
-      if (expenseCodes.size > 0 && !expenseCodes.has(row.accountCode)) continue;
-
+    for (const row of costs.rows) {
       const own = explicit.get(row.key);
       const prior = inherited.get(row.key);
       const accountDefault = byAccountCode.get(row.accountCode);

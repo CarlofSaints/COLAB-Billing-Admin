@@ -265,8 +265,13 @@ function netAmount(doc: RawDoc, line: RawLine): number {
   return gross;
 }
 
-/** Documents in these states never represent real spend. */
-const DEAD_STATUSES = new Set(["DELETED", "VOIDED"]);
+/**
+ * Only approved documents count as cost. DRAFT and SUBMITTED bills are still
+ * awaiting approval and do not appear on the P&L, so billing off them would
+ * recharge costs the business hasn't accepted yet — and would disagree with
+ * the accounts. DELETED and VOIDED are self-evidently excluded.
+ */
+const BILLABLE_STATUSES = new Set(["AUTHORISED", "PAID"]);
 
 export type SupplierSpendRow = {
   /** Composite key: `${accountCode}|${contactId}`. */
@@ -342,7 +347,7 @@ export async function fetchSupplierSpend(
 
   const absorb = (docs: RawDoc[], sign: 1 | -1) => {
     for (const doc of docs) {
-      if (DEAD_STATUSES.has(doc.Status ?? "")) continue;
+      if (!BILLABLE_STATUSES.has(doc.Status ?? "")) continue;
       const contactId = doc.Contact?.ContactID ?? "unknown";
       const supplierName = doc.Contact?.Name ?? "(no supplier)";
       let touched = false;
@@ -430,6 +435,58 @@ export async function fetchContacts(): Promise<
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 
   return { ok: true, contacts };
+}
+
+/* ------------------------------------------------------------------ */
+/* Profit & Loss                                                      */
+/* ------------------------------------------------------------------ */
+
+type ReportCell = { Value?: string; Attributes?: { Id: string; Value: string }[] };
+type ReportRow = { RowType: string; Title?: string; Cells?: ReportCell[]; Rows?: ReportRow[] };
+
+/**
+ * Per-account totals from the Profit & Loss for a month, keyed by Xero
+ * AccountID. This is the authoritative figure: unlike the transaction
+ * endpoints it includes manual journals — which is how payroll from an
+ * outside system (Sage) reaches Xero.
+ */
+export async function fetchProfitAndLoss(
+  period: string,
+): Promise<{ ok: true; byAccountId: Map<string, number> } | { ok: false; error: string }> {
+  const [yearStr, monthStr] = period.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  if (!Number.isInteger(year) || !Number.isInteger(month)) {
+    return { ok: false, error: `Invalid period "${period}".` };
+  }
+  const from = `${period}-01`;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const to = `${period}-${String(lastDay).padStart(2, "0")}`;
+
+  const res = await xeroGet<{ Reports?: { Rows?: ReportRow[] }[] }>(
+    `/Reports/ProfitAndLoss?fromDate=${from}&toDate=${to}`,
+  );
+  if (!res.ok) return res;
+
+  const byAccountId = new Map<string, number>();
+  const walk = (rows: ReportRow[]) => {
+    for (const row of rows) {
+      if (row.Rows?.length) walk(row.Rows);
+      const cells = row.Cells ?? [];
+      // The account GUID lives in the first cell's attributes, under "account"
+      // (TrialBalance uses "accountID" — this report does not).
+      const accountId = cells[0]?.Attributes?.find(
+        (a) => a.Id === "account" || a.Id === "accountID",
+      )?.Value;
+      if (!accountId) continue;
+      const value = Number(cells[1]?.Value ?? 0);
+      if (!Number.isFinite(value)) continue;
+      byAccountId.set(accountId, (byAccountId.get(accountId) ?? 0) + value);
+    }
+  };
+  walk(res.data.Reports?.[0]?.Rows ?? []);
+
+  return { ok: true, byAccountId };
 }
 
 /* ------------------------------------------------------------------ */
