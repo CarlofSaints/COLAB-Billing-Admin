@@ -60,6 +60,7 @@ export default async function ExpenseAccountsPage() {
       method: (m?.method ?? null) as AccountMethod | null,
       companyId: m?.companyId ?? null,
       fixedLineItemId: m?.fixedLineItemId ?? null,
+      percentages: m?.percentages ?? null,
     };
   });
 

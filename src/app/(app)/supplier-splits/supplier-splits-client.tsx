@@ -22,9 +22,12 @@ import {
   METHODS,
   METHOD_BY_KEY,
   UNMAPPED,
+  percentagesValid,
   type AccountMethod,
   type MethodChoice,
+  type PercentEntry,
 } from "@/lib/expense-accounts";
+import { PercentCell } from "@/components/percent-split";
 import { periodLabel } from "@/lib/periods";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,11 +51,17 @@ export type SupplierRow = {
   method: AccountMethod | null;
   companyId: number | null;
   fixedLineItemId: number | null;
+  percentages: PercentEntry[] | null;
   source: Source;
   inheritedFrom: string | null;
 };
 
-type Draft = { method: MethodChoice; companyId: number | null; fixedLineItemId: number | null };
+type Draft = {
+  method: MethodChoice;
+  companyId: number | null;
+  fixedLineItemId: number | null;
+  percentages: PercentEntry[] | null;
+};
 type Filter = "all" | "unset" | "inherited" | AccountMethod;
 
 const SOURCE_BADGE: Record<Source, { label: string; tone: "green" | "amber" | "neutral" | "brand" }> = {
@@ -70,6 +79,7 @@ function toDraft(rows: SupplierRow[]): Record<string, Draft> {
         method: (r.method ?? UNMAPPED) as MethodChoice,
         companyId: r.companyId,
         fixedLineItemId: r.fixedLineItemId,
+        percentages: r.percentages,
       },
     ]),
   );
@@ -77,7 +87,10 @@ function toDraft(rows: SupplierRow[]): Record<string, Draft> {
 
 function same(a: Draft, b: Draft) {
   return (
-    a.method === b.method && a.companyId === b.companyId && a.fixedLineItemId === b.fixedLineItemId
+    a.method === b.method &&
+    a.companyId === b.companyId &&
+    a.fixedLineItemId === b.fixedLineItemId &&
+    JSON.stringify(a.percentages ?? []) === JSON.stringify(b.percentages ?? [])
   );
 }
 
@@ -163,6 +176,7 @@ export function SupplierSplitsClient({
       method,
       companyId: method === "direct" ? (draft[key]?.companyId ?? null) : null,
       fixedLineItemId: method === "fixed" ? (draft[key]?.fixedLineItemId ?? null) : null,
+      percentages: method === "percent" ? (draft[key]?.percentages ?? null) : null,
     });
 
   const applyBulk = () => {
@@ -174,6 +188,7 @@ export function SupplierSplitsClient({
           method: bulkMethod,
           companyId: bulkMethod === "direct" ? next[key].companyId : null,
           fixedLineItemId: bulkMethod === "fixed" ? next[key].fixedLineItemId : null,
+          percentages: bulkMethod === "percent" ? next[key].percentages : null,
         };
       }
       return next;
@@ -202,6 +217,7 @@ export function SupplierSplitsClient({
         method: r.method as string,
         companyId: r.companyId,
         fixedLineItemId: r.fixedLineItemId,
+        percentages: r.percentages,
       })),
     );
     router.refresh();
@@ -222,6 +238,7 @@ export function SupplierSplitsClient({
         method: d.method === UNMAPPED ? null : d.method,
         companyId: d.companyId,
         fixedLineItemId: d.fixedLineItemId,
+        percentages: d.percentages,
       };
     }),
   );
@@ -530,6 +547,13 @@ export function SupplierSplitsClient({
                             </option>
                           ))}
                         </Select>
+                      ) : def?.needs === "percentages" ? (
+                        <PercentCell
+                          value={d?.percentages ?? null}
+                          companies={companies}
+                          disabled={!canManage}
+                          onChange={(entries) => setRow(r.key, { percentages: entries })}
+                        />
                       ) : def?.needs === "fixedItem" ? (
                         <Select
                           value={d?.fixedLineItemId ?? ""}

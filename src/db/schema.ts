@@ -48,6 +48,7 @@ export const splitMethodEnum = pgEnum("split_method", ["occupancy", "custom"]);
 //   equal     — even share each, regardless of size or headcount
 //   fixed     — recovered through a fixed line item (parking etc.), not pro-rata
 //   direct    — billed 100% to a single sub-company
+//   percent   — split by percentages set per sub-company
 //   exclude   — COLAB's own cost, never recharged
 // Note: new values are appended, never inserted — Postgres enums only support
 // ADD VALUE, and reordering would force the type to be recreated.
@@ -58,7 +59,11 @@ export const accountMethodEnum = pgEnum("account_method", [
   "direct",
   "exclude",
   "equal",
+  "percent",
 ]);
+
+/** Per-company percentages for the "percent" method. Must total 100. */
+export type PercentSplit = { companyId: number; percent: number };
 
 /* ------------------------------------------------------------------ */
 /* Companies (COLAB + the 4 sub-companies)                            */
@@ -298,6 +303,8 @@ export const expenseAccountMappings = pgTable(
     fixedLineItemId: integer("fixed_line_item_id").references(() => fixedLineItems.id, {
       onDelete: "set null",
     }),
+    // Only for method = "percent".
+    percentages: jsonb("percentages").$type<PercentSplit[]>(),
     notes: text("notes"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -329,6 +336,8 @@ export const supplierSplits = pgTable(
     fixedLineItemId: integer("fixed_line_item_id").references(() => fixedLineItems.id, {
       onDelete: "set null",
     }),
+    // Only for method = "percent".
+    percentages: jsonb("percentages").$type<PercentSplit[]>(),
     // What the supplier's spend on this account came to that month — kept so
     // a past decision can still be explained after the Xero data moves on.
     amount: numeric("amount", { precision: 14, scale: 2 }),

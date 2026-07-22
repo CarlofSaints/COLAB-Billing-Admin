@@ -7,7 +7,13 @@ import { supplierSplits } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { isPeriod } from "@/lib/periods";
-import { isAccountMethod, type AccountMethod } from "@/lib/expense-accounts";
+import {
+  isAccountMethod,
+  parsePercentages,
+  percentagesValid,
+  type AccountMethod,
+  type PercentEntry,
+} from "@/lib/expense-accounts";
 
 export type ActionState = { error?: string; ok?: boolean; savedAt?: number };
 
@@ -20,6 +26,7 @@ type SplitInput = {
   method: AccountMethod | null;
   companyId: number | null;
   fixedLineItemId: number | null;
+  percentages: PercentEntry[] | null;
 };
 
 function parsePayload(raw: FormDataEntryValue | null): SplitInput[] | null {
@@ -58,6 +65,7 @@ function parsePayload(raw: FormDataEntryValue | null): SplitInput[] | null {
       method,
       companyId: method === "direct" ? num(r.companyId) : null,
       fixedLineItemId: method === "fixed" ? num(r.fixedLineItemId) : null,
+      percentages: method === "percent" ? parsePercentages(r.percentages) : null,
     });
   }
   return rows;
@@ -86,6 +94,11 @@ export async function saveSupplierSplits(
     return { error: `Choose which sub-company carries “${missingCompany.supplierName}”.` };
   }
 
+  const badPercent = rows.find((r) => r.method === "percent" && !percentagesValid(r.percentages));
+  if (badPercent) {
+    return { error: `The percentages for “${badPercent.supplierName}” must add up to 100%.` };
+  }
+
   const toClear = rows.filter((r) => r.method === null);
   const toUpsert = rows.filter((r) => r.method !== null);
 
@@ -111,6 +124,7 @@ export async function saveSupplierSplits(
       method: r.method!,
       companyId: r.companyId,
       fixedLineItemId: r.fixedLineItemId,
+      percentages: r.percentages,
       amount: r.amount != null ? r.amount.toFixed(2) : null,
     };
     await db
@@ -154,6 +168,7 @@ export async function pinInheritedSplits(
     method: string;
     companyId: number | null;
     fixedLineItemId: number | null;
+    percentages: PercentEntry[] | null;
   }[],
 ): Promise<{ error?: string; pinned?: number }> {
   const user = await requirePermission("controls.manage");
@@ -181,6 +196,7 @@ export async function pinInheritedSplits(
       method: r.method as AccountMethod,
       companyId: r.method === "direct" ? r.companyId : null,
       fixedLineItemId: r.method === "fixed" ? r.fixedLineItemId : null,
+      percentages: r.method === "percent" ? r.percentages : null,
       amount: r.amount != null ? r.amount.toFixed(2) : null,
     })),
   );

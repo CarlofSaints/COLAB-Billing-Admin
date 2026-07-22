@@ -8,6 +8,7 @@ export const ACCOUNT_METHODS = [
   "per_sqm",
   "headcount",
   "equal",
+  "percent",
   "fixed",
   "direct",
   "exclude",
@@ -26,9 +27,9 @@ export type MethodDef = {
   short: string;
   description: string;
   /** Badge tone used in the grid + filter pills. */
-  tone: "brand" | "green" | "amber" | "neutral" | "slate" | "indigo";
-  /** Whether the row needs an extra pick (a company, or a fixed line item). */
-  needs?: "company" | "fixedItem";
+  tone: "brand" | "green" | "amber" | "neutral" | "slate" | "indigo" | "violet";
+  /** Whether the row needs an extra pick (a company, a fixed item, or percentages). */
+  needs?: "company" | "fixedItem" | "percentages";
   /** Shown in the "Applies to" column when the method takes no extra pick. */
   applies?: string;
 };
@@ -56,6 +57,15 @@ export const METHODS: MethodDef[] = [
       "An even share each — every sub-company carries the same amount, whatever its size or headcount.",
     tone: "indigo",
     applies: "Every sub-company, evenly",
+  },
+  {
+    key: "percent",
+    label: "Split by custom %",
+    short: "Custom %",
+    description:
+      "You set the share each sub-company carries — for costs that follow neither space nor headcount. Must total 100%.",
+    tone: "violet",
+    needs: "percentages",
   },
   {
     key: "fixed",
@@ -88,6 +98,42 @@ export const METHOD_BY_KEY: Record<AccountMethod, MethodDef> = Object.fromEntrie
 
 export function isAccountMethod(value: string): value is AccountMethod {
   return (ACCOUNT_METHODS as readonly string[]).includes(value);
+}
+
+export type PercentEntry = { companyId: number; percent: number };
+
+/** Reads a `[{companyId, percent}]` array off an untrusted JSON payload. */
+export function parsePercentages(value: unknown): PercentEntry[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: PercentEntry[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const companyId = Number(r.companyId);
+    const percent = Number(r.percent);
+    if (!Number.isInteger(companyId) || companyId <= 0) continue;
+    if (!Number.isFinite(percent) || percent <= 0) continue;
+    out.push({ companyId, percent });
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** Percentages are only valid once they add up to 100. */
+export function percentagesValid(entries: PercentEntry[] | null | undefined): boolean {
+  if (!entries || entries.length === 0) return false;
+  const sum = entries.reduce((s, e) => s + (Number(e.percent) || 0), 0);
+  return Math.abs(sum - 100) < 0.01;
+}
+
+export function percentSummary(
+  entries: PercentEntry[] | null | undefined,
+  companyName: (id: number) => string,
+): string {
+  if (!entries || entries.length === 0) return "";
+  return entries
+    .filter((e) => e.percent > 0)
+    .map((e) => `${companyName(e.companyId)} ${e.percent}%`)
+    .join(" · ");
 }
 
 /** Friendly label for a Xero account type (EXPENSE, OVERHEADS, DIRECTCOSTS, …). */

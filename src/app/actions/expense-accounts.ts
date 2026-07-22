@@ -6,7 +6,14 @@ import { db } from "@/db";
 import { expenseAccountMappings } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
-import { isAccountMethod, METHOD_BY_KEY, type AccountMethod } from "@/lib/expense-accounts";
+import {
+  isAccountMethod,
+  parsePercentages,
+  percentagesValid,
+  METHOD_BY_KEY,
+  type AccountMethod,
+  type PercentEntry,
+} from "@/lib/expense-accounts";
 
 export type ActionState = { error?: string; ok?: boolean; savedAt?: number };
 
@@ -19,6 +26,7 @@ type MappingInput = {
   method: AccountMethod | null;
   companyId: number | null;
   fixedLineItemId: number | null;
+  percentages: PercentEntry[] | null;
 };
 
 function parsePayload(raw: FormDataEntryValue | null): MappingInput[] | null {
@@ -55,6 +63,7 @@ function parsePayload(raw: FormDataEntryValue | null): MappingInput[] | null {
       // Only keep the extra reference the chosen method actually uses.
       companyId: method === "direct" ? num(r.companyId) : null,
       fixedLineItemId: method === "fixed" ? num(r.fixedLineItemId) : null,
+      percentages: method === "percent" ? parsePercentages(r.percentages) : null,
     });
   }
   return rows;
@@ -83,6 +92,11 @@ export async function saveAccountMappings(
     };
   }
 
+  const badPercent = rows.find((r) => r.method === "percent" && !percentagesValid(r.percentages));
+  if (badPercent) {
+    return { error: `The percentages for “${badPercent.accountName}” must add up to 100%.` };
+  }
+
   const toClear = rows.filter((r) => r.method === null).map((r) => r.xeroAccountId);
   const toUpsert = rows.filter((r) => r.method !== null);
 
@@ -101,6 +115,7 @@ export async function saveAccountMappings(
       method: r.method!,
       companyId: r.companyId,
       fixedLineItemId: r.fixedLineItemId,
+      percentages: r.percentages,
     };
     await db
       .insert(expenseAccountMappings)

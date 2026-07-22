@@ -86,25 +86,21 @@ export default async function SupplierSplitsPage({
     let method: AccountMethod | null = null;
     let companyId: number | null = null;
     let fixedLineItemId: number | null = null;
+    let percentages: { companyId: number; percent: number }[] | null = null;
     let inheritedFrom: string | null = null;
 
-    if (own) {
-      source = "explicit";
-      method = own.method;
-      companyId = own.companyId;
-      fixedLineItemId = own.fixedLineItemId;
-    } else if (prior) {
-      source = "inherited";
-      method = prior.method;
-      companyId = prior.companyId;
-      fixedLineItemId = prior.fixedLineItemId;
-      inheritedFrom = prior.period;
-    } else if (accountDefault) {
-      source = "account";
-      method = accountDefault.method;
-      companyId = accountDefault.companyId;
-      fixedLineItemId = accountDefault.fixedLineItemId;
+    const winner = own ?? prior ?? accountDefault ?? null;
+    if (own) source = "explicit";
+    else if (prior) source = "inherited";
+    else if (accountDefault) source = "account";
+
+    if (winner) {
+      method = winner.method;
+      companyId = winner.companyId;
+      fixedLineItemId = winner.fixedLineItemId;
+      percentages = winner.percentages ?? null;
     }
+    if (!own && prior) inheritedFrom = prior.period;
 
     return {
       key: s.key,
@@ -117,6 +113,7 @@ export default async function SupplierSplitsPage({
       method,
       companyId,
       fixedLineItemId,
+      percentages,
       source,
       inheritedFrom,
     };

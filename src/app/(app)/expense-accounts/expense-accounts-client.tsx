@@ -20,7 +20,9 @@ import {
   accountTypeLabel,
   type AccountMethod,
   type MethodChoice,
+  type PercentEntry,
 } from "@/lib/expense-accounts";
+import { PercentCell } from "@/components/percent-split";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +41,7 @@ type AccountRow = {
   method: AccountMethod | null;
   companyId: number | null;
   fixedLineItemId: number | null;
+  percentages: PercentEntry[] | null;
 };
 
 type CompanyOption = { id: number; name: string };
@@ -48,6 +51,7 @@ type Draft = {
   method: MethodChoice;
   companyId: number | null;
   fixedLineItemId: number | null;
+  percentages: PercentEntry[] | null;
 };
 
 type Filter = "all" | "unmapped" | AccountMethod;
@@ -60,6 +64,7 @@ function toDraft(rows: AccountRow[]): Record<string, Draft> {
         method: (r.method ?? UNMAPPED) as MethodChoice,
         companyId: r.companyId,
         fixedLineItemId: r.fixedLineItemId,
+        percentages: r.percentages,
       },
     ]),
   );
@@ -69,7 +74,8 @@ function sameDraft(a: Draft, b: Draft) {
   return (
     a.method === b.method &&
     a.companyId === b.companyId &&
-    a.fixedLineItemId === b.fixedLineItemId
+    a.fixedLineItemId === b.fixedLineItemId &&
+    JSON.stringify(a.percentages ?? []) === JSON.stringify(b.percentages ?? [])
   );
 }
 
@@ -150,8 +156,9 @@ export function ExpenseAccountsClient({
     setRow(id, {
       method,
       // Drop the extra reference when it no longer applies.
-      companyId: method === "direct" ? draft[id]?.companyId ?? null : null,
-      fixedLineItemId: method === "fixed" ? draft[id]?.fixedLineItemId ?? null : null,
+      companyId: method === "direct" ? (draft[id]?.companyId ?? null) : null,
+      fixedLineItemId: method === "fixed" ? (draft[id]?.fixedLineItemId ?? null) : null,
+      percentages: method === "percent" ? (draft[id]?.percentages ?? null) : null,
     });
 
   const toggleRow = (id: string) =>
@@ -180,6 +187,7 @@ export function ExpenseAccountsClient({
           method: bulkMethod,
           companyId: bulkMethod === "direct" ? next[id].companyId : null,
           fixedLineItemId: bulkMethod === "fixed" ? next[id].fixedLineItemId : null,
+          percentages: bulkMethod === "percent" ? next[id].percentages : null,
         };
       }
       return next;
@@ -199,6 +207,7 @@ export function ExpenseAccountsClient({
         method: d.method === UNMAPPED ? null : d.method,
         companyId: d.companyId,
         fixedLineItemId: d.fixedLineItemId,
+        percentages: d.percentages,
       };
     }),
   );
@@ -478,6 +487,13 @@ export function ExpenseAccountsClient({
                             </option>
                           ))}
                         </Select>
+                      ) : def?.needs === "percentages" ? (
+                        <PercentCell
+                          value={d?.percentages ?? null}
+                          companies={companies}
+                          disabled={!canManage}
+                          onChange={(entries) => setRow(r.accountId, { percentages: entries })}
+                        />
                       ) : def?.needs === "fixedItem" ? (
                         <Select
                           value={d?.fixedLineItemId ?? ""}
