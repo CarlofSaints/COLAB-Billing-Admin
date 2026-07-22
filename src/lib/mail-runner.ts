@@ -41,27 +41,43 @@ export async function buildMessages(
         name: companies.name,
         contactName: companies.contactName,
         contactEmail: companies.contactEmail,
+        contactName2: companies.contactName2,
+        contactEmail2: companies.contactEmail2,
+        contactName3: companies.contactName3,
+        contactEmail3: companies.contactEmail3,
       })
       .from(companies)
-      .where(and(eq(companies.type, "sub"), eq(companies.active, true), isNotNull(companies.contactEmail)));
+      .where(and(eq(companies.type, "sub"), eq(companies.active, true)));
 
-    return rows
-      .filter((r) => (r.contactEmail ?? "").includes("@"))
-      .map((r) => {
+    const messages: OutgoingMessage[] = [];
+    for (const r of rows) {
+      // Each contact gets their own copy, addressed by their own name.
+      const people = [
+        { name: r.contactName, email: r.contactEmail },
+        { name: r.contactName2, email: r.contactEmail2 },
+        { name: r.contactName3, email: r.contactEmail3 },
+      ];
+      const seen = new Set<string>();
+      for (const person of people) {
+        const email = (person.email ?? "").trim();
+        if (!email.includes("@") || seen.has(email.toLowerCase())) continue;
+        seen.add(email.toLowerCase());
         const values = {
           company: r.name,
-          contact: r.contactName ?? r.name,
+          contact: person.name?.trim() || r.name,
           month,
           link,
         };
         const body = applyTokens(schedule.body, values);
-        return {
-          to: r.contactEmail!.trim(),
+        messages.push({
+          to: email,
           subject: applyTokens(schedule.subject, values),
           html: bodyHtml(body),
           text: body,
-        };
-      });
+        });
+      }
+    }
+    return messages;
   }
 
   // Group audience: every active group member with an email, de-duplicated.

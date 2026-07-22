@@ -37,6 +37,10 @@ export type CompanyRow = {
   contactName: string;
   contactEmail: string;
   contactPhone: string;
+  contactName2: string;
+  contactEmail2: string;
+  contactName3: string;
+  contactEmail3: string;
   notes: string;
   active: boolean;
   staffCount: number;
@@ -96,6 +100,31 @@ function CompanyForm({ company, onDone }: { company?: CompanyRow; onDone: () => 
       <Field label="Billing contact email">
         <Input name="contactEmail" type="email" defaultValue={company?.contactEmail} />
       </Field>
+
+      <div className="rounded-lg border border-line p-3">
+        <p className="text-sm font-medium text-slate-700">Additional contacts</p>
+        <p className="mb-3 text-xs text-muted">
+          Scheduled reminders go to every contact listed here, each addressed by name.
+        </p>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Second contact name">
+              <Input name="contactName2" defaultValue={company?.contactName2} />
+            </Field>
+            <Field label="Second contact email">
+              <Input name="contactEmail2" type="email" defaultValue={company?.contactEmail2} />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Third contact name">
+              <Input name="contactName3" defaultValue={company?.contactName3} />
+            </Field>
+            <Field label="Third contact email">
+              <Input name="contactEmail3" type="email" defaultValue={company?.contactEmail3} />
+            </Field>
+          </div>
+        </div>
+      </div>
       <Field label="Notes">
         <Textarea name="notes" defaultValue={company?.notes} />
       </Field>
@@ -327,7 +356,15 @@ export function CompaniesManager({
                 <TR key={c.id}>
                   <TD>
                     <div className="font-medium text-slate-900">{c.name}</div>
-                    {c.contactEmail && <div className="text-xs text-muted">{c.contactEmail}</div>}
+                    {c.contactEmail && (
+                      <div className="text-xs text-muted">
+                        {c.contactEmail}
+                        {(() => {
+                          const extra = [c.contactEmail2, c.contactEmail3].filter(Boolean).length;
+                          return extra > 0 ? ` +${extra} more` : "";
+                        })()}
+                      </div>
+                    )}
                   </TD>
                   <TD>{c.regNumber || "—"}</TD>
                   <TD>{c.vatNumber || "—"}</TD>

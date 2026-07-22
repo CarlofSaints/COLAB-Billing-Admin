@@ -79,6 +79,12 @@ export const companies = pgTable("companies", {
   contactName: text("contact_name"),
   contactEmail: text("contact_email"),
   contactPhone: text("contact_phone"),
+  // Up to two further people who should also receive reminders (e.g. the
+  // office manager as well as the director).
+  contactName2: text("contact_name_2"),
+  contactEmail2: text("contact_email_2"),
+  contactName3: text("contact_name_3"),
+  contactEmail3: text("contact_email_3"),
   // The Xero contact this company is invoiced as. Without it no invoice can
   // be raised, so the billing run checks this first.
   xeroContactId: text("xero_contact_id"),

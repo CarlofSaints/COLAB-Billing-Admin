@@ -16,6 +16,10 @@ const companySchema = z.object({
   contactName: z.string().trim().optional(),
   contactEmail: z.string().trim().optional(),
   contactPhone: z.string().trim().optional(),
+  contactName2: z.string().trim().optional(),
+  contactEmail2: z.string().trim().optional(),
+  contactName3: z.string().trim().optional(),
+  contactEmail3: z.string().trim().optional(),
   notes: z.string().trim().optional(),
 });
 
@@ -77,6 +81,10 @@ function parse(formData: FormData) {
     contactName: formData.get("contactName") || undefined,
     contactEmail: formData.get("contactEmail") || undefined,
     contactPhone: formData.get("contactPhone") || undefined,
+    contactName2: formData.get("contactName2") || undefined,
+    contactEmail2: formData.get("contactEmail2") || undefined,
+    contactName3: formData.get("contactName3") || undefined,
+    contactEmail3: formData.get("contactEmail3") || undefined,
     notes: formData.get("notes") || undefined,
   });
 }
