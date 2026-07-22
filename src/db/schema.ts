@@ -60,6 +60,7 @@ export const accountMethodEnum = pgEnum("account_method", [
   "exclude",
   "equal",
   "percent",
+  "controls",
 ]);
 
 /** Per-company percentages for the "percent" method. Must total 100. */
@@ -344,6 +345,14 @@ export const supplierSplits = pgTable(
     }),
     // Only for method = "percent".
     percentages: jsonb("percentages").$type<PercentSplit[]>(),
+    // When method = "fixed", the fixed line item may recover less than COLAB
+    // actually paid (e.g. 20 parking bays paid for, 16 taken up). These decide
+    // how that leftover balance is split.
+    balanceMethod: accountMethodEnum("balance_method"),
+    balanceCompanyId: integer("balance_company_id").references(() => companies.id, {
+      onDelete: "set null",
+    }),
+    balancePercentages: jsonb("balance_percentages").$type<PercentSplit[]>(),
     // What the supplier's spend on this account came to that month — kept so
     // a past decision can still be explained after the Xero data moves on.
     amount: numeric("amount", { precision: 14, scale: 2 }),

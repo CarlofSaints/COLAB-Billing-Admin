@@ -11,6 +11,7 @@ export const ACCOUNT_METHODS = [
   "percent",
   "fixed",
   "direct",
+  "controls",
   "exclude",
 ] as const;
 
@@ -84,6 +85,15 @@ export const METHODS: MethodDef[] = [
     needs: "company",
   },
   {
+    key: "controls",
+    label: "Ignore — split in Controls",
+    short: "In Controls",
+    description:
+      "Already billed from Controls — rent on the recurring invoice, or a fixed line item. Ignored here so it can't go out twice.",
+    tone: "indigo",
+    applies: "Billed from Controls",
+  },
+  {
     key: "exclude",
     label: "Not recharged",
     short: "Excluded",
@@ -101,6 +111,15 @@ export function isAccountMethod(value: string): value is AccountMethod {
 }
 
 export type PercentEntry = { companyId: number; percent: number };
+
+/**
+ * Methods offered for the leftover balance when a fixed line item recovers
+ * less than the supplier actually charged. "fixed" is excluded — the fixed
+ * item is precisely what left the balance behind.
+ */
+export const BALANCE_METHODS = METHODS.filter(
+  (m) => m.key !== "fixed" && m.key !== "controls",
+);
 
 /** Reads a `[{companyId, percent}]` array off an untrusted JSON payload. */
 export function parsePercentages(value: unknown): PercentEntry[] | null {

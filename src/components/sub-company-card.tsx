@@ -111,6 +111,14 @@ export function SubCompanyCard({
               )}
             </div>
           )}
+          {typeof rent === "number" && typeof otherExpenses === "number" && (
+            <div className="flex items-center justify-between border-t border-line pt-1.5">
+              <span className="font-medium text-slate-700">Total for the month</span>
+              <span className="font-bold text-slate-900">
+                {formatCurrency(rent + otherExpenses)}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>

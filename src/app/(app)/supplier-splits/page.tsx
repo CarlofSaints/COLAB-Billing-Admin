@@ -3,6 +3,7 @@ import { db } from "@/db";
 import {
   companies,
   expenseAccountMappings,
+  fixedLineAllocations,
   fixedLineItems,
   supplierSplits,
 } from "@/db/schema";
@@ -32,13 +33,14 @@ export default async function SupplierSplitsPage({
     ? await Promise.all([fetchSupplierSpend(period), fetchExpenseAccounts()])
     : [{ ok: false, error: "Not connected to Xero." } as const, { ok: false, error: "" } as const];
 
-  const [subs, items, thisMonth, earlier, accountDefaults] = await Promise.all([
+  const [subs, items, allocations, thisMonth, earlier, accountDefaults] = await Promise.all([
     db.select().from(companies).where(eq(companies.type, "sub")).orderBy(asc(companies.name)),
     db
       .select()
       .from(fixedLineItems)
       .where(eq(fixedLineItems.active, true))
       .orderBy(asc(fixedLineItems.name)),
+    db.select().from(fixedLineAllocations),
     db.select().from(supplierSplits).where(eq(supplierSplits.period, period)),
     // Every earlier decision, newest first — the first hit per supplier+account
     // is the one a month with no explicit split inherits.
@@ -114,6 +116,11 @@ export default async function SupplierSplitsPage({
       companyId,
       fixedLineItemId,
       percentages,
+      // Balance decisions only live on supplier rows — an account default has
+      // no notion of the shortfall on one supplier's invoice.
+      balanceMethod: ((own ?? prior)?.balanceMethod ?? null) as AccountMethod | null,
+      balanceCompanyId: (own ?? prior)?.balanceCompanyId ?? null,
+      balancePercentages: (own ?? prior)?.balancePercentages ?? null,
       source,
       inheritedFrom,
     };
@@ -130,7 +137,15 @@ export default async function SupplierSplitsPage({
         periods={recentPeriods()}
         rows={rows}
         companies={subs.map((c) => ({ id: c.id, name: c.name }))}
-        fixedItems={items.map((i) => ({ id: i.id, name: i.name, unitAmount: Number(i.unitAmount) }))}
+        fixedItems={items.map((i) => ({
+          id: i.id,
+          name: i.name,
+          unitAmount: Number(i.unitAmount),
+          // What the item's per-company quantities actually recover.
+          allocatedTotal: allocations
+            .filter((a) => a.fixedLineItemId === i.id)
+            .reduce((s, a) => s + Number(a.quantity) * Number(i.unitAmount), 0),
+        }))}
         canManage={canManage}
         hiddenNonExpense={hiddenNonExpense}
         xero={{

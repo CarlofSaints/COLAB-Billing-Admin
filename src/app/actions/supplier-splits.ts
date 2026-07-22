@@ -27,6 +27,9 @@ type SplitInput = {
   companyId: number | null;
   fixedLineItemId: number | null;
   percentages: PercentEntry[] | null;
+  balanceMethod: AccountMethod | null;
+  balanceCompanyId: number | null;
+  balancePercentages: PercentEntry[] | null;
 };
 
 function parsePayload(raw: FormDataEntryValue | null): SplitInput[] | null {
@@ -50,6 +53,7 @@ function parsePayload(raw: FormDataEntryValue | null): SplitInput[] | null {
 
     const rawMethod = typeof r.method === "string" ? r.method : "";
     const method = isAccountMethod(rawMethod) ? rawMethod : null;
+    const rawBalance = typeof r.balanceMethod === "string" ? r.balanceMethod : "";
     const num = (v: unknown) => {
       const n = Number(v);
       return Number.isInteger(n) && n > 0 ? n : null;
@@ -66,6 +70,13 @@ function parsePayload(raw: FormDataEntryValue | null): SplitInput[] | null {
       companyId: method === "direct" ? num(r.companyId) : null,
       fixedLineItemId: method === "fixed" ? num(r.fixedLineItemId) : null,
       percentages: method === "percent" ? parsePercentages(r.percentages) : null,
+      balanceMethod: method === "fixed" && isAccountMethod(rawBalance) ? rawBalance : null,
+      balanceCompanyId:
+        method === "fixed" && rawBalance === "direct" ? num(r.balanceCompanyId) : null,
+      balancePercentages:
+        method === "fixed" && rawBalance === "percent"
+          ? parsePercentages(r.balancePercentages)
+          : null,
     });
   }
   return rows;
@@ -99,6 +110,24 @@ export async function saveSupplierSplits(
     return { error: `The percentages for “${badPercent.supplierName}” must add up to 100%.` };
   }
 
+  const badBalanceCompany = rows.find(
+    (r) => r.balanceMethod === "direct" && !r.balanceCompanyId,
+  );
+  if (badBalanceCompany) {
+    return {
+      error: `Choose which sub-company carries the balance on “${badBalanceCompany.supplierName}”.`,
+    };
+  }
+
+  const badBalancePercent = rows.find(
+    (r) => r.balanceMethod === "percent" && !percentagesValid(r.balancePercentages),
+  );
+  if (badBalancePercent) {
+    return {
+      error: `The balance percentages for “${badBalancePercent.supplierName}” must add up to 100%.`,
+    };
+  }
+
   const toClear = rows.filter((r) => r.method === null);
   const toUpsert = rows.filter((r) => r.method !== null);
 
@@ -125,6 +154,9 @@ export async function saveSupplierSplits(
       companyId: r.companyId,
       fixedLineItemId: r.fixedLineItemId,
       percentages: r.percentages,
+      balanceMethod: r.balanceMethod,
+      balanceCompanyId: r.balanceCompanyId,
+      balancePercentages: r.balancePercentages,
       amount: r.amount != null ? r.amount.toFixed(2) : null,
     };
     await db
@@ -169,6 +201,9 @@ export async function pinInheritedSplits(
     companyId: number | null;
     fixedLineItemId: number | null;
     percentages: PercentEntry[] | null;
+    balanceMethod: string | null;
+    balanceCompanyId: number | null;
+    balancePercentages: PercentEntry[] | null;
   }[],
 ): Promise<{ error?: string; pinned?: number }> {
   const user = await requirePermission("controls.manage");
@@ -197,6 +232,12 @@ export async function pinInheritedSplits(
       companyId: r.method === "direct" ? r.companyId : null,
       fixedLineItemId: r.method === "fixed" ? r.fixedLineItemId : null,
       percentages: r.method === "percent" ? r.percentages : null,
+      balanceMethod:
+        r.method === "fixed" && r.balanceMethod && isAccountMethod(r.balanceMethod)
+          ? (r.balanceMethod as AccountMethod)
+          : null,
+      balanceCompanyId: r.balanceMethod === "direct" ? r.balanceCompanyId : null,
+      balancePercentages: r.balanceMethod === "percent" ? r.balancePercentages : null,
       amount: r.amount != null ? r.amount.toFixed(2) : null,
     })),
   );

@@ -10,23 +10,23 @@ import {
   companyAllocations,
   fixedLineItems,
   fixedLineAllocations,
-  appSettings,
-  commonSpaces,
-  commonSpaceSplits,
 } from "@/db/schema";
 import { requireUser, hasPermission } from "@/lib/auth";
-import { computeEffectiveAreas, rentShare } from "@/lib/billing-calc";
-import { TOTAL_SQM_KEY, RENT_AMOUNT_KEY } from "@/lib/controls";
+import { buildPreview } from "@/lib/invoice-engine";
+import { defaultPeriod, isPeriod, periodLabel, recentPeriods } from "@/lib/periods";
 import { Card, CardContent } from "@/components/ui/card";
 import { SubCompanyCard } from "@/components/sub-company-card";
+import { MonthFilter } from "@/components/month-filter";
 
 export default async function Dashboard({
   searchParams,
 }: {
-  searchParams: Promise<{ denied?: string }>;
+  searchParams: Promise<{ denied?: string; period?: string }>;
 }) {
   const user = await requireUser();
-  const { denied } = await searchParams;
+  const { denied, period: requestedPeriod } = await searchParams;
+  const period =
+    requestedPeriod && isPeriod(requestedPeriod) ? requestedPeriod : defaultPeriod();
 
   const [companyCount] = await db
     .select({ n: sql<number>`count(*)::int` })
@@ -62,49 +62,36 @@ export default async function Dashboard({
       companyId: fixedLineAllocations.companyId,
       name: fixedLineItems.name,
       quantity: fixedLineAllocations.quantity,
-      unitAmount: fixedLineItems.unitAmount,
     })
     .from(fixedLineAllocations)
     .innerJoin(fixedLineItems, eq(fixedLineAllocations.fixedLineItemId, fixedLineItems.id))
     .where(eq(fixedLineItems.active, true));
   const fixedByCompany = new Map<number, { name: string; quantity: number }[]>();
-  const fixedTotalByCompany = new Map<number, number>();
   for (const f of fixedRows) {
     if (!fixedByCompany.has(f.companyId)) fixedByCompany.set(f.companyId, []);
-    const quantity = Number(f.quantity);
-    fixedByCompany.get(f.companyId)!.push({ name: f.name, quantity });
-    fixedTotalByCompany.set(
-      f.companyId,
-      (fixedTotalByCompany.get(f.companyId) ?? 0) + quantity * Number(f.unitAmount),
-    );
+    fixedByCompany.get(f.companyId)!.push({ name: f.name, quantity: Number(f.quantity) });
   }
 
-  // Rent share needs the whole floor-space picture: the building total, each
-  // company's occupied area, and how the common spaces are apportioned.
-  const settings = await db.select().from(appSettings);
-  const settingValue = (key: string) => {
-    const row = settings.find((s) => s.key === key);
-    return row?.value ? Number(row.value) : 0;
-  };
-  const totalSqm = settingValue(TOTAL_SQM_KEY);
-  const rentAmount = settingValue(RENT_AMOUNT_KEY);
+  // The card figures come from the same engine that builds the invoices, so
+  // what a company sees here is exactly what it will be billed.
+  const [recurring, monthEnd] = await Promise.all([
+    buildPreview(period, "recurring"),
+    buildPreview(period, "month_end"),
+  ]);
 
-  const spaceRows = await db.select().from(commonSpaces).where(eq(commonSpaces.active, true));
-  const splitRows = await db.select().from(commonSpaceSplits);
-  const commonSpaceInputs = spaceRows.map((s) => ({
-    sqm: Number(s.squareMetres),
-    splitMethod: s.splitMethod as "occupancy" | "custom",
-    splits: splitRows
-      .filter((sp) => sp.commonSpaceId === s.id)
-      .map((sp) => ({ companyId: sp.companyId, percent: Number(sp.percent) })),
-  }));
-
-  const { effective } = computeEffectiveAreas(
-    subCompanies,
-    Object.fromEntries(subCompanies.map((c) => [c.id, sqmByCompany.get(c.id) ?? 0])),
-    commonSpaceInputs,
-    totalSqm,
-  );
+  const rentByCompany = new Map<number, number>();
+  const otherByCompany = new Map<number, number>();
+  for (const c of recurring.companies) {
+    const rent = c.lines
+      .filter((l) => l.key.startsWith("rent-"))
+      .reduce((s, l) => s + l.amount, 0);
+    const other = c.total - rent; // fixed line items
+    rentByCompany.set(c.companyId, rent);
+    otherByCompany.set(c.companyId, other);
+  }
+  for (const c of monthEnd.companies) {
+    otherByCompany.set(c.companyId, (otherByCompany.get(c.companyId) ?? 0) + c.total);
+  }
 
   const stats = [
     { label: "Sub-Companies", value: companyCount?.n ?? 0, icon: Building2, href: "/companies", perm: "companies.view" },
@@ -156,18 +143,26 @@ export default async function Dashboard({
 
       {subCompanies.length > 0 && (
         <div className="mt-8">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-              The sub-companies
-            </h2>
-            {canSeeCompanies && (
-              <Link
-                href="/companies"
-                className="text-sm font-medium text-brand-700 hover:text-brand-800"
-              >
-                Manage
-              </Link>
-            )}
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
+                The sub-companies
+              </h2>
+              <p className="mt-0.5 text-xs text-muted">
+                Billing figures for {periodLabel(period)}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <MonthFilter period={period} periods={recentPeriods()} basePath="/" />
+              {canSeeCompanies && (
+                <Link
+                  href="/companies"
+                  className="text-sm font-medium text-brand-700 hover:text-brand-800"
+                >
+                  Manage
+                </Link>
+              )}
+            </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {subCompanies.map((c) => (
@@ -178,8 +173,8 @@ export default async function Dashboard({
                 staffCount={staffByCompany.get(c.id) ?? 0}
                 sqm={sqmByCompany.get(c.id) ?? 0}
                 fixedItems={fixedByCompany.get(c.id) ?? []}
-                rent={rentShare(effective[c.id] ?? 0, totalSqm, rentAmount)}
-                otherExpenses={fixedTotalByCompany.get(c.id) ?? 0}
+                rent={rentByCompany.get(c.id) ?? 0}
+                otherExpenses={otherByCompany.get(c.id) ?? 0}
               />
             ))}
           </div>

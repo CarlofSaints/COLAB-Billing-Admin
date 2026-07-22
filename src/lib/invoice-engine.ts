@@ -101,9 +101,11 @@ function allocate(
       if (opts.companyId) out[opts.companyId] = amount;
       return out;
     }
-    // "fixed" is recovered by a fixed line item on the recurring run, and
-    // "exclude" is never recharged — neither produces a month-end line.
+    // "fixed" is recovered by a fixed line item on the recurring run,
+    // "controls" is billed from Controls, and "exclude" is never recharged —
+    // none of them produce a month-end line.
     case "fixed":
+    case "controls":
     case "exclude":
     default:
       return out;
@@ -112,6 +114,10 @@ function allocate(
 
 function round2(n: number) {
   return Math.round(n * 100) / 100;
+}
+
+function formatRand(n: number) {
+  return `R${n.toFixed(2)}`;
 }
 
 /** Everything the split maths needs, loaded once per preview. */
@@ -309,10 +315,27 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       { company: Record<number, number>; contributors: string[]; total: number }
     >();
 
+    // What each fixed line item recovers from the companies each month.
+    const fixedItemRows = await db.select().from(fixedLineItems);
+    const fixedAllocRows = await db.select().from(fixedLineAllocations);
+    const recoveredByItem = new Map<number, number>();
+    for (const item of fixedItemRows) {
+      const unit = Number(item.unitAmount);
+      recoveredByItem.set(
+        item.id,
+        fixedAllocRows
+          .filter((a) => a.fixedLineItemId === item.id)
+          .reduce((s, a) => s + Number(a.quantity) * unit, 0),
+      );
+    }
+
     let unsplitCount = 0;
     let unsplitValue = 0;
     let fallbackCount = 0;
     let recoveredElsewhere = 0;
+    let unsplitBalance = 0;
+    let billedFromControls = 0;
+    const unsplitBalanceSuppliers: string[] = [];
 
     for (const row of spend.rows) {
       if (expenseCodes.size > 0 && !expenseCodes.has(row.accountCode)) continue;
@@ -330,15 +353,44 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       if (!own && !prior && accountDefault) fallbackCount += 1;
 
       const method = winner.method as AccountMethod;
-      if (method === "fixed") {
-        recoveredElsewhere += row.amount;
+      if (method === "exclude") continue;
+      if (method === "controls") {
+        billedFromControls += row.amount;
         continue;
       }
-      if (method === "exclude") continue;
 
-      const shares = allocate(row.amount, method, basis, {
-        companyId: winner.companyId,
-        percentages: winner.percentages ?? null,
+      let splitAmount = row.amount;
+      let splitMethod: AccountMethod = method;
+      let splitCompanyId: number | null = winner.companyId;
+      let splitPercentages: PercentEntry[] | null = winner.percentages ?? null;
+
+      if (method === "fixed") {
+        // The fixed line item recovers a set amount on the recurring invoice;
+        // only what it leaves behind belongs on this invoice.
+        const recovered = winner.fixedLineItemId
+          ? (recoveredByItem.get(winner.fixedLineItemId) ?? 0)
+          : 0;
+        recoveredElsewhere += Math.min(recovered, row.amount);
+        const balance = round2(row.amount - recovered);
+        if (balance <= 0.005) continue;
+
+        const balanceMethod = ("balanceMethod" in winner ? winner.balanceMethod : null) as
+          | AccountMethod
+          | null;
+        if (!balanceMethod || balanceMethod === "fixed") {
+          unsplitBalance += balance;
+          unsplitBalanceSuppliers.push(`${row.supplierName} (${formatRand(balance)})`);
+          continue;
+        }
+        splitAmount = balance;
+        splitMethod = balanceMethod;
+        splitCompanyId = "balanceCompanyId" in winner ? winner.balanceCompanyId : null;
+        splitPercentages = ("balancePercentages" in winner ? winner.balancePercentages : null) ?? null;
+      }
+
+      const shares = allocate(splitAmount, splitMethod, basis, {
+        companyId: splitCompanyId,
+        percentages: splitPercentages,
       });
 
       const entry =
@@ -348,8 +400,12 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
         const id = Number(idStr);
         entry.company[id] = (entry.company[id] ?? 0) + value;
       }
-      entry.total += row.amount;
-      entry.contributors.push(`${row.supplierName} — R${row.amount.toFixed(2)}`);
+      entry.total += splitAmount;
+      entry.contributors.push(
+        method === "fixed"
+          ? `${row.supplierName} — balance ${formatRand(splitAmount)} of ${formatRand(row.amount)} (rest on the recurring invoice)`
+          : `${row.supplierName} — ${formatRand(splitAmount)}`,
+      );
       perAccount.set(row.accountCode, entry);
     }
 
@@ -403,7 +459,23 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     if (recoveredElsewhere > 0) {
       warnings.push({
         level: "info",
-        message: `R${recoveredElsewhere.toFixed(2)} sits on accounts marked "Fixed line item" and is billed on the recurring invoice instead, not here.`,
+        message: `${formatRand(recoveredElsewhere)} is recovered by fixed line items and is billed on the recurring invoice instead, not here.`,
+      });
+    }
+
+    if (billedFromControls > 0) {
+      warnings.push({
+        level: "info",
+        message: `${formatRand(billedFromControls)} is marked "Ignore — split in Controls" and is billed on the recurring invoice instead.`,
+      });
+    }
+
+    if (unsplitBalance > 0) {
+      warnings.push({
+        level: "warn",
+        message: `${formatRand(unsplitBalance)} is left over after fixed line items and has no balance split, so it is NOT on any invoice — ${unsplitBalanceSuppliers.join(", ")}.`,
+        href: `/supplier-splits?period=${period}`,
+        linkLabel: "Split the balance",
       });
     }
 
