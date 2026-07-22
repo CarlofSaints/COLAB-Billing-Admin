@@ -31,6 +31,7 @@ export type StaffRow = {
   companyId: number;
   companyName: string;
   active: boolean;
+  includeInBilling: boolean;
 };
 
 function SaveButton({ label }: { label: string }) {
@@ -114,6 +115,18 @@ function StaffForm({
       </div>
       <Field label="Company">
         <CompanySelect companies={companies} defaultValue={person?.companyId} />
+      </Field>
+      <Field
+        label="Include in Billing"
+        hint="Only people set to Yes count towards the headcount that shared costs are split by."
+      >
+        <Select
+          name="includeInBilling"
+          defaultValue={person ? (person.includeInBilling ? "Yes" : "No") : "Yes"}
+        >
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </Select>
       </Field>
       {state.error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
@@ -212,6 +225,7 @@ export function StaffManager({
       gender: (s) => s.gender,
       cell: (s) => s.cellNumber,
       email: (s) => s.email,
+      billing: (s) => (s.includeInBilling ? "Yes" : "No"),
     },
     { key: "name", dir: "asc" },
   );
@@ -298,13 +312,16 @@ export function StaffManager({
                 <SortableTH sortKey="email" sort={sort} onSort={toggle}>
                   Email
                 </SortableTH>
+                <SortableTH sortKey="billing" sort={sort} onSort={toggle}>
+                  In billing
+                </SortableTH>
                 {canManage && <TH className="text-right">Actions</TH>}
               </tr>
             </THead>
             <tbody>
               {sorted.length === 0 && (
                 <tr>
-                  <TD colSpan={canManage ? 6 : 5} className="py-10 text-center text-sm text-muted">
+                  <TD colSpan={canManage ? 7 : 6} className="py-10 text-center text-sm text-muted">
                     No staff match this search or filter.
                   </TD>
                 </tr>
@@ -321,6 +338,13 @@ export function StaffManager({
                   <TD>{s.gender || "—"}</TD>
                   <TD>{s.cellNumber || "—"}</TD>
                   <TD>{s.email || "—"}</TD>
+                  <TD>
+                    {s.includeInBilling ? (
+                      <Badge tone="green">Yes</Badge>
+                    ) : (
+                      <Badge tone="amber">No</Badge>
+                    )}
+                  </TD>
                   {canManage && (
                     <TD className="text-right">
                       <div className="flex justify-end gap-1">

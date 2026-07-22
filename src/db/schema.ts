@@ -171,6 +171,9 @@ export const staff = pgTable(
       .notNull()
       .references(() => companies.id),
     position: text("position"),
+    // Whether this person counts towards the headcount that shared costs are
+    // split by. Some staff are on the list but shouldn't be billed for.
+    includeInBilling: boolean("include_in_billing").notNull().default(true),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

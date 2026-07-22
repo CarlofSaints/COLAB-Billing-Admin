@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { staff, companies } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
+import { parseYesNo } from "@/lib/utils";
 
 const staffSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
@@ -16,6 +17,7 @@ const staffSchema = z.object({
   gender: z.string().trim().optional(),
   position: z.string().trim().optional(),
   companyId: z.coerce.number().int().positive("Choose a company"),
+  includeInBilling: z.boolean(),
 });
 
 export type ActionState = { error?: string; ok?: boolean };
@@ -28,6 +30,7 @@ function parse(formData: FormData) {
     gender: formData.get("gender") || undefined,
     position: formData.get("position") || undefined,
     companyId: formData.get("companyId"),
+    includeInBilling: parseYesNo(formData.get("includeInBilling")),
   });
 }
 
@@ -157,6 +160,10 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
     const gender = pick(row, ["gender", "sex"]);
     const position = pick(row, ["position", "role", "title", "jobtitle"]);
     const companyName = pick(row, ["company", "subcompany", "business", "entity"]);
+    // Blank means yes — someone has to say No for a person to be left out.
+    const includeInBilling = parseYesNo(
+      pick(row, ["includeinbilling", "includeinbill", "billing", "billable"]),
+    );
 
     // Only a Name and a valid Sub Company are required; everything else is optional.
     if (!name) {
@@ -181,6 +188,7 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
       gender: gender || null,
       position: position || null,
       companyId,
+      includeInBilling,
     };
 
     if (matchId) {

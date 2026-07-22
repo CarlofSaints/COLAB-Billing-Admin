@@ -220,6 +220,33 @@ export function InvoiceBuilder({
         </CardHeader>
       </Card>
 
+      {/* Per-company totals, at a glance */}
+      <Card>
+        <CardContent className="py-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {draft.map((c) => {
+              const total = totalFor(c.companyId);
+              return (
+                <div
+                  key={c.companyId}
+                  className="flex items-baseline justify-between gap-2 rounded-lg border border-line px-3 py-2"
+                >
+                  <span className="truncate text-sm font-medium text-slate-700">{c.name}</span>
+                  <span
+                    className={cn(
+                      "shrink-0 text-sm font-semibold tabular-nums",
+                      total > 0 ? "text-slate-900" : "text-muted",
+                    )}
+                  >
+                    {total > 0 ? formatCurrency(total) : "—"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Warnings */}
       {preview.warnings.length > 0 && (
         <div className="space-y-2">

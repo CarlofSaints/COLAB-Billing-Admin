@@ -525,8 +525,8 @@ function HeadcountTab({ companies, canManage }: { companies: ControlCompany[]; c
         <div>
           <CardTitle>Headcount</CardTitle>
           <CardDescription>
-            Utilities and consumables are split per person. Leave the override blank to use the live
-            staff count.
+            Utilities and consumables are split per person. The live count includes only staff
+            marked &ldquo;Include in Billing&rdquo;. Leave the override blank to use it.
           </CardDescription>
         </div>
         <Badge tone="brand">{total} people total</Badge>

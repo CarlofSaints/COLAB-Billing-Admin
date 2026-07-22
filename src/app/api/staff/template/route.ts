@@ -12,13 +12,20 @@ export async function GET() {
   }
 
   const rows = [
-    ["Sub Company", "Name", "Gender", "Email", "Cell Number"],
-    ["OuterJoin", "Jane Doe", "Female", "jane@outerjoin.co.za", "082 123 4567"],
-    ["COLAB", "John Smith", "Male", "john@colab2.co.za", "083 987 6543"],
+    ["Sub Company", "Name", "Gender", "Email", "Cell Number", "Include in Billing"],
+    ["OuterJoin", "Jane Doe", "Female", "jane@outerjoin.co.za", "082 123 4567", "Yes"],
+    ["COLAB", "John Smith", "Male", "john@colab2.co.za", "083 987 6543", "No"],
   ];
 
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws["!cols"] = [{ wch: 20 }, { wch: 22 }, { wch: 12 }, { wch: 28 }, { wch: 16 }];
+  ws["!cols"] = [
+    { wch: 20 },
+    { wch: 22 },
+    { wch: 12 },
+    { wch: 28 },
+    { wch: 16 },
+    { wch: 18 },
+  ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Staff");
 

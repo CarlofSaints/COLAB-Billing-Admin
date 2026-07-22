@@ -169,10 +169,11 @@ async function loadBasis(): Promise<{
     totalSqm,
   );
 
+  // Only people flagged "Include in Billing" count towards the split.
   const counts = await db
     .select({ companyId: staff.companyId, count: sql<number>`count(*)::int` })
     .from(staff)
-    .where(eq(staff.active, true))
+    .where(and(eq(staff.active, true), eq(staff.includeInBilling, true)))
     .groupBy(staff.companyId);
 
   const headcount: Record<number, number> = {};

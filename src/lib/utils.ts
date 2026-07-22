@@ -22,6 +22,20 @@ export function formatDateTime(value: Date | string): string {
   }).format(d);
 }
 
+/**
+ * Reads a yes/no answer from a spreadsheet cell or form field. Blank means
+ * yes — a person is billable unless someone says otherwise.
+ */
+export function parseYesNo(value: unknown, fallback = true): boolean {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!raw) return fallback;
+  if (["no", "n", "false", "0", "exclude", "excluded"].includes(raw)) return false;
+  if (["yes", "y", "true", "1", "include", "included"].includes(raw)) return true;
+  return fallback;
+}
+
 export function initials(name: string): string {
   return name
     .split(" ")

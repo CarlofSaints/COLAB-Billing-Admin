@@ -1,4 +1,4 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   companies,
@@ -31,10 +31,12 @@ export default async function ControlsPage() {
   const allocs = await db.select().from(companyAllocations);
   const allocMap = new Map(allocs.map((a) => [a.companyId, a]));
 
+  // The live headcount for billing counts only people marked "Include in
+  // Billing" — the same basis the invoice run uses.
   const counts = await db
     .select({ companyId: staff.companyId, count: sql<number>`count(*)::int` })
     .from(staff)
-    .where(eq(staff.active, true))
+    .where(and(eq(staff.active, true), eq(staff.includeInBilling, true)))
     .groupBy(staff.companyId);
   const countMap = new Map(counts.map((c) => [c.companyId, c.count]));
 

@@ -28,6 +28,7 @@ export default async function StaffPage() {
       position: staff.position,
       companyId: staff.companyId,
       active: staff.active,
+      includeInBilling: staff.includeInBilling,
       companyName: companies.name,
     })
     .from(staff)
@@ -44,6 +45,7 @@ export default async function StaffPage() {
     companyId: s.companyId,
     companyName: s.companyName,
     active: s.active,
+    includeInBilling: s.includeInBilling,
   }));
 
   return (
