@@ -38,15 +38,19 @@ export const splitMethodEnum = pgEnum("split_method", ["occupancy", "custom"]);
 // How the cost sitting on one Xero P&L expense account is recharged.
 //   per_sqm   — split by effective floor-space share (rent-style)
 //   headcount — split by staff count
+//   equal     — even share each, regardless of size or headcount
 //   fixed     — recovered through a fixed line item (parking etc.), not pro-rata
 //   direct    — billed 100% to a single sub-company
 //   exclude   — COLAB's own cost, never recharged
+// Note: new values are appended, never inserted — Postgres enums only support
+// ADD VALUE, and reordering would force the type to be recreated.
 export const accountMethodEnum = pgEnum("account_method", [
   "per_sqm",
   "headcount",
   "fixed",
   "direct",
   "exclude",
+  "equal",
 ]);
 
 /* ------------------------------------------------------------------ */

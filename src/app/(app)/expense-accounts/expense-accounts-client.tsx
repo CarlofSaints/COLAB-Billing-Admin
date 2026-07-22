@@ -496,7 +496,7 @@ export function ExpenseAccountsClient({
                           ))}
                         </Select>
                       ) : (
-                        <span className="text-sm text-muted">—</span>
+                        <span className="text-sm text-muted">{def?.applies ?? "—"}</span>
                       )}
                     </TD>
                   </TR>

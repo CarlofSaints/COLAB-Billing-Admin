@@ -4,7 +4,14 @@
  * action and the client grid, so nothing server-only belongs in here.
  */
 
-export const ACCOUNT_METHODS = ["per_sqm", "headcount", "fixed", "direct", "exclude"] as const;
+export const ACCOUNT_METHODS = [
+  "per_sqm",
+  "headcount",
+  "equal",
+  "fixed",
+  "direct",
+  "exclude",
+] as const;
 
 export type AccountMethod = (typeof ACCOUNT_METHODS)[number];
 
@@ -19,9 +26,11 @@ export type MethodDef = {
   short: string;
   description: string;
   /** Badge tone used in the grid + filter pills. */
-  tone: "brand" | "green" | "amber" | "neutral" | "slate";
+  tone: "brand" | "green" | "amber" | "neutral" | "slate" | "indigo";
   /** Whether the row needs an extra pick (a company, or a fixed line item). */
   needs?: "company" | "fixedItem";
+  /** Shown in the "Applies to" column when the method takes no extra pick. */
+  applies?: string;
 };
 
 export const METHODS: MethodDef[] = [
@@ -38,6 +47,15 @@ export const METHODS: MethodDef[] = [
     short: "Headcount",
     description: "Divided by staff count — utilities, cleaning, consumables, coffee.",
     tone: "green",
+  },
+  {
+    key: "equal",
+    label: "Split equally",
+    short: "Equal",
+    description:
+      "An even share each — every sub-company carries the same amount, whatever its size or headcount.",
+    tone: "indigo",
+    applies: "Every sub-company, evenly",
   },
   {
     key: "fixed",
