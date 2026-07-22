@@ -558,6 +558,26 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       });
     }
 
+    // A fixed line item always goes out on the recurring invoice. If nothing
+    // deducts it from the account its cost actually sits in, that account's
+    // split bills it a second time.
+    const referencedItems = new Set<number>([
+      ...accountMappings.map((m) => m.fixedLineItemId).filter((id): id is number => id != null),
+      ...thisMonth.map((s) => s.fixedLineItemId).filter((id): id is number => id != null),
+      ...earlier.map((s) => s.fixedLineItemId).filter((id): id is number => id != null),
+    ]);
+    const unreferenced = fixedItemRows.filter(
+      (i) => i.active && !referencedItems.has(i.id) && (recoveredByItem.get(i.id) ?? 0) > 0,
+    );
+    if (unreferenced.length > 0) {
+      warnings.push({
+        level: "warn",
+        message: `${unreferenced.map((i) => i.name).join(", ")} ${unreferenced.length === 1 ? "is" : "are"} billed on the recurring invoice, but no expense account is set to "Fixed line item" to deduct ${unreferenced.length === 1 ? "it" : "them"}. If that cost also sits in an account being split here, it will be charged twice.`,
+        href: "/expense-accounts",
+        linkLabel: "Check the account rules",
+      });
+    }
+
     if (duplicateItemUse.size > 0) {
       const names = [...duplicateItemUse]
         .map((id) => fixedItemRows.find((i) => i.id === id)?.name ?? `item ${id}`)
