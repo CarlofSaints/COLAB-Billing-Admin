@@ -8,6 +8,7 @@ import {
   Building2,
   Wallet,
   Receipt,
+  FileText,
   Users,
   Mails,
   Send,
@@ -35,6 +36,7 @@ const SECTIONS: NavSection[] = [
   {
     heading: "Billing",
     items: [
+      { href: "/invoices", label: "Invoice Run", icon: FileText, perm: "billing.view" },
       { href: "/controls", label: "Controls", icon: SlidersHorizontal, perm: "controls.view" },
       {
         href: "/expense-accounts",

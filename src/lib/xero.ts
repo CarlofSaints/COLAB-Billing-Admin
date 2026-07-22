@@ -432,6 +432,96 @@ export async function fetchContacts(): Promise<
   return { ok: true, contacts };
 }
 
+/* ------------------------------------------------------------------ */
+/* Creating draft sales invoices                                      */
+/* ------------------------------------------------------------------ */
+
+export type DraftInvoiceInput = {
+  contactId: string;
+  /** Invoice date and due date, as YYYY-MM-DD. */
+  date: string;
+  dueDate: string;
+  reference: string;
+  lines: { description: string; amount: number }[];
+};
+
+export type DraftInvoiceResult = {
+  ok: boolean;
+  invoiceId?: string;
+  invoiceNumber?: string;
+  error?: string;
+};
+
+/**
+ * Creates one ACCREC invoice in DRAFT. Amounts are sent tax-exclusive and the
+ * tax rate is left to the income account's own default, so VAT is whatever
+ * Xero would apply if the invoice were keyed by hand.
+ */
+export async function createDraftInvoice(
+  input: DraftInvoiceInput,
+  incomeAccountCode: string,
+): Promise<DraftInvoiceResult> {
+  const token = await getValidAccessToken();
+  const tenantId = await getTenantId();
+  if (!token || !tenantId) return { ok: false, error: "Not connected to Xero." };
+
+  const body = {
+    Invoices: [
+      {
+        Type: "ACCREC",
+        Contact: { ContactID: input.contactId },
+        Date: input.date,
+        DueDate: input.dueDate,
+        Reference: input.reference,
+        Status: "DRAFT",
+        LineAmountTypes: "Exclusive",
+        LineItems: input.lines.map((l) => ({
+          Description: l.description,
+          Quantity: 1,
+          UnitAmount: Number(l.amount.toFixed(2)),
+          AccountCode: incomeAccountCode,
+        })),
+      },
+    ],
+  };
+
+  const res = await fetch(`${API_BASE}/Invoices`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Xero-tenant-id": tenantId,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const text = await res.text();
+  if (!res.ok) {
+    // Xero returns validation detail in the body; surface it rather than a bare status.
+    let detail = text.slice(0, 300);
+    try {
+      const parsed = JSON.parse(text);
+      const messages = parsed?.Elements?.[0]?.ValidationErrors?.map(
+        (e: { Message: string }) => e.Message,
+      );
+      if (messages?.length) detail = messages.join("; ");
+      else if (parsed?.Message) detail = parsed.Message;
+    } catch {
+      /* keep the raw text */
+    }
+    return { ok: false, error: `Xero rejected the invoice (${res.status}): ${detail}` };
+  }
+
+  const data = JSON.parse(text);
+  const invoice = data?.Invoices?.[0];
+  return {
+    ok: true,
+    invoiceId: invoice?.InvoiceID,
+    invoiceNumber: invoice?.InvoiceNumber,
+  };
+}
+
 /** Live check: fetch the connected organisation's name from Xero. */
 export async function fetchOrganisationName(): Promise<{ ok: boolean; name?: string; error?: string }> {
   const token = await getValidAccessToken();

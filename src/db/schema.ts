@@ -396,6 +396,49 @@ export const commonSpaceSplits = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Invoice runs                                                       */
+/* ------------------------------------------------------------------ */
+
+// "recurring" = the predictable monthly charges (rent, fixed line items),
+// billed ahead. "month_end" = the variable Xero actuals, billed in arrears
+// once the month is reconciled.
+export const invoiceRunTypeEnum = pgEnum("invoice_run_type", ["recurring", "month_end"]);
+
+/** One generation of invoices for a billing month. */
+export const invoiceRuns = pgTable(
+  "invoice_runs",
+  {
+    id: serial("id").primaryKey(),
+    period: text("period").notNull(), // YYYY-MM
+    runType: invoiceRunTypeEnum("run_type").notNull(),
+    total: numeric("total", { precision: 14, scale: 2 }).notNull().default("0"),
+    createdByUserId: integer("created_by_user_id"),
+    createdByName: text("created_by_name"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("invoice_run_period_idx").on(t.period, t.runType)],
+);
+
+/** One invoice within a run — one per sub-company. */
+export const invoiceRunInvoices = pgTable("invoice_run_invoices", {
+  id: serial("id").primaryKey(),
+  runId: integer("run_id")
+    .notNull()
+    .references(() => invoiceRuns.id, { onDelete: "cascade" }),
+  companyId: integer("company_id")
+    .notNull()
+    .references(() => companies.id, { onDelete: "cascade" }),
+  companyName: text("company_name").notNull(),
+  total: numeric("total", { precision: 14, scale: 2 }).notNull().default("0"),
+  // Populated once Xero accepts it; an error message otherwise.
+  xeroInvoiceId: text("xero_invoice_id"),
+  xeroInvoiceNumber: text("xero_invoice_number"),
+  error: text("error"),
+  // The exact lines that were sent, so a past invoice can always be explained.
+  lines: jsonb("lines").$type<{ description: string; amount: number }[]>(),
+});
+
+/* ------------------------------------------------------------------ */
 /* Activity / Audit Log                                               */
 /* ------------------------------------------------------------------ */
 
@@ -537,4 +580,6 @@ export type CommonSpaceSplit = typeof commonSpaceSplits.$inferSelect;
 export type ExpenseAccountMapping = typeof expenseAccountMappings.$inferSelect;
 export type MailSchedule = typeof mailSchedules.$inferSelect;
 export type SupplierSplit = typeof supplierSplits.$inferSelect;
+export type InvoiceRun = typeof invoiceRuns.$inferSelect;
+export type InvoiceRunInvoice = typeof invoiceRunInvoices.$inferSelect;
 export type ActivityLogEntry = typeof activityLog.$inferSelect;
