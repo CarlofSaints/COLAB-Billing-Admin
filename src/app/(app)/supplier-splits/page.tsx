@@ -10,6 +10,7 @@ import {
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { fetchExpenseAccounts, xeroStatus } from "@/lib/xero";
 import { getMonthCosts } from "@/lib/month-costs";
+import { fixedItemTotal } from "@/lib/billing-calc";
 import { defaultPeriod, isPeriod, recentPeriods } from "@/lib/periods";
 import type { AccountMethod } from "@/lib/expense-accounts";
 import { PageHeader } from "@/components/ui/page";
@@ -143,10 +144,11 @@ export default async function SupplierSplitsPage({
           id: i.id,
           name: i.name,
           unitAmount: Number(i.unitAmount),
-          // What the item's per-company quantities actually recover.
-          allocatedTotal: allocations
-            .filter((a) => a.fixedLineItemId === i.id)
-            .reduce((s, a) => s + Number(a.quantity) * Number(i.unitAmount), 0),
+          // What the item's per-company shares actually recover.
+          allocatedTotal: fixedItemTotal(
+            { splitMode: i.splitMode, unitAmount: Number(i.unitAmount) },
+            allocations.filter((a) => a.fixedLineItemId === i.id).map((a) => Number(a.quantity)),
+          ),
         }))}
         canManage={canManage}
         hiddenNonExpense={hiddenNonExpense}

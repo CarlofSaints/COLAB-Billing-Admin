@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import { requireUser, hasPermission } from "@/lib/auth";
 import { buildPreview } from "@/lib/invoice-engine";
+import { fixedAllocationLabel } from "@/lib/billing-calc";
 import { defaultPeriod, isPeriod, periodLabel, recentPeriods } from "@/lib/periods";
 import { Card, CardContent } from "@/components/ui/card";
 import { SubCompanyCard } from "@/components/sub-company-card";
@@ -62,14 +63,17 @@ export default async function Dashboard({
       companyId: fixedLineAllocations.companyId,
       name: fixedLineItems.name,
       quantity: fixedLineAllocations.quantity,
+      splitMode: fixedLineItems.splitMode,
     })
     .from(fixedLineAllocations)
     .innerJoin(fixedLineItems, eq(fixedLineAllocations.fixedLineItemId, fixedLineItems.id))
     .where(eq(fixedLineItems.active, true));
-  const fixedByCompany = new Map<number, { name: string; quantity: number }[]>();
+  const fixedByCompany = new Map<number, { name: string; share: string }[]>();
   for (const f of fixedRows) {
     if (!fixedByCompany.has(f.companyId)) fixedByCompany.set(f.companyId, []);
-    fixedByCompany.get(f.companyId)!.push({ name: f.name, quantity: Number(f.quantity) });
+    fixedByCompany
+      .get(f.companyId)!
+      .push({ name: f.name, share: fixedAllocationLabel(f.splitMode, Number(f.quantity)) });
   }
 
   // The card figures come from the same engine that builds the invoices, so

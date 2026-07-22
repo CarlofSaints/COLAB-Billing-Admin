@@ -257,11 +257,18 @@ export const companyAllocations = pgTable(
   (t) => [uniqueIndex("company_alloc_company_unique").on(t.companyId)],
 );
 
-// A fixed line item billed directly to companies (e.g. parking bays).
-// The name + unit price are shared; each assigned company gets its own quantity.
+// How a fixed line item divides across companies.
+//   quantity — `unit_amount` is a price each, and each company takes N units
+//   percent  — `unit_amount` is the whole cost, and each company takes a share
+export const fixedSplitModeEnum = pgEnum("fixed_split_mode", ["quantity", "percent"]);
+
+// A fixed line item billed directly to companies (e.g. parking bays, or one
+// person's salary split by agreed percentages).
 export const fixedLineItems = pgTable("fixed_line_items", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  splitMode: fixedSplitModeEnum("split_mode").notNull().default("quantity"),
+  // A price per unit in "quantity" mode; the total cost in "percent" mode.
   unitAmount: numeric("unit_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   notes: text("notes"),
   active: boolean("active").notNull().default(true),
@@ -269,7 +276,8 @@ export const fixedLineItems = pgTable("fixed_line_items", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// Per-company quantity for a fixed line item (e.g. Parking: OuterJoin ×3, iRam ×8).
+// A company's share of a fixed line item. In "quantity" mode this is a number
+// of units (Parking: OuterJoin ×3); in "percent" mode it is a percentage.
 export const fixedLineAllocations = pgTable(
   "fixed_line_allocations",
   {

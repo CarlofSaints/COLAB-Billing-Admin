@@ -20,7 +20,8 @@ export function SubCompanyCard({
   href?: string;
   staffCount?: number;
   sqm?: number;
-  fixedItems?: { name: string; quantity: number }[];
+  /** Each item's name plus how this company's share reads, e.g. "×3" or "25%". */
+  fixedItems?: { name: string; share: string }[];
   /** Monthly rent share, from the effective floor-space calculation. */
   rent?: number;
   /** Everything else billed monthly (currently the fixed line items). */
@@ -102,11 +103,9 @@ export function SubCompanyCard({
               </div>
               {fixedItems && fixedItems.length > 0 && (
                 <div className="mt-0.5 text-[11px] leading-tight text-muted">
-                  {fixedItems
-                    // Always show the count — a bare "Parking Bays" next to a
-                    // "Parking Bays ×3" reads as if the quantity is missing.
-                    .map((f) => `${f.name} ×${f.quantity ?? 1}`)
-                    .join(", ")}
+                  {/* Always show the share — a bare "Parking Bays" next to a
+                      "Parking Bays ×3" reads as if the count is missing. */}
+                  {fixedItems.map((f) => `${f.name} ${f.share}`).join(", ")}
                 </div>
               )}
             </div>

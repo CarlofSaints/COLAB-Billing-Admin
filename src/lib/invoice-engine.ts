@@ -14,7 +14,12 @@ import {
   supplierSplits,
 } from "@/db/schema";
 import { sql } from "drizzle-orm";
-import { computeEffectiveAreas, rentShare } from "./billing-calc";
+import {
+  computeEffectiveAreas,
+  fixedAllocationAmount,
+  fixedItemTotal,
+  rentShare,
+} from "./billing-calc";
 import { RENT_AMOUNT_KEY, TOTAL_SQM_KEY } from "./controls";
 import { fetchExpenseAccounts } from "./xero";
 import { getMonthCosts } from "./month-costs";
@@ -249,16 +254,20 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     const allocations = await db.select().from(fixedLineAllocations);
 
     for (const item of items) {
-      const unit = Number(item.unitAmount);
+      const spec = { splitMode: item.splitMode, unitAmount: Number(item.unitAmount) };
       for (const alloc of allocations.filter((a) => a.fixedLineItemId === item.id)) {
-        const qty = Number(alloc.quantity);
-        const amount = round2(qty * unit);
+        const share = Number(alloc.quantity);
+        const amount = fixedAllocationAmount(spec, share);
         if (amount <= 0) continue;
         push(alloc.companyId, {
           key: `fixed-${item.id}-${alloc.companyId}`,
           description: `${item.name} — ${label}`,
           amount,
-          detail: [`${qty} × R${unit.toFixed(2)}`],
+          detail: [
+            spec.splitMode === "percent"
+              ? `${share}% of ${formatRand(spec.unitAmount)}`
+              : `${share} × ${formatRand(spec.unitAmount)}`,
+          ],
         });
       }
     }
@@ -329,12 +338,14 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     const fixedAllocRows = await db.select().from(fixedLineAllocations);
     const recoveredByItem = new Map<number, number>();
     for (const item of fixedItemRows) {
-      const unit = Number(item.unitAmount);
       recoveredByItem.set(
         item.id,
-        fixedAllocRows
-          .filter((a) => a.fixedLineItemId === item.id)
-          .reduce((s, a) => s + Number(a.quantity) * unit, 0),
+        fixedItemTotal(
+          { splitMode: item.splitMode, unitAmount: Number(item.unitAmount) },
+          fixedAllocRows
+            .filter((a) => a.fixedLineItemId === item.id)
+            .map((a) => Number(a.quantity)),
+        ),
       );
     }
 

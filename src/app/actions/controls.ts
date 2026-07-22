@@ -234,6 +234,7 @@ export async function saveFixedItem(
   const name = String(formData.get("name") ?? "").trim();
   const unitAmount = Number(formData.get("unitAmount") || 0);
   const notes = String(formData.get("notes") ?? "").trim() || null;
+  const splitMode = formData.get("splitMode") === "percent" ? "percent" : "quantity";
 
   if (!name) return { error: "Description is required." };
   if (!Number.isFinite(unitAmount) || unitAmount < 0) return { error: "Enter a valid amount." };
@@ -249,16 +250,25 @@ export async function saveFixedItem(
     return { companyId: cid, quantity: Number.isFinite(q) && q >= 0 ? q : 1 };
   });
 
+  // A percentage split has to account for the whole cost, or part of it would
+  // quietly go unbilled.
+  if (splitMode === "percent") {
+    const sum = allocations.reduce((s, a) => s + a.quantity, 0);
+    if (Math.abs(sum - 100) > 0.01) {
+      return { error: `Percentages must add up to 100% (currently ${sum.toFixed(2)}%).` };
+    }
+  }
+
   let itemId = id;
   if (id) {
     await db
       .update(fixedLineItems)
-      .set({ name, unitAmount: unitAmount.toFixed(2), notes, updatedAt: new Date() })
+      .set({ name, splitMode, unitAmount: unitAmount.toFixed(2), notes, updatedAt: new Date() })
       .where(eq(fixedLineItems.id, id));
   } else {
     const [row] = await db
       .insert(fixedLineItems)
-      .values({ name, unitAmount: unitAmount.toFixed(2), notes })
+      .values({ name, splitMode, unitAmount: unitAmount.toFixed(2), notes })
       .returning();
     itemId = row.id;
   }

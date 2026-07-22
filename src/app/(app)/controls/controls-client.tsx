@@ -19,12 +19,19 @@ import { Input, Select, Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { Table, THead, TH, TR, TD } from "@/components/ui/table";
 import { formatCurrency, cn } from "@/lib/utils";
-import { computeEffectiveAreas } from "@/lib/billing-calc";
+import {
+  computeEffectiveAreas,
+  fixedAllocationAmount,
+  fixedAllocationLabel,
+  fixedItemTotal,
+  type FixedSplitMode,
+} from "@/lib/billing-calc";
 
 type FixedAllocation = { companyId: number; companyName: string; quantity: number };
 type FixedItemRow = {
   id: number;
   name: string;
+  splitMode: FixedSplitMode;
   unitAmount: number;
   notes: string;
   allocations: FixedAllocation[];
@@ -578,7 +585,7 @@ function HeadcountTab({ companies, canManage }: { companies: ControlCompany[]; c
 
 /* -------------------- Fixed line items -------------------- */
 function itemTotal(it: FixedItemRow) {
-  return it.allocations.reduce((t, a) => t + a.quantity * it.unitAmount, 0);
+  return fixedItemTotal(it, it.allocations.map((a) => a.quantity));
 }
 
 function FixedTab({
@@ -626,7 +633,9 @@ function FixedTab({
                 <div>
                   <div className="font-medium text-slate-900">{it.name}</div>
                   <div className="text-xs text-muted">
-                    {formatCurrency(it.unitAmount)} each
+                    {it.splitMode === "percent"
+                      ? `${formatCurrency(it.unitAmount)} total, split by %`
+                      : `${formatCurrency(it.unitAmount)} each`}
                     {it.notes ? ` · ${it.notes}` : ""}
                   </div>
                 </div>
@@ -663,9 +672,12 @@ function FixedTab({
                     >
                       <span className="text-slate-700">{a.companyName}</span>
                       <span className="text-muted">
-                        {a.quantity} × {formatCurrency(it.unitAmount)} ={" "}
+                        {it.splitMode === "percent"
+                          ? `${a.quantity}% of ${formatCurrency(it.unitAmount)}`
+                          : `${a.quantity} × ${formatCurrency(it.unitAmount)}`}{" "}
+                        ={" "}
                         <span className="font-medium text-slate-800">
-                          {formatCurrency(a.quantity * it.unitAmount)}
+                          {formatCurrency(fixedAllocationAmount(it, a.quantity))}
                         </span>
                       </span>
                     </div>
@@ -706,6 +718,7 @@ function FixedItemForm({
   onDone: () => void;
 }) {
   const [state, action] = useActionState<ActionState, FormData>(saveFixedItem, {});
+  const [mode, setMode] = useState<FixedSplitMode>(item?.splitMode ?? "quantity");
   const [selected, setSelected] = useState<Set<number>>(
     new Set(item?.allocations.map((a) => a.companyId) ?? []),
   );
@@ -721,6 +734,11 @@ function FixedItemForm({
     if (state.ok) onDone();
   }, [state.ok, onDone]);
 
+  const percentTotal = companies
+    .filter((c) => selected.has(c.id))
+    .reduce((s, c) => s + (Number(qty[c.id]) || 0), 0);
+  const percentBalanced = Math.abs(percentTotal - 100) < 0.01;
+
   const toggle = (id: number) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -731,11 +749,50 @@ function FixedItemForm({
   return (
     <form action={action} className="space-y-4">
       {item && <input type="hidden" name="id" value={item.id} />}
+      <input type="hidden" name="splitMode" value={mode} />
       <Field label="Description">
         <Input name="name" defaultValue={item?.name} placeholder="e.g. Parking bays" required autoFocus />
       </Field>
+
+      <div>
+        <p className="mb-1.5 block text-sm font-medium text-slate-700">How is it split?</p>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setMode("quantity")}
+            className={cn(
+              "rounded-lg border px-3 py-2 text-left text-sm",
+              mode === "quantity"
+                ? "border-brand-600 bg-brand-50 text-brand-800"
+                : "border-line text-slate-600 hover:bg-slate-50",
+            )}
+          >
+            <span className="font-medium">Quantity per line</span>
+            <span className="block text-xs text-muted">A price each — e.g. 13 parking bays</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("percent")}
+            className={cn(
+              "rounded-lg border px-3 py-2 text-left text-sm",
+              mode === "percent"
+                ? "border-brand-600 bg-brand-50 text-brand-800"
+                : "border-line text-slate-600 hover:bg-slate-50",
+            )}
+          >
+            <span className="font-medium">Percentage split</span>
+            <span className="block text-xs text-muted">
+              One total, divided by a % per company
+            </span>
+          </button>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-4">
-        <Field label="Unit amount (excl. VAT)">
+        <Field
+          label={mode === "percent" ? "Total amount (excl. VAT)" : "Unit amount (excl. VAT)"}
+          hint={mode === "percent" ? "The whole cost, before it's divided." : undefined}
+        >
           <Input
             name="unitAmount"
             type="number"
@@ -751,7 +808,9 @@ function FixedItemForm({
 
       <div>
         <p className="mb-1.5 text-sm font-medium text-slate-700">
-          Assign to sub-companies &amp; quantity
+          {mode === "percent"
+            ? "Assign to sub-companies & percentage"
+            : "Assign to sub-companies & quantity"}
         </p>
         <div className="space-y-1 rounded-lg border border-line p-2">
           {companies.map((c) => {
@@ -773,12 +832,13 @@ function FixedItemForm({
                   {c.name}
                 </label>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted">Qty</span>
+                  <span className="text-xs text-muted">{mode === "percent" ? "%" : "Qty"}</span>
                   <Input
                     name={`qty_${c.id}`}
                     type="number"
                     step="0.01"
                     min="0"
+                    max={mode === "percent" ? 100 : undefined}
                     value={qty[c.id] ?? ""}
                     disabled={!on}
                     onChange={(e) => setQty((s) => ({ ...s, [c.id]: e.target.value }))}
@@ -788,9 +848,22 @@ function FixedItemForm({
               </div>
             );
           })}
+          {mode === "percent" && (
+            <div
+              className={cn(
+                "flex justify-between border-t border-line px-2 pt-2 text-sm",
+                percentBalanced ? "text-emerald-700" : "text-amber-700",
+              )}
+            >
+              <span>Total</span>
+              <span className="font-medium">{percentTotal.toFixed(2)}%</span>
+            </div>
+          )}
         </div>
         <p className="mt-1 text-xs text-muted">
-          Tick each company that shares this cost and set how many units it takes.
+          {mode === "percent"
+            ? "Tick each company that shares this cost and set its percentage. They must add up to 100%."
+            : "Tick each company that shares this cost and set how many units it takes."}
         </p>
       </div>
 

@@ -57,6 +57,43 @@ export function computeEffectiveAreas(
   return { effective, totalOccupied, common, itemised, unallocatedCommon };
 }
 
+/* ------------------------------------------------------------------ */
+/* Fixed line items                                                    */
+/* ------------------------------------------------------------------ */
+
+export type FixedSplitMode = "quantity" | "percent";
+
+/**
+ * What one company pays towards a fixed line item. In quantity mode the
+ * allocation is a number of units at `unitAmount` each; in percent mode
+ * `unitAmount` is the whole cost and the allocation is a percentage of it.
+ */
+export function fixedAllocationAmount(
+  item: { splitMode: FixedSplitMode; unitAmount: number },
+  allocation: number,
+): number {
+  const value =
+    item.splitMode === "percent"
+      ? item.unitAmount * (allocation / 100)
+      : allocation * item.unitAmount;
+  return Math.round(value * 100) / 100;
+}
+
+/** What the item recovers in total across every company assigned to it. */
+export function fixedItemTotal(
+  item: { splitMode: FixedSplitMode; unitAmount: number },
+  allocations: number[],
+): number {
+  return Math.round(
+    allocations.reduce((s, a) => s + fixedAllocationAmount(item, a), 0) * 100,
+  ) / 100;
+}
+
+/** How an allocation reads next to the company name, e.g. "×3" or "25%". */
+export function fixedAllocationLabel(mode: FixedSplitMode, allocation: number): string {
+  return mode === "percent" ? `${allocation}%` : `×${allocation}`;
+}
+
 /** A company's slice of the monthly rent, from its effective floor area. */
 export function rentShare(effectiveArea: number, totalSqm: number, rentAmount: number): number {
   if (totalSqm <= 0 || rentAmount <= 0) return 0;

@@ -58,6 +58,7 @@ export default async function ControlsPage() {
   const fixedData = items.map((it) => ({
     id: it.id,
     name: it.name,
+    splitMode: it.splitMode as "quantity" | "percent",
     unitAmount: Number(it.unitAmount),
     notes: it.notes ?? "",
     allocations: fixedAllocs
