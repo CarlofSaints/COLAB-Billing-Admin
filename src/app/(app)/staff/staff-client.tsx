@@ -17,7 +17,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input, Select, Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/page";
-import { Table, THead, TH, TR, TD } from "@/components/ui/table";
+import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
+import { useTableSort } from "@/lib/use-table-sort";
 
 type CompanyOpt = { id: number; name: string; type: "colab" | "sub" };
 export type StaffRow = {
@@ -189,29 +190,68 @@ export function StaffManager({
   const [importing, setImporting] = useState(false);
   const [editing, setEditing] = useState<StaffRow | null>(null);
   const [query, setQuery] = useState("");
+  const [companyFilter, setCompanyFilter] = useState<"all" | number>("all");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return staff;
-    return staff.filter((s) =>
-      [s.name, s.email, s.companyName, s.position, s.gender]
+    return staff.filter((s) => {
+      if (companyFilter !== "all" && s.companyId !== companyFilter) return false;
+      if (!q) return true;
+      return [s.name, s.email, s.companyName, s.position, s.gender]
         .join(" ")
         .toLowerCase()
-        .includes(q),
-    );
-  }, [staff, query]);
+        .includes(q);
+    });
+  }, [staff, query, companyFilter]);
+
+  const { sorted, sort, toggle } = useTableSort(
+    filtered,
+    {
+      name: (s) => s.name,
+      company: (s) => s.companyName,
+      gender: (s) => s.gender,
+      cell: (s) => s.cellNumber,
+      email: (s) => s.email,
+    },
+    { key: "name", dir: "asc" },
+  );
+
+  // Only offer companies that actually have someone in the list.
+  const companyOptions = useMemo(() => {
+    const withStaff = new Set(staff.map((s) => s.companyId));
+    return companies.filter((c) => withStaff.has(c.id));
+  }, [companies, staff]);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="relative w-full max-w-xs">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input
-            className="pl-9"
-            placeholder="Search staff…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              className="pl-9"
+              placeholder="Search staff…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+          <Select
+            className="w-52"
+            value={companyFilter}
+            onChange={(e) =>
+              setCompanyFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+            }
+          >
+            <option value="all">All companies</option>
+            {companyOptions.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+          <span className="text-sm text-muted">
+            {filtered.length} of {staff.length}
+          </span>
         </div>
         {canManage && (
           <div className="flex flex-wrap gap-2">
@@ -240,19 +280,36 @@ export function StaffManager({
         />
       ) : (
         <Card>
-          <Table>
-            <THead>
+          <Table sticky>
+            <THead sticky>
               <tr>
-                <TH>Name</TH>
-                <TH>Company</TH>
-                <TH>Gender</TH>
-                <TH>Cell</TH>
-                <TH>Email</TH>
+                <SortableTH sortKey="name" sort={sort} onSort={toggle}>
+                  Name
+                </SortableTH>
+                <SortableTH sortKey="company" sort={sort} onSort={toggle}>
+                  Company
+                </SortableTH>
+                <SortableTH sortKey="gender" sort={sort} onSort={toggle}>
+                  Gender
+                </SortableTH>
+                <SortableTH sortKey="cell" sort={sort} onSort={toggle}>
+                  Cell
+                </SortableTH>
+                <SortableTH sortKey="email" sort={sort} onSort={toggle}>
+                  Email
+                </SortableTH>
                 {canManage && <TH className="text-right">Actions</TH>}
               </tr>
             </THead>
             <tbody>
-              {filtered.map((s) => (
+              {sorted.length === 0 && (
+                <tr>
+                  <TD colSpan={canManage ? 6 : 5} className="py-10 text-center text-sm text-muted">
+                    No staff match this search or filter.
+                  </TD>
+                </tr>
+              )}
+              {sorted.map((s) => (
                 <TR key={s.id}>
                   <TD>
                     <div className="font-medium text-slate-900">{s.name}</div>

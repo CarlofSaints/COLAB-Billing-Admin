@@ -41,6 +41,42 @@ export function TH({ className, ...props }: React.ThHTMLAttributes<HTMLTableCell
   );
 }
 
+/**
+ * A clickable column header. Pair with `useTableSort` — pass the column's key
+ * plus the hook's current `sort` state and `toggle` handler.
+ */
+export function SortableTH({
+  sortKey,
+  sort,
+  onSort,
+  className,
+  children,
+  ...props
+}: React.ThHTMLAttributes<HTMLTableCellElement> & {
+  sortKey: string;
+  sort: { key: string; dir: "asc" | "desc" };
+  onSort: (key: string) => void;
+}) {
+  const active = sort.key === sortKey;
+  return (
+    <TH className={cn("p-0", className)} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} {...props}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={cn(
+          "flex w-full items-center gap-1 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide transition-colors",
+          active ? "text-slate-900" : "text-muted hover:text-slate-700",
+        )}
+      >
+        {children}
+        <span className={cn("text-[10px] leading-none", active ? "opacity-100" : "opacity-0")}>
+          {active && sort.dir === "desc" ? "▼" : "▲"}
+        </span>
+      </button>
+    </TH>
+  );
+}
+
 export function TR({ className, ...props }: React.HTMLAttributes<HTMLTableRowElement>) {
   return <tr className={cn("hover:bg-slate-50/60", className)} {...props} />;
 }
