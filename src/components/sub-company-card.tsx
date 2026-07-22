@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { brandFor } from "@/lib/brands";
-import { cn } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 
 /**
  * Branded tile for a sub-company — colour accent + name + tagline, matching the
@@ -12,6 +12,8 @@ export function SubCompanyCard({
   staffCount,
   sqm,
   fixedItems,
+  rent,
+  otherExpenses,
   className,
 }: {
   name: string;
@@ -19,6 +21,10 @@ export function SubCompanyCard({
   staffCount?: number;
   sqm?: number;
   fixedItems?: { name: string; quantity: number }[];
+  /** Monthly rent share, from the effective floor-space calculation. */
+  rent?: number;
+  /** Everything else billed monthly (currently the fixed line items). */
+  otherExpenses?: number;
   className?: string;
 }) {
   const brand = brandFor(name);
@@ -74,19 +80,39 @@ export function SubCompanyCard({
             </span>
           </div>
         )}
-        {fixedItems && fixedItems.length > 0 && (
-          <div className="flex items-start justify-between gap-3">
-            <span className="text-muted">Fixed items</span>
-            <span className="text-right font-medium text-slate-700">
-              {fixedItems
-                // Always show the count — a bare "Parking Bays" next to a
-                // "Parking Bays ×3" reads as if the quantity is missing.
-                .map((f) => `${f.name} ×${f.quantity ?? 1}`)
-                .join(", ")}
-            </span>
-          </div>
-        )}
       </div>
+
+      {(typeof rent === "number" || typeof otherExpenses === "number") && (
+        <div className="mt-3 space-y-1.5 border-t border-line pt-3 text-xs">
+          {typeof rent === "number" && (
+            <div className="flex items-center justify-between">
+              <span className="text-muted">Rent</span>
+              <span className="font-semibold text-slate-900">
+                {rent > 0 ? formatCurrency(rent) : "—"}
+              </span>
+            </div>
+          )}
+          {typeof otherExpenses === "number" && (
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Other expenses</span>
+                <span className="font-semibold text-slate-900">
+                  {otherExpenses > 0 ? formatCurrency(otherExpenses) : "—"}
+                </span>
+              </div>
+              {fixedItems && fixedItems.length > 0 && (
+                <div className="mt-0.5 text-[11px] leading-tight text-muted">
+                  {fixedItems
+                    // Always show the count — a bare "Parking Bays" next to a
+                    // "Parking Bays ×3" reads as if the quantity is missing.
+                    .map((f) => `${f.name} ×${f.quantity ?? 1}`)
+                    .join(", ")}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 

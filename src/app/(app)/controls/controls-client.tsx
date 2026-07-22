@@ -19,6 +19,7 @@ import { Input, Select, Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { Table, THead, TH, TR, TD } from "@/components/ui/table";
 import { formatCurrency, cn } from "@/lib/utils";
+import { computeEffectiveAreas } from "@/lib/billing-calc";
 
 type FixedAllocation = { companyId: number; companyName: string; quantity: number };
 type FixedItemRow = {
@@ -43,45 +44,6 @@ type CommonSpaceRow = {
   splitMethod: "occupancy" | "custom";
   splits: { companyId: number; percent: number }[];
 };
-
-/**
- * Work out how much floor area each company effectively pays for:
- * their own occupied area, plus their share of every common space,
- * plus their pro-rata share of any common area not itemised into a line.
- */
-function computeEffectiveAreas(
-  companies: { id: number; name: string }[],
-  occupied: Record<number, number>,
-  commonSpaces: CommonSpaceRow[],
-  totalSqm: number,
-) {
-  const occ = (id: number) => Math.max(0, occupied[id] || 0);
-  const totalOccupied = companies.reduce((s, c) => s + occ(c.id), 0);
-  const occFraction = (id: number) => (totalOccupied > 0 ? occ(id) / totalOccupied : 0);
-
-  const common = Math.max(0, totalSqm - totalOccupied);
-  const itemised = commonSpaces.reduce((s, cs) => s + Math.max(0, cs.sqm), 0);
-  const unallocatedCommon = Math.max(0, common - itemised);
-
-  const effective: Record<number, number> = {};
-  for (const c of companies) {
-    let area = occ(c.id);
-    // Share of each itemised common space.
-    for (const cs of commonSpaces) {
-      if (cs.splitMethod === "custom") {
-        const pct = cs.splits.find((s) => s.companyId === c.id)?.percent ?? 0;
-        area += (pct / 100) * cs.sqm;
-      } else {
-        area += occFraction(c.id) * cs.sqm;
-      }
-    }
-    // Share of leftover, un-itemised common space (pro-rata by occupancy).
-    area += occFraction(c.id) * unallocatedCommon;
-    effective[c.id] = area;
-  }
-
-  return { effective, totalOccupied, common, itemised, unallocatedCommon };
-}
 
 const TABS = [
   { key: "sqm", label: "Per Square Metre", icon: Ruler },
