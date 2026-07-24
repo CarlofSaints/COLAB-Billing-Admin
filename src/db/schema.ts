@@ -39,6 +39,10 @@ export const mailFrequencyEnum = pgEnum("mail_frequency", ["monthly", "weekly"])
 // contact person (the admin who maintains that company's staff list).
 export const mailAudienceEnum = pgEnum("mail_audience", ["groups", "company_contacts"]);
 
+// A public hub sign-up request moves pending → approved/declined. A super
+// admin gates it; approval creates the team member + their login.
+export const signupStatusEnum = pgEnum("signup_status", ["pending", "approved", "declined"]);
+
 // How a common space is divided across the sub-companies.
 // "occupancy" = pro-rata by each company's occupied m²; "custom" = fixed % per company.
 export const splitMethodEnum = pgEnum("split_method", ["occupancy", "custom"]);
@@ -220,6 +224,31 @@ export const hubEvents = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("hub_events_date_idx").on(t.eventDate)],
+);
+
+/* ------------------------------------------------------------------ */
+/* Hub sign-up requests (public /join form → super-admin approval)    */
+/* ------------------------------------------------------------------ */
+
+// Someone new fills in the public join form. Nothing is created until a
+// super admin approves — the human gate against abuse. On approval we make
+// (or reuse) a staff row and issue a team_member login.
+export const signupRequests = pgTable(
+  "signup_requests",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    // Which COLAB company they're joining (COLAB itself is valid).
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    status: signupStatusEnum("status").notNull().default("pending"),
+    decidedByName: text("decided_by_name"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("signup_status_idx").on(t.status)],
 );
 
 /* ------------------------------------------------------------------ */
@@ -655,6 +684,7 @@ export type CommonSpaceSplit = typeof commonSpaceSplits.$inferSelect;
 export type ExpenseAccountMapping = typeof expenseAccountMappings.$inferSelect;
 export type MailSchedule = typeof mailSchedules.$inferSelect;
 export type HubEvent = typeof hubEvents.$inferSelect;
+export type SignupRequest = typeof signupRequests.$inferSelect;
 export type SupplierSplit = typeof supplierSplits.$inferSelect;
 export type InvoiceRun = typeof invoiceRuns.$inferSelect;
 export type InvoiceRunInvoice = typeof invoiceRunInvoices.$inferSelect;

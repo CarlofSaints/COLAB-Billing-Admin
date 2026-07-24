@@ -11,6 +11,7 @@ export default async function StaffPage() {
   await requirePermission("staff.view");
   const user = await getCurrentUser();
   const canManage = user ? hasPermission(user, "staff.manage") : false;
+  const canInvite = user ? hasPermission(user, "team.invite") : false;
 
   const companyRows = await db
     .select({ id: companies.id, name: companies.name, type: companies.type })
@@ -29,6 +30,7 @@ export default async function StaffPage() {
       companyId: staff.companyId,
       active: staff.active,
       includeInBilling: staff.includeInBilling,
+      userId: staff.userId,
       companyName: companies.name,
     })
     .from(staff)
@@ -46,6 +48,7 @@ export default async function StaffPage() {
     companyName: s.companyName,
     active: s.active,
     includeInBilling: s.includeInBilling,
+    hasAccount: s.userId != null,
   }));
 
   return (
@@ -54,7 +57,12 @@ export default async function StaffPage() {
         title="Staff"
         description="Everyone across COLAB and the sub-companies. Add manually or import from Excel."
       />
-      <StaffManager staff={data} companies={companyRows} canManage={canManage} />
+      <StaffManager
+        staff={data}
+        companies={companyRows}
+        canManage={canManage}
+        canInvite={canInvite}
+      />
     </div>
   );
 }

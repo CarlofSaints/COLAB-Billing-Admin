@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   UserCog,
   UserRound,
+  UserCheck,
   Sparkles,
   ScrollText,
   Plug,
@@ -74,6 +75,12 @@ const SECTIONS: NavSection[] = [
     heading: "Administration",
     items: [
       { href: "/users", label: "Users", icon: UserCog, perm: "users.view" },
+      {
+        href: "/signup-requests",
+        label: "Sign-up Requests",
+        icon: UserCheck,
+        perm: "team.invite",
+      },
       { href: "/roles", label: "Roles & Permissions", icon: ShieldCheck, perm: "roles.manage" },
       { href: "/integrations", label: "Integrations", icon: Plug, perm: "integrations.manage" },
       { href: "/logs", label: "Activity Log", icon: ScrollText, perm: "logs.view" },

@@ -173,3 +173,96 @@ export function credentialsEmail(input: {
 
   return { subject, html, text };
 }
+
+/**
+ * Welcome email when a team member is turned into a hub user — carries their
+ * sign-in details and points them straight at their profile to fill in.
+ */
+export function hubInviteEmail(input: {
+  name: string;
+  email: string;
+  password: string;
+  loginUrl: string;
+  profileUrl: string;
+}) {
+  const { name, email, password, loginUrl, profileUrl } = input;
+  const subject = "You're on the COLAB Team Hub — set up your profile";
+
+  const html = `
+  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
+    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB Team Hub</p>
+    <p>Hi ${escapeHtml(name)},</p>
+    <p>You've been added to the COLAB Team Hub. Sign in with the details below, then tell everyone a bit about yourself — what you do, your birthday, hobbies and more.</p>
+    <table style="border-collapse:collapse;margin:16px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+      <tr>
+        <td style="padding:10px 14px;color:#64748b">Sign in at</td>
+        <td style="padding:10px 14px"><a href="${loginUrl}" style="color:#1d4ed8">${escapeHtml(loginUrl)}</a></td>
+      </tr>
+      <tr>
+        <td style="padding:10px 14px;color:#64748b;border-top:1px solid #e2e8f0">Email</td>
+        <td style="padding:10px 14px;border-top:1px solid #e2e8f0">${escapeHtml(email)}</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 14px;color:#64748b;border-top:1px solid #e2e8f0">Temporary password</td>
+        <td style="padding:10px 14px;border-top:1px solid #e2e8f0"><code style="font-family:ui-monospace,Menlo,monospace;font-size:14px">${escapeHtml(password)}</code></td>
+      </tr>
+    </table>
+    <p><a href="${profileUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Set up my profile</a></p>
+    <p style="color:#64748b">You'll be asked to choose your own password the first time you sign in.</p>
+    <p style="color:#64748b;font-size:12px;margin-top:24px">If you weren't expecting this email, please let the COLAB office know.</p>
+  </div>`;
+
+  const text = [
+    `Hi ${name},`,
+    "",
+    "You've been added to the COLAB Team Hub. Sign in and set up your profile:",
+    "",
+    `Sign in at: ${loginUrl}`,
+    `Email: ${email}`,
+    `Temporary password: ${password}`,
+    "",
+    `Set up your profile: ${profileUrl}`,
+    "",
+    "You'll be asked to choose your own password the first time you sign in.",
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
+ * Notifies a super admin that someone used the public join form, with a link
+ * to review (approve / decline) the request in the app.
+ */
+export function signupNotifyEmail(input: {
+  applicantName: string;
+  applicantEmail: string;
+  companyName: string;
+  reviewUrl: string;
+}) {
+  const { applicantName, applicantEmail, companyName, reviewUrl } = input;
+  const subject = `New hub sign-up: ${applicantName}`;
+
+  const html = `
+  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
+    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB Team Hub</p>
+    <p>Someone has asked to join the Team Hub. Nothing has been created yet — it's waiting for your approval.</p>
+    <table style="border-collapse:collapse;margin:16px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+      <tr><td style="padding:10px 14px;color:#64748b">Name</td><td style="padding:10px 14px">${escapeHtml(applicantName)}</td></tr>
+      <tr><td style="padding:10px 14px;color:#64748b;border-top:1px solid #e2e8f0">Email</td><td style="padding:10px 14px;border-top:1px solid #e2e8f0">${escapeHtml(applicantEmail)}</td></tr>
+      <tr><td style="padding:10px 14px;color:#64748b;border-top:1px solid #e2e8f0">Company</td><td style="padding:10px 14px;border-top:1px solid #e2e8f0">${escapeHtml(companyName)}</td></tr>
+    </table>
+    <p><a href="${reviewUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Review request</a></p>
+  </div>`;
+
+  const text = [
+    "Someone has asked to join the COLAB Team Hub. It's waiting for your approval.",
+    "",
+    `Name: ${applicantName}`,
+    `Email: ${applicantEmail}`,
+    `Company: ${companyName}`,
+    "",
+    `Review it here: ${reviewUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}

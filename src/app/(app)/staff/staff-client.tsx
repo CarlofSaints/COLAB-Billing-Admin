@@ -2,7 +2,18 @@
 
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { Users, Plus, Pencil, Upload, Trash2, Search, Download } from "lucide-react";
+import {
+  Users,
+  Plus,
+  Pencil,
+  Upload,
+  Trash2,
+  Search,
+  Download,
+  UserPlus,
+  CheckCircle2,
+  TriangleAlert,
+} from "lucide-react";
 import {
   createStaff,
   updateStaff,
@@ -11,6 +22,7 @@ import {
   type ActionState,
   type ImportState,
 } from "@/app/actions/staff";
+import { inviteTeamMember, type InviteState } from "@/app/actions/team";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +44,7 @@ export type StaffRow = {
   companyName: string;
   active: boolean;
   includeInBilling: boolean;
+  hasAccount: boolean;
 };
 
 function SaveButton({ label }: { label: string }) {
@@ -190,15 +203,93 @@ function ImportForm({ onDone }: { onDone: () => void }) {
   );
 }
 
+function InviteButton({ person }: { person: StaffRow }) {
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [result, setResult] = useState<InviteState | null>(null);
+
+  async function run() {
+    setPending(true);
+    const r = await inviteTeamMember(person.id);
+    setResult(r);
+    setPending(false);
+  }
+
+  return (
+    <Modal
+      title="Invite to the hub"
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) setResult(null);
+      }}
+      trigger={
+        <Button variant="ghost" size="sm" title="Create a hub login">
+          <UserPlus className="h-3.5 w-3.5" />
+        </Button>
+      }
+    >
+      <div className="space-y-4">
+        {!result?.ok ? (
+          <>
+            <p className="text-sm text-slate-600">
+              Create a hub login for <strong>{person.name}</strong> ({person.email})? They&apos;ll
+              get an email with a link to set up their profile.
+            </p>
+            {result?.error && (
+              <p className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                <TriangleAlert className="h-4 w-4" /> {result.error}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={run} disabled={pending}>
+                {pending ? "Creating…" : "Create login"}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              <CheckCircle2 className="h-4 w-4" />
+              {result.emailed
+                ? `Invited — email sent to ${result.emailTo}.`
+                : "Login created."}
+            </p>
+            {!result.emailed && (
+              <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <p className="text-slate-600">
+                  {result.emailError} Share this temporary password with them:
+                </p>
+                <code className="mt-1 block font-mono text-base font-semibold text-slate-900">
+                  {result.tempPassword}
+                </code>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <Button onClick={() => setOpen(false)}>Done</Button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 export function StaffManager({
   staff,
   companies,
   canManage,
+  canInvite,
 }: {
   staff: StaffRow[];
   companies: CompanyOpt[];
   canManage: boolean;
+  canInvite: boolean;
 }) {
+  const showActions = canManage || canInvite;
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [editing, setEditing] = useState<StaffRow | null>(null);
@@ -315,13 +406,13 @@ export function StaffManager({
                 <SortableTH sortKey="billing" sort={sort} onSort={toggle}>
                   In billing
                 </SortableTH>
-                {canManage && <TH className="text-right">Actions</TH>}
+                {showActions && <TH className="text-right">Actions</TH>}
               </tr>
             </THead>
             <tbody>
               {sorted.length === 0 && (
                 <tr>
-                  <TD colSpan={canManage ? 7 : 6} className="py-10 text-center text-sm text-muted">
+                  <TD colSpan={showActions ? 7 : 6} className="py-10 text-center text-sm text-muted">
                     No staff match this search or filter.
                   </TD>
                 </tr>
@@ -345,21 +436,31 @@ export function StaffManager({
                       <Badge tone="amber">No</Badge>
                     )}
                   </TD>
-                  {canManage && (
+                  {showActions && (
                     <TD className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => setEditing(s)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            if (confirm(`Remove ${s.name}?`)) deleteStaff(s.id);
-                          }}
-                        >
-                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                        </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        {s.hasAccount ? (
+                          <Badge tone="indigo">Hub user</Badge>
+                        ) : (
+                          canInvite &&
+                          s.email && <InviteButton person={s} />
+                        )}
+                        {canManage && (
+                          <>
+                            <Button variant="ghost" size="sm" onClick={() => setEditing(s)}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                if (confirm(`Remove ${s.name}?`)) deleteStaff(s.id);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </TD>
                   )}
