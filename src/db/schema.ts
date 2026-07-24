@@ -6,13 +6,14 @@ import {
   numeric,
   boolean,
   timestamp,
+  date,
   jsonb,
   primaryKey,
   uniqueIndex,
   index,
   pgEnum,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 /* ------------------------------------------------------------------ */
 /* Enums                                                              */
@@ -175,10 +176,29 @@ export const staff = pgTable(
     // split by. Some staff are on the list but shouldn't be billed for.
     includeInBilling: boolean("include_in_billing").notNull().default(true),
     active: boolean("active").notNull().default(true),
+
+    /* --- Team-hub profile fields (self-maintained by the team member) --- */
+    // The person's own login, once they've been turned into a user. The hub
+    // links user↔team-member by email (the UID), but a nullable FK lets us
+    // tell "has an account" from "profile filled in" and survives email edits.
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+    dateOfBirth: date("date_of_birth"), // drives "birthdays this month"
+    bio: text("bio"), // free text: "what I do at COLAB"
+    favouriteColour: text("favourite_colour"), // stored as hex, e.g. "#4f46e5"
+    hobbies: jsonb("hobbies").$type<string[]>(), // rendered as chips
+    photoUrl: text("photo_url"), // Vercel Blob URL of their profile picture
+    // Set the first time they save a profile — used to nudge empty profiles.
+    profileCompletedAt: timestamp("profile_completed_at", { withTimezone: true }),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("staff_company_idx").on(t.companyId)],
+  (t) => [
+    index("staff_company_idx").on(t.companyId),
+    // Email is the UID that links a team member to their user account. Allow
+    // many NULLs (staff without an email) but keep real addresses unique.
+    uniqueIndex("staff_email_unique").on(t.email).where(sql`${t.email} is not null`),
+  ],
 );
 
 /* ------------------------------------------------------------------ */
@@ -532,6 +552,7 @@ export const usersRelations = relations(users, ({ one }) => ({
 
 export const staffRelations = relations(staff, ({ one, many }) => ({
   company: one(companies, { fields: [staff.companyId], references: [companies.id] }),
+  user: one(users, { fields: [staff.userId], references: [users.id] }),
   groupMemberships: many(emailGroupMembers),
 }));
 
