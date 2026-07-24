@@ -42,7 +42,7 @@ export async function createStaff(_prev: ActionState, formData: FormData): Promi
   const [row] = await db.insert(staff).values(parsed.data).returning();
   await logEvent({
     action: "staff.create",
-    summary: `Added staff member ${row.name}`,
+    summary: `Added team member ${row.name}`,
     actor: user,
     entityType: "staff",
     entityId: row.id,
@@ -62,7 +62,7 @@ export async function updateStaff(_prev: ActionState, formData: FormData): Promi
   await db.update(staff).set({ ...parsed.data, updatedAt: new Date() }).where(eq(staff.id, id));
   await logEvent({
     action: "staff.update",
-    summary: `Updated staff member ${parsed.data.name}`,
+    summary: `Updated team member ${parsed.data.name}`,
     actor: user,
     entityType: "staff",
     entityId: id,
@@ -77,7 +77,7 @@ export async function deleteStaff(id: number) {
   await db.delete(staff).where(eq(staff.id, id));
   await logEvent({
     action: "staff.delete",
-    summary: `Removed a staff member`,
+    summary: `Removed a team member`,
     actor: user,
     entityType: "staff",
     entityId: id,
@@ -208,7 +208,7 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
 
   await logEvent({
     action: "staff.import",
-    summary: `Imported staff from ${file.name}: ${imported} added, ${updated} updated`,
+    summary: `Imported team members from ${file.name}: ${imported} added, ${updated} updated`,
     actor: user,
     entityType: "staff",
     metadata: { imported, updated, skipped, file: file.name, unknownCompanies: Array.from(unknown) },

@@ -36,7 +36,7 @@ function GroupForm({ group, onDone }: { group?: GroupRow; onDone: () => void }) 
     <form action={formAction} className="space-y-4">
       {group && <input type="hidden" name="id" value={group.id} />}
       <Field label="Group name">
-        <Input name="name" defaultValue={group?.name} placeholder="e.g. All Staff" required autoFocus />
+        <Input name="name" defaultValue={group?.name} placeholder="e.g. Everyone" required autoFocus />
       </Field>
       <Field label="Description (optional)">
         <Textarea name="description" defaultValue={group?.description} />
@@ -106,7 +106,7 @@ function MembersForm({
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <Input
-          placeholder="Search staff by name, email or company…"
+          placeholder="Search team members by name, email or company…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="pl-9"
@@ -140,7 +140,7 @@ function MembersForm({
       <div className="max-h-80 space-y-4 overflow-y-auto rounded-lg border border-line p-3">
         {byCompany.length === 0 && (
           <p className="py-6 text-center text-sm text-muted">
-            {query.trim() ? `No staff match “${query.trim()}”.` : "No active staff to add."}
+            {query.trim() ? `No team members match “${query.trim()}”.` : "No active team members to add."}
           </p>
         )}
         {byCompany.map(([company, people]) => (
@@ -206,7 +206,7 @@ export function GroupsManager({
         <EmptyState
           icon={<Mails className="h-8 w-8" />}
           title="No email groups yet"
-          description="Create groups like “All Staff” or “Directors” to target announcements."
+          description="Create groups like “Everyone” or “Directors” to target announcements."
           action={canManage ? <Button onClick={() => setAdding(true)}>New group</Button> : undefined}
         />
       ) : (

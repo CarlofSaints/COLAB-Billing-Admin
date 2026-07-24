@@ -5,7 +5,7 @@ import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page";
 import { StaffManager } from "./staff-client";
 
-export const metadata = { title: "Staff — COLAB" };
+export const metadata = { title: "Team Members — COLAB" };
 
 export default async function StaffPage() {
   await requirePermission("staff.view");
@@ -54,7 +54,7 @@ export default async function StaffPage() {
   return (
     <div>
       <PageHeader
-        title="Staff"
+        title="Team Members"
         description="Everyone across COLAB and the sub-companies. Add manually or import from Excel."
       />
       <StaffManager

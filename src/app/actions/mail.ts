@@ -45,7 +45,7 @@ export async function sendAnnouncement(_prev: MailState, formData: FormData): Pr
   );
 
   if (emails.length === 0) {
-    return { error: "The selected group(s) have no staff with email addresses." };
+    return { error: "The selected group(s) have no team members with email addresses." };
   }
 
   const apiKey = process.env.RESEND_API_KEY;

@@ -57,11 +57,11 @@ type GroupOpt = { id: number; name: string; recipientCount: number };
 
 /** Pre-filled reminder for the case this was built for. */
 const STAFF_REMINDER = {
-  name: "Monthly staff list update",
-  subject: "{{company}}: please update your staff list for {{month}} billing",
+  name: "Monthly team list update",
+  subject: "{{company}}: please update your team list for {{month}} billing",
   body: `Hi {{contact}},
 
-It's time to check that {{company}}'s staff list is up to date — we use the headcount at month-end to split shared costs, so anyone who has joined or left affects your invoice.
+It's time to check that {{company}}'s team list is up to date — we use the headcount at month-end to split shared costs, so anyone who has joined or left affects your invoice.
 
 Please sign in and review your people here:
 {{link}}
@@ -161,7 +161,7 @@ export function SchedulesPanel({
         <EmptyState
           icon={<CalendarClock className="h-8 w-8" />}
           title="No scheduled reminders yet"
-          description="Set one up to nudge each sub-company's admin to refresh their staff list before month-end billing."
+          description="Set one up to nudge each sub-company's admin to refresh their team list before month-end billing."
           action={
             <Button
               onClick={() => {
@@ -169,7 +169,7 @@ export function SchedulesPanel({
                 setAdding(true);
               }}
             >
-              Use the staff-list template
+              Use the team-list template
             </Button>
           }
         />
@@ -326,7 +326,7 @@ function ScheduleForm({
         <Input
           name="name"
           defaultValue={schedule?.name ?? defaults?.name}
-          placeholder="e.g. Monthly staff list update"
+          placeholder="e.g. Monthly team list update"
           required
           autoFocus
         />

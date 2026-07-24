@@ -27,14 +27,14 @@ export async function GET() {
     { wch: 18 },
   ];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Staff");
+  XLSX.utils.book_append_sheet(wb, ws, "Team Members");
 
   const buf: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
   return new Response(new Uint8Array(buf), {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": 'attachment; filename="COLAB-staff-import-template.xlsx"',
+      "Content-Disposition": 'attachment; filename="COLAB-team-members-import-template.xlsx"',
       "Cache-Control": "no-store",
     },
   });

@@ -119,7 +119,7 @@ export const MERGE_TOKENS = [
   { token: "{{company}}", hint: "The sub-company's name" },
   { token: "{{contact}}", hint: "The contact person's name" },
   { token: "{{month}}", hint: "The current month, e.g. July 2026" },
-  { token: "{{link}}", hint: "A link to the staff page" },
+  { token: "{{link}}", hint: "A link to the team members page" },
 ] as const;
 
 export function applyTokens(

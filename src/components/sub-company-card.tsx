@@ -67,7 +67,7 @@ export function SubCompanyCard({
       <div className="mt-4 space-y-1.5 border-t border-line pt-3 text-xs">
         {typeof staffCount === "number" && (
           <div className="flex items-center justify-between">
-            <span className="text-muted">Staff</span>
+            <span className="text-muted">Team</span>
             <span className="font-medium text-slate-700">
               {staffCount} {staffCount === 1 ? "person" : "people"}
             </span>

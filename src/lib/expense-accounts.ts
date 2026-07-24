@@ -47,7 +47,7 @@ export const METHODS: MethodDef[] = [
     key: "headcount",
     label: "Split per head",
     short: "Headcount",
-    description: "Divided by staff count — utilities, cleaning, consumables, coffee.",
+    description: "Divided by team member count — utilities, cleaning, consumables, coffee.",
     tone: "green",
   },
   {

@@ -66,7 +66,7 @@ const SECTIONS: NavSection[] = [
   {
     heading: "People",
     items: [
-      { href: "/staff", label: "Staff", icon: Users, perm: "staff.view" },
+      { href: "/staff", label: "Team Members", icon: Users, perm: "staff.view" },
       { href: "/email-groups", label: "Email Groups", icon: Mails, perm: "groups.view" },
       { href: "/mail", label: "Mail Sender", icon: Send, perm: "mail.send" },
     ],

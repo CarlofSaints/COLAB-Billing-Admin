@@ -60,7 +60,7 @@ export default async function EmailGroupsPage() {
     <div>
       <PageHeader
         title="Email Groups"
-        description="Group staff so announcements can target the right people — e.g. Admin, Directors, All Staff."
+        description="Group team members so announcements can target the right people — e.g. Admin, Directors, Everyone."
       />
       <GroupsManager
         groups={groupData.map((g) => ({ ...g, memberCount: countMap.get(g.id) ?? 0 }))}

@@ -94,7 +94,7 @@ export const ROLES: {
   {
     key: "admin",
     name: "Admin",
-    description: "Does the day-to-day work: staff, documents, invoices and announcements.",
+    description: "Does the day-to-day work: team members, documents, invoices and announcements.",
     rank: 30,
   },
   {

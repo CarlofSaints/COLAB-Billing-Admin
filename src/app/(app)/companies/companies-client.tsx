@@ -345,7 +345,7 @@ export function CompaniesManager({
                 <TH>Company</TH>
                 <TH>Reg no.</TH>
                 <TH>VAT no.</TH>
-                <TH>Staff</TH>
+                <TH>Team</TH>
                 <TH>Xero contact</TH>
                 <TH>Status</TH>
                 {canManage && <TH className="text-right">Actions</TH>}

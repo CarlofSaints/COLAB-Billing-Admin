@@ -108,7 +108,7 @@ export default async function Dashboard({
 
   const stats = [
     { label: "Sub-Companies", value: companyCount?.n ?? 0, icon: Building2, href: "/companies", perm: "companies.view" },
-    { label: "Active Staff", value: staffCount?.n ?? 0, icon: Users, href: "/staff", perm: "staff.view" },
+    { label: "Team Members", value: staffCount?.n ?? 0, icon: Users, href: "/staff", perm: "staff.view" },
     { label: "Email Groups", value: groupCount?.n ?? 0, icon: Mails, href: "/email-groups", perm: "groups.view" },
     { label: "Users", value: userCount?.n ?? 0, icon: SlidersHorizontal, href: "/users", perm: "users.view" },
   ];

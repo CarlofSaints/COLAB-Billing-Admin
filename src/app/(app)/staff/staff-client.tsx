@@ -148,7 +148,7 @@ function StaffForm({
         <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
         </Button>
-        <SaveButton label={person ? "Save changes" : "Add staff member"} />
+        <SaveButton label={person ? "Save changes" : "Add team member"} />
       </div>
     </form>
   );
@@ -335,7 +335,7 @@ export function StaffManager({
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <Input
               className="pl-9"
-              placeholder="Search staff…"
+              placeholder="Search team members…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -370,7 +370,7 @@ export function StaffManager({
               <Upload className="h-4 w-4" /> Import Excel
             </Button>
             <Button onClick={() => setAdding(true)}>
-              <Plus className="h-4 w-4" /> Add staff
+              <Plus className="h-4 w-4" /> Add team member
             </Button>
           </div>
         )}
@@ -379,9 +379,9 @@ export function StaffManager({
       {staff.length === 0 ? (
         <EmptyState
           icon={<Users className="h-8 w-8" />}
-          title="No staff yet"
+          title="No team members yet"
           description="Add people manually or import a spreadsheet."
-          action={canManage ? <Button onClick={() => setAdding(true)}>Add staff</Button> : undefined}
+          action={canManage ? <Button onClick={() => setAdding(true)}>Add team member</Button> : undefined}
         />
       ) : (
         <Card>
@@ -413,7 +413,7 @@ export function StaffManager({
               {sorted.length === 0 && (
                 <tr>
                   <TD colSpan={showActions ? 7 : 6} className="py-10 text-center text-sm text-muted">
-                    No staff match this search or filter.
+                    No team members match this search or filter.
                   </TD>
                 </tr>
               )}
@@ -472,7 +472,7 @@ export function StaffManager({
       )}
 
       {adding && (
-        <Modal title="Add staff member" open onOpenChange={setAdding}>
+        <Modal title="Add team member" open onOpenChange={setAdding}>
           <StaffForm companies={companies} onDone={() => setAdding(false)} />
         </Modal>
       )}
@@ -486,7 +486,7 @@ export function StaffManager({
         </Modal>
       )}
       {importing && (
-        <Modal title="Import staff from Excel" open onOpenChange={setImporting}>
+        <Modal title="Import team members from Excel" open onOpenChange={setImporting}>
           <ImportForm onDone={() => setImporting(false)} />
         </Modal>
       )}
