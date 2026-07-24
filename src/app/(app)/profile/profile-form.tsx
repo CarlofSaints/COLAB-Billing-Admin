@@ -2,11 +2,10 @@
 
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { CheckCircle2, TriangleAlert, ImagePlus } from "lucide-react";
+import { CheckCircle2, TriangleAlert } from "lucide-react";
 import { updateMyProfile, type ProfileState } from "@/app/actions/profile";
 import { Input, Textarea, Field } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
-import { initials } from "@/lib/utils";
 
 function Submit() {
   const { pending } = useFormStatus();
@@ -18,15 +17,11 @@ function Submit() {
 }
 
 export function ProfileForm({
-  name,
-  photoUrl,
   bio,
   dateOfBirth,
   favouriteColour,
   hobbies,
 }: {
-  name: string;
-  photoUrl: string | null;
   bio: string | null;
   dateOfBirth: string | null;
   favouriteColour: string | null;
@@ -37,27 +32,6 @@ export function ProfileForm({
 
   return (
     <form action={action} className="space-y-5">
-      {/* Photo — upload arrives with the Blob step; initials for now. */}
-      <div className="flex items-center gap-4">
-        <div
-          className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full text-lg font-semibold text-white"
-          style={{ backgroundColor: colour }}
-        >
-          {photoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={photoUrl} alt={name} className="h-full w-full object-cover" />
-          ) : (
-            initials(name)
-          )}
-        </div>
-        <div className="text-sm">
-          <p className="font-medium text-slate-700">Profile photo</p>
-          <p className="mt-0.5 inline-flex items-center gap-1.5 text-xs text-muted">
-            <ImagePlus className="h-3.5 w-3.5" /> Photo upload is coming next.
-          </p>
-        </div>
-      </div>
-
       <Field
         label="What I do at COLAB"
         hint="A sentence or two about your role and what you get up to."

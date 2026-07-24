@@ -6,6 +6,7 @@ import { PageHeader, EmptyState } from "@/components/ui/page";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { UserRound } from "lucide-react";
 import { ProfileForm } from "./profile-form";
+import { PhotoUploader } from "./photo-uploader";
 
 export const metadata = { title: "My Profile — COLAB" };
 
@@ -57,10 +58,14 @@ export default async function ProfilePage() {
               </CardDescription>
             </div>
           </CardHeader>
-          <CardContent>
-            <ProfileForm
+          <CardContent className="space-y-6">
+            <PhotoUploader
+              staffId={record.id}
               name={record.name}
-              photoUrl={record.photoUrl}
+              hasPhoto={!!record.photoUrl}
+              favouriteColour={record.favouriteColour}
+            />
+            <ProfileForm
               bio={record.bio}
               dateOfBirth={record.dateOfBirth}
               favouriteColour={record.favouriteColour}

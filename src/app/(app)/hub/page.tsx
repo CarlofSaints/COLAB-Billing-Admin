@@ -61,8 +61,10 @@ export default async function HubPage() {
   // Birthdays this month, sorted by day.
   const birthdays = await db
     .select({
+      id: staff.id,
       name: staff.name,
       dob: staff.dateOfBirth,
+      photoUrl: staff.photoUrl,
       favouriteColour: staff.favouriteColour,
       companyName: companies.name,
     })
@@ -117,10 +119,19 @@ export default async function HubPage() {
                   return (
                     <li key={i} className="flex items-center gap-3">
                       <div
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold text-white"
                         style={{ backgroundColor: b.favouriteColour || "#4f46e5" }}
                       >
-                        {initials(b.name)}
+                        {b.photoUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={`/api/photo/${b.id}`}
+                            alt={b.name}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          initials(b.name)
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-slate-800">{b.name}</p>

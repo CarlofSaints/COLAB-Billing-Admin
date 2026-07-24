@@ -1,14 +1,26 @@
 "use server";
 
+import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
+import { put, del } from "@vercel/blob";
 import { db } from "@/db";
 import { staff } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 
 export type ProfileState = { error?: string; ok?: boolean };
+export type PhotoState = { error?: string; ok?: boolean };
+
+// Accepted image types → file extension.
+const IMAGE_TYPES: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5 MB
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
@@ -96,5 +108,104 @@ export async function updateMyProfile(
   });
 
   revalidatePath("/profile");
+  return { ok: true };
+}
+
+/**
+ * Uploads a profile photo to a PRIVATE Blob store. We keep only the blob
+ * pathname on the staff row; the image itself is served through the
+ * authenticated /api/photo/[id] route, never a public URL.
+ */
+export async function uploadProfilePhoto(
+  _prev: PhotoState,
+  formData: FormData,
+): Promise<PhotoState> {
+  const user = await requirePermission("profile.edit");
+
+  const file = formData.get("photo");
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose an image to upload." };
+  const ext = IMAGE_TYPES[file.type];
+  if (!ext) return { error: "Please use a JPG, PNG, WebP or GIF image." };
+  if (file.size > MAX_PHOTO_BYTES) return { error: "Image must be 5 MB or smaller." };
+
+  const [record] = await db
+    .select({ id: staff.id, photoUrl: staff.photoUrl, profileCompletedAt: staff.profileCompletedAt })
+    .from(staff)
+    .where(sql`lower(${staff.email}) = ${user.email.toLowerCase()}`)
+    .limit(1);
+  if (!record) {
+    return { error: "No team-member record is linked to your email — ask an admin to add you." };
+  }
+
+  let pathname: string;
+  try {
+    const blob = await put(`profiles/${record.id}-${randomBytes(6).toString("hex")}.${ext}`, file, {
+      access: "private",
+      contentType: file.type,
+      addRandomSuffix: false,
+    });
+    pathname = blob.pathname;
+  } catch {
+    return { error: "Upload failed — please try again." };
+  }
+
+  // Remove the previous photo so the private store doesn't accumulate orphans.
+  if (record.photoUrl) {
+    try {
+      await del(record.photoUrl);
+    } catch {
+      /* best effort */
+    }
+  }
+
+  await db
+    .update(staff)
+    .set({
+      photoUrl: pathname,
+      profileCompletedAt: record.profileCompletedAt ?? new Date(),
+      userId: user.id,
+      updatedAt: new Date(),
+    })
+    .where(eq(staff.id, record.id));
+
+  await logEvent({
+    action: "profile.photo",
+    summary: `${user.name} updated their profile photo`,
+    actor: user,
+    entityType: "staff",
+    entityId: record.id,
+  });
+
+  revalidatePath("/profile");
+  revalidatePath("/hub");
+  return { ok: true };
+}
+
+export async function removeProfilePhoto(): Promise<PhotoState> {
+  const user = await requirePermission("profile.edit");
+  const [record] = await db
+    .select({ id: staff.id, photoUrl: staff.photoUrl })
+    .from(staff)
+    .where(sql`lower(${staff.email}) = ${user.email.toLowerCase()}`)
+    .limit(1);
+  if (!record?.photoUrl) return { ok: true };
+
+  try {
+    await del(record.photoUrl);
+  } catch {
+    /* best effort */
+  }
+  await db.update(staff).set({ photoUrl: null, updatedAt: new Date() }).where(eq(staff.id, record.id));
+
+  await logEvent({
+    action: "profile.photo_remove",
+    summary: `${user.name} removed their profile photo`,
+    actor: user,
+    entityType: "staff",
+    entityId: record.id,
+  });
+
+  revalidatePath("/profile");
+  revalidatePath("/hub");
   return { ok: true };
 }
