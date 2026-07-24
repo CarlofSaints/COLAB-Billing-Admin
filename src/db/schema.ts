@@ -202,6 +202,27 @@ export const staff = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Team Hub events (Team Photo shoot, SANBS Blood Drive, …)           */
+/* ------------------------------------------------------------------ */
+
+// Upcoming happenings shown on the team dashboard. Managed by admins;
+// visible to anyone with hub access.
+export const hubEvents = pgTable(
+  "hub_events",
+  {
+    id: serial("id").primaryKey(),
+    title: text("title").notNull(),
+    description: text("description"),
+    eventDate: date("event_date").notNull(),
+    location: text("location"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("hub_events_date_idx").on(t.eventDate)],
+);
+
+/* ------------------------------------------------------------------ */
 /* Email Groups                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -633,6 +654,7 @@ export type CommonSpace = typeof commonSpaces.$inferSelect;
 export type CommonSpaceSplit = typeof commonSpaceSplits.$inferSelect;
 export type ExpenseAccountMapping = typeof expenseAccountMappings.$inferSelect;
 export type MailSchedule = typeof mailSchedules.$inferSelect;
+export type HubEvent = typeof hubEvents.$inferSelect;
 export type SupplierSplit = typeof supplierSplits.$inferSelect;
 export type InvoiceRun = typeof invoiceRuns.$inferSelect;
 export type InvoiceRunInvoice = typeof invoiceRunInvoices.$inferSelect;

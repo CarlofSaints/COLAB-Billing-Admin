@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   UserCog,
   UserRound,
+  Sparkles,
   ScrollText,
   Plug,
   LogOut,
@@ -36,7 +37,10 @@ const SECTIONS: NavSection[] = [
   { items: [{ href: "/", label: "Dashboard", icon: LayoutDashboard }] },
   {
     heading: "Team Hub",
-    items: [{ href: "/profile", label: "My Profile", icon: UserRound, perm: "profile.edit" }],
+    items: [
+      { href: "/hub", label: "Team Dashboard", icon: Sparkles, perm: "hub.view" },
+      { href: "/profile", label: "My Profile", icon: UserRound, perm: "profile.edit" },
+    ],
   },
   {
     heading: "Billing",

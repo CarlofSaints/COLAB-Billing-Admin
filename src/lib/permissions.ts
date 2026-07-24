@@ -32,6 +32,7 @@ export const PERMISSIONS: PermissionDef[] = [
     category: "Team Hub",
     sort: 64,
   },
+  { key: "events.manage", label: "Manage team events", category: "Team Hub", sort: 66 },
 
   // Email groups
   { key: "groups.view", label: "View email groups", category: "Email Groups", sort: 70 },
@@ -125,6 +126,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "logs.view",
     "hub.view",
     "profile.edit",
+    "events.manage",
   ],
 
   // Admin: the operator. Manages staff, groups, mail and runs billing —
@@ -143,6 +145,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "logs.view",
     "hub.view",
     "profile.edit",
+    "events.manage",
   ],
 
   // Viewer: minimal read-only.

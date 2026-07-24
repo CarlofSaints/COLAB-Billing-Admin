@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { asc, eq, sql } from "drizzle-orm";
 import { Building2, Users, Mails, SlidersHorizontal, ArrowRight } from "lucide-react";
 import { db } from "@/db";
@@ -25,6 +26,14 @@ export default async function Dashboard({
   searchParams: Promise<{ denied?: string; period?: string }>;
 }) {
   const user = await requireUser();
+
+  // Team members (hub access but no billing/company visibility) land on the
+  // team hub, not the billing dashboard. Only redirect people who can actually
+  // see the hub, so no one ends up in a redirect loop.
+  if (hasPermission(user, "hub.view") && !hasPermission(user, "companies.view")) {
+    redirect("/hub");
+  }
+
   const { denied, period: requestedPeriod } = await searchParams;
   const period =
     requestedPeriod && isPeriod(requestedPeriod) ? requestedPeriod : defaultPeriod();
