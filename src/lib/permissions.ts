@@ -20,9 +20,18 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "companies.view", label: "View sub-companies", category: "Sub-Companies", sort: 30 },
   { key: "companies.manage", label: "Add / edit sub-companies", category: "Sub-Companies", sort: 40 },
 
-  // Staff
-  { key: "staff.view", label: "View staff", category: "Staff", sort: 50 },
-  { key: "staff.manage", label: "Add / edit / import staff", category: "Staff", sort: 60 },
+  // Team Members (formerly "Staff" — keys kept as staff.* to avoid a data migration)
+  { key: "staff.view", label: "View team members", category: "Team Members", sort: 50 },
+  { key: "staff.manage", label: "Add / edit / import team members", category: "Team Members", sort: 60 },
+
+  // Team Hub (the social hub: dashboard + personal profiles)
+  { key: "hub.view", label: "View team dashboard", category: "Team Hub", sort: 62 },
+  {
+    key: "profile.edit",
+    label: "Create & edit own team member profile",
+    category: "Team Hub",
+    sort: 64,
+  },
 
   // Email groups
   { key: "groups.view", label: "View email groups", category: "Email Groups", sort: 70 },
@@ -87,6 +96,13 @@ export const ROLES: {
     description: "Read-only access to the basics.",
     rank: 40,
   },
+  {
+    key: "team_member",
+    name: "Team Member",
+    description:
+      "A member of a COLAB company. Sees the team hub and maintains their own profile; no billing or admin access.",
+    rank: 50,
+  },
 ];
 
 // All permission keys.
@@ -107,6 +123,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "billing.view",
     "users.view",
     "logs.view",
+    "hub.view",
+    "profile.edit",
   ],
 
   // Admin: the operator. Manages staff, groups, mail and runs billing —
@@ -123,10 +141,16 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "billing.view",
     "billing.run",
     "logs.view",
+    "hub.view",
+    "profile.edit",
   ],
 
   // Viewer: minimal read-only.
-  viewer: ["companies.view", "staff.view", "logs.view"],
+  viewer: ["companies.view", "staff.view", "logs.view", "hub.view", "profile.edit"],
+
+  // Team Member: just the social hub — see the team dashboard and maintain
+  // their own profile. No billing, admin or settings access.
+  team_member: ["hub.view", "profile.edit"],
 };
 
 // The Super Admin role can never have permissions removed via the grid,
