@@ -356,6 +356,23 @@ export const chatMessages = pgTable(
   (t) => [index("chat_messages_conv_idx").on(t.conversationId, t.id)],
 );
 
+// Files/images attached to a message. Stored in the PRIVATE Blob store and
+// served only through /api/chat/file/[id] to conversation members.
+export const chatAttachments = pgTable(
+  "chat_attachments",
+  {
+    id: serial("id").primaryKey(),
+    messageId: integer("message_id")
+      .notNull()
+      .references(() => chatMessages.id, { onDelete: "cascade" }),
+    pathname: text("pathname").notNull(), // blob pathname (not a public URL)
+    name: text("name").notNull(),
+    contentType: text("content_type").notNull(),
+    size: integer("size").notNull().default(0),
+  },
+  (t) => [index("chat_attachments_message_idx").on(t.messageId)],
+);
+
 // Explicit membership — only needed for direct conversations (2 rows each).
 // "all" and "group" visibility is derived from role/email-group membership.
 export const chatParticipants = pgTable(
@@ -823,6 +840,7 @@ export type SignupRequest = typeof signupRequests.$inferSelect;
 export type AdminTask = typeof adminTasks.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+export type ChatAttachment = typeof chatAttachments.$inferSelect;
 export type SupplierSplit = typeof supplierSplits.$inferSelect;
 export type InvoiceRun = typeof invoiceRuns.$inferSelect;
 export type InvoiceRunInvoice = typeof invoiceRunInvoices.$inferSelect;

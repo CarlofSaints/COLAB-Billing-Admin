@@ -1,9 +1,10 @@
 import "server-only";
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   conversations,
   chatMessages,
+  chatAttachments,
   chatParticipants,
   chatReads,
   emailGroups,
@@ -11,9 +12,21 @@ import {
   staff,
   users,
 } from "@/db/schema";
-import type { ChatMessageView, ChannelItem, DirectItem, ChatSummary } from "@/lib/chat-types";
+import type {
+  ChatMessageView,
+  ChatAttachmentView,
+  ChannelItem,
+  DirectItem,
+  ChatSummary,
+} from "@/lib/chat-types";
 
-export type { ChatMessageView, ChannelItem, DirectItem, ChatSummary } from "@/lib/chat-types";
+export type {
+  ChatMessageView,
+  ChatAttachmentView,
+  ChannelItem,
+  DirectItem,
+  ChatSummary,
+} from "@/lib/chat-types";
 
 const RECENT_LIMIT = 50;
 
@@ -169,17 +182,60 @@ export async function canAccess(
   return !!member;
 }
 
-function toView(
+async function attachmentsByMessage(
+  messageIds: number[],
+): Promise<Map<number, ChatAttachmentView[]>> {
+  const map = new Map<number, ChatAttachmentView[]>();
+  if (messageIds.length === 0) return map;
+  const rows = await db
+    .select({
+      id: chatAttachments.id,
+      messageId: chatAttachments.messageId,
+      name: chatAttachments.name,
+      contentType: chatAttachments.contentType,
+      size: chatAttachments.size,
+    })
+    .from(chatAttachments)
+    .where(inArray(chatAttachments.messageId, messageIds))
+    .orderBy(chatAttachments.id);
+  for (const r of rows) {
+    const list = map.get(r.messageId) ?? [];
+    list.push({ id: r.id, name: r.name, contentType: r.contentType, size: r.size });
+    map.set(r.messageId, list);
+  }
+  return map;
+}
+
+/** Map sender userId → their staff id, but only when they have a photo. */
+async function senderPhotoMap(senderIds: number[]): Promise<Map<number, number>> {
+  const map = new Map<number, number>();
+  const ids = [...new Set(senderIds.filter((n): n is number => n != null))];
+  if (ids.length === 0) return map;
+  const rows = await db
+    .select({ userId: staff.userId, staffId: staff.id, photoUrl: staff.photoUrl })
+    .from(staff)
+    .where(and(inArray(staff.userId, ids), sql`${staff.photoUrl} is not null`));
+  for (const r of rows) if (r.userId != null) map.set(r.userId, r.staffId);
+  return map;
+}
+
+async function toView(
   rows: { id: number; senderUserId: number | null; senderName: string; body: string; createdAt: Date }[],
   meId: number,
-): ChatMessageView[] {
+): Promise<ChatMessageView[]> {
+  const [att, photos] = await Promise.all([
+    attachmentsByMessage(rows.map((r) => r.id)),
+    senderPhotoMap(rows.map((r) => r.senderUserId).filter((n): n is number => n != null)),
+  ]);
   return rows.map((m) => ({
     id: m.id,
     senderUserId: m.senderUserId,
     senderName: m.senderName,
+    senderPhotoStaffId: m.senderUserId != null ? photos.get(m.senderUserId) ?? null : null,
     body: m.body,
     createdAt: m.createdAt.toISOString(),
     mine: m.senderUserId === meId,
+    attachments: att.get(m.id) ?? [],
   }));
 }
 

@@ -1,7 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Hash, Users, MessageSquarePlus, Send, Search, MessagesSquare, X } from "lucide-react";
+import {
+  Hash,
+  Users,
+  MessageSquarePlus,
+  Send,
+  Search,
+  MessagesSquare,
+  Paperclip,
+  FileText,
+  Download,
+  X,
+} from "lucide-react";
 import { openConversation, sendMessage } from "@/app/actions/chat";
 import { cn, initials } from "@/lib/utils";
 import type { ChatSummary, ChatMessageView } from "@/lib/chat-types";
@@ -11,6 +22,35 @@ const POLL_MS = 3000;
 function timeLabel(iso: string) {
   const d = new Date(iso);
   return d.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function PendingChip({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const isImage = file.type.startsWith("image/");
+  const url = useMemo(() => (isImage ? URL.createObjectURL(file) : null), [file, isImage]);
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-line bg-slate-50 py-1 pl-1.5 pr-2">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt={file.name} className="h-8 w-8 rounded object-cover" />
+      ) : (
+        <FileText className="h-5 w-5 text-slate-400" />
+      )}
+      <div className="max-w-[140px]">
+        <p className="truncate text-xs font-medium text-slate-700">{file.name}</p>
+        <p className="text-[10px] text-muted">{formatBytes(file.size)}</p>
+      </div>
+      <button onClick={onRemove} className="rounded p-0.5 text-slate-400 hover:text-red-500">
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
 }
 
 export function ChatClient({
@@ -25,9 +65,12 @@ export function ChatClient({
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessageView[]>([]);
   const [input, setInput] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const convIdRef = useRef<number | null>(null);
   const lastIdRef = useRef(0);
@@ -118,18 +161,36 @@ export function ChatClient({
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || !conversationId || sending) return;
+    if ((!text && files.length === 0) || !conversationId || sending) return;
+    if (files.reduce((s, f) => s + f.size, 0) > 9 * 1024 * 1024) {
+      setSendError("Attachments are too large (9 MB total max).");
+      return;
+    }
     setSending(true);
+    setSendError(null);
+    const pending = files;
+    const fd = new FormData();
+    fd.set("conversationId", String(conversationId));
+    fd.set("body", text);
+    pending.forEach((f) => fd.append("files", f));
     setInput("");
-    const res = await sendMessage(conversationId, text);
+    setFiles([]);
+    const res = await sendMessage(fd);
     setSending(false);
     if (res.message) {
       appendMessages([res.message]);
       scrollToBottom();
     } else if (res.error) {
-      setInput(text); // restore so it isn't lost
+      setInput(text);
+      setFiles(pending);
+      setSendError(res.error);
     }
-  }, [input, conversationId, sending, appendMessages, scrollToBottom]);
+  }, [input, files, conversationId, sending, appendMessages, scrollToBottom]);
+
+  const addFiles = useCallback((incoming: File[]) => {
+    const ok = incoming.filter((f) => f.size > 0);
+    if (ok.length) setFiles((prev) => [...prev, ...ok]);
+  }, []);
 
   const title = useMemo(() => {
     if (!selectedRef) return "";
@@ -238,10 +299,46 @@ export function ChatClient({
             </div>
 
             <div className="border-t border-line p-3">
+              {files.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {files.map((f, i) => (
+                    <PendingChip
+                      key={i}
+                      file={f}
+                      onRemove={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+                    />
+                  ))}
+                </div>
+              )}
+              {sendError && <p className="mb-2 text-xs text-red-600">{sendError}</p>}
               <div className="flex items-end gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    addFiles(e.target.files ? Array.from(e.target.files) : []);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach files"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </button>
                 <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
+                  onPaste={(e) => {
+                    const pasted = e.clipboardData?.files;
+                    if (pasted && pasted.length > 0) {
+                      addFiles(Array.from(pasted));
+                      e.preventDefault();
+                    }
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
@@ -254,7 +351,7 @@ export function ChatClient({
                 />
                 <button
                   onClick={() => void send()}
-                  disabled={sending || !input.trim() || !conversationId}
+                  disabled={sending || (!input.trim() && files.length === 0) || !conversationId}
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-700 text-white transition-colors hover:bg-brand-800 disabled:opacity-40"
                   title="Send"
                 >
@@ -365,19 +462,78 @@ function ListButton({
   );
 }
 
+function Avatar({ m }: { m: ChatMessageView }) {
+  return (
+    <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-700 text-[10px] font-semibold text-white">
+      {m.senderPhotoStaffId ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={`/api/photo/${m.senderPhotoStaffId}`}
+          alt={m.senderName}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        initials(m.senderName)
+      )}
+    </div>
+  );
+}
+
+function Attachment({ a }: { a: ChatMessageView["attachments"][number] }) {
+  if (a.contentType.startsWith("image/")) {
+    return (
+      <a href={`/api/chat/file/${a.id}`} target="_blank" rel="noopener noreferrer" className="block">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`/api/chat/file/${a.id}`}
+          alt={a.name}
+          className="max-h-64 max-w-[240px] rounded-lg border border-line object-cover"
+        />
+      </a>
+    );
+  }
+  return (
+    <a
+      href={`/api/chat/file/${a.id}?download=1`}
+      className="flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-2 hover:bg-slate-50"
+    >
+      <FileText className="h-5 w-5 shrink-0 text-brand-700" />
+      <span className="min-w-0">
+        <span className="block max-w-[180px] truncate text-sm font-medium text-slate-800">
+          {a.name}
+        </span>
+        <span className="text-[10px] text-muted">{formatBytes(a.size)}</span>
+      </span>
+      <Download className="ml-1 h-4 w-4 shrink-0 text-slate-400" />
+    </a>
+  );
+}
+
 function Message({ m, showName }: { m: ChatMessageView; showName: boolean }) {
   return (
-    <div className={cn("flex flex-col", m.mine ? "items-end" : "items-start")}>
-      {showName && <span className="mb-0.5 px-1 text-xs text-muted">{m.senderName}</span>}
-      <div
-        className={cn(
-          "max-w-[75%] rounded-2xl px-3 py-2 text-sm",
-          m.mine ? "bg-brand-700 text-white" : "bg-slate-100 text-slate-800",
+    <div className={cn("flex items-end gap-2", m.mine ? "flex-row-reverse" : "flex-row")}>
+      <Avatar m={m} />
+      <div className={cn("flex min-w-0 flex-col", m.mine ? "items-end" : "items-start")}>
+        {showName && <span className="mb-0.5 px-1 text-xs text-muted">{m.senderName}</span>}
+        {m.body && (
+          <div
+            className={cn(
+              "max-w-[75%] rounded-2xl px-3 py-2 text-sm",
+              m.mine ? "bg-brand-700 text-white" : "bg-slate-100 text-slate-800",
+            )}
+          >
+            <p className="whitespace-pre-wrap break-words">{m.body}</p>
+          </div>
         )}
-      >
-        <p className="whitespace-pre-wrap break-words">{m.body}</p>
+        {m.attachments.length > 0 && (
+          <div className={cn("mt-1 flex flex-col gap-1.5", m.mine ? "items-end" : "items-start")}>
+            {m.attachments.map((a) => (
+              <Attachment key={a.id} a={a} />
+            ))}
+          </div>
+        )}
+        <span className="mt-0.5 px-1 text-[10px] text-slate-400">{timeLabel(m.createdAt)}</span>
       </div>
-      <span className="mt-0.5 px-1 text-[10px] text-slate-400">{timeLabel(m.createdAt)}</span>
     </div>
   );
 }
