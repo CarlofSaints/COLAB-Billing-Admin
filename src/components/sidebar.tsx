@@ -19,6 +19,7 @@ import {
   UserCheck,
   Sparkles,
   MessagesSquare,
+  Megaphone,
   ListChecks,
   Tag,
   CalendarClock,
@@ -46,6 +47,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { href: "/hub", label: "Team Dashboard", icon: Sparkles, perm: "hub.view" },
       { href: "/chat", label: "Chat", icon: MessagesSquare, perm: "hub.view" },
+      { href: "/issues", label: "Say Something!", icon: Megaphone, perm: "hub.view" },
       { href: "/profile", label: "My Profile", icon: UserRound, perm: "profile.edit" },
     ],
   },

@@ -348,6 +348,35 @@ export function taskAssignedEmail(input: {
   return { subject, html, text };
 }
 
+/** Sent to directors + admins when someone reports an office issue. */
+export function issueReportedEmail(input: {
+  category: string;
+  detail: string;
+  reporterName: string;
+  issuesUrl: string;
+}) {
+  const { category, detail, reporterName, issuesUrl } = input;
+  const subject = `Office issue reported: ${category}`;
+
+  const html = `
+  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
+    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB — Issue reported</p>
+    <p><strong>${escapeHtml(reporterName)}</strong> reported a <strong>${escapeHtml(category)}</strong> issue:</p>
+    <blockquote style="margin:12px 0;padding:10px 14px;background:#f8fafc;border-left:3px solid #4f46e5;border-radius:4px;white-space:pre-wrap">${escapeHtml(detail)}</blockquote>
+    <p><a href="${issuesUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">View & manage issues</a></p>
+  </div>`;
+
+  const text = [
+    `${reporterName} reported a ${category} issue:`,
+    "",
+    detail,
+    "",
+    `View & manage: ${issuesUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
 /** Confirmation to the creator that their task was scheduled. */
 export function taskCreatedEmail(input: {
   creatorName: string;

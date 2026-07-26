@@ -62,6 +62,9 @@ export const adminTaskStatusEnum = pgEnum("admin_task_status", ["open", "done"])
 // email group, or a 1:1 direct message between two hub users.
 export const chatKindEnum = pgEnum("chat_kind", ["all", "group", "direct"]);
 
+// Office issue ticket lifecycle.
+export const issueStatusEnum = pgEnum("issue_status", ["open", "in_progress", "resolved"]);
+
 // How a common space is divided across the sub-companies.
 // "occupancy" = pro-rata by each company's occupied m²; "custom" = fixed % per company.
 export const splitMethodEnum = pgEnum("split_method", ["occupancy", "custom"]);
@@ -306,6 +309,28 @@ export const adminTasks = pgTable(
     index("admin_tasks_status_idx").on(t.status),
     index("admin_tasks_assignee_idx").on(t.assigneeStaffId),
   ],
+);
+
+/* ------------------------------------------------------------------ */
+/* Office issues (anyone reports; directors + admins are notified)     */
+/* ------------------------------------------------------------------ */
+
+export const issues = pgTable(
+  "issues",
+  {
+    id: serial("id").primaryKey(),
+    category: text("category").notNull(), // Security, Plumbing, WiFi, …
+    detail: text("detail").notNull(),
+    status: issueStatusEnum("status").notNull().default("open"),
+    // Who reported it. No FK so the ticket survives if the user is removed.
+    reportedByUserId: integer("reported_by_user_id"),
+    reportedByName: text("reported_by_name").notNull(),
+    resolvedByName: text("resolved_by_name"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("issues_status_idx").on(t.status)],
 );
 
 /* ------------------------------------------------------------------ */
@@ -923,6 +948,7 @@ export type AdminTask = typeof adminTasks.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type ReceptionSlot = typeof receptionSlots.$inferSelect;
 export type CreditorLink = typeof creditorLinks.$inferSelect;
+export type Issue = typeof issues.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type ChatAttachment = typeof chatAttachments.$inferSelect;

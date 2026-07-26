@@ -67,6 +67,9 @@ export const PERMISSIONS: PermissionDef[] = [
     sort: 147,
   },
 
+  // Office issues
+  { key: "issues.manage", label: "View & manage reported issues", category: "Issues", sort: 144 },
+
   // User tags
   { key: "tags.manage", label: "Manage user tags", category: "User Tags", sort: 146 },
 
@@ -148,6 +151,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "tasks.manage",
     "tags.manage",
     "reception.manage",
+    "issues.manage",
   ],
 
   // Admin: the operator. Manages staff, groups, mail and runs billing —
@@ -172,6 +176,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "tasks.manage",
     "tags.manage",
     "reception.manage",
+    "issues.manage",
   ],
 
   // Viewer: minimal read-only.
