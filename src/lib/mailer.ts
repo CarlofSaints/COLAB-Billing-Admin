@@ -87,8 +87,17 @@ export async function sendBatch(
   return { sent, failed, error: firstError };
 }
 
-/** The app's public base URL, taken from the incoming request. */
+/**
+ * The app's public base URL for links in emails and shared invites.
+ *
+ * APP_BASE_URL wins when set — it pins every link (including background/cron
+ * sends that have no request to read a host from) to the canonical domain.
+ * Without it we fall back to the incoming request's host, then Vercel's.
+ */
 export async function appBaseUrl(): Promise<string> {
+  const explicit = process.env.APP_BASE_URL;
+  if (explicit) return explicit.replace(/\/+$/, "");
+
   try {
     const h = await headers();
     const proto = h.get("x-forwarded-proto") ?? "https";
@@ -98,7 +107,7 @@ export async function appBaseUrl(): Promise<string> {
     // No request scope (e.g. a background invocation) — fall through.
   }
   const fallback = process.env.VERCEL_PROJECT_PRODUCTION_URL;
-  return fallback ? `https://${fallback}` : "https://colab-billing-admin.vercel.app";
+  return fallback ? `https://${fallback}` : "https://hub.colab2.co.za";
 }
 
 function escapeHtml(value: string): string {
