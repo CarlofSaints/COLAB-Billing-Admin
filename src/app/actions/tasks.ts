@@ -82,6 +82,8 @@ export async function createTask(_prev: TaskState, formData: FormData): Promise<
   });
 
   // Notify assignee + confirm to creator (best effort — never fail the task).
+  // Every send's outcome is logged so delivery problems are visible in the
+  // Activity Log rather than failing silently.
   let note: string | undefined;
   if (mailConfigured()) {
     const base = await appBaseUrl();
@@ -98,7 +100,16 @@ export async function createTask(_prev: TaskState, formData: FormData): Promise<
         assignedByName: actor.name,
         tasksUrl,
       });
-      await sendMail({ to: assignee.email, subject: mail.subject, html: mail.html, text: mail.text });
+      const res = await sendMail({ to: assignee.email, subject: mail.subject, html: mail.html, text: mail.text });
+      await logEvent({
+        action: res.ok ? "task.assignee_emailed" : "task.assignee_email_failed",
+        summary: res.ok
+          ? `Emailed task "${row.name}" to ${assignee.email}`
+          : `Failed to email task to ${assignee.email}: ${res.error}`,
+        entityType: "admin_task",
+        entityId: row.id,
+      });
+      if (!res.ok) note = `Couldn't email ${assignee.name}: ${res.error}`;
     } else {
       note = `${assignee.name} has no email on file, so they weren't notified.`;
     }
@@ -110,7 +121,15 @@ export async function createTask(_prev: TaskState, formData: FormData): Promise<
       dueDate: formatTaskDate(row.dueDate),
       tasksUrl,
     });
-    await sendMail({ to: actor.email, subject: confirm.subject, html: confirm.html, text: confirm.text });
+    const cres = await sendMail({ to: actor.email, subject: confirm.subject, html: confirm.html, text: confirm.text });
+    await logEvent({
+      action: cres.ok ? "task.creator_emailed" : "task.creator_email_failed",
+      summary: cres.ok
+        ? `Emailed task confirmation to ${actor.email}`
+        : `Failed to email confirmation to ${actor.email}: ${cres.error}`,
+      entityType: "admin_task",
+      entityId: row.id,
+    });
   } else {
     note = "Email isn't configured, so no notifications were sent.";
   }
