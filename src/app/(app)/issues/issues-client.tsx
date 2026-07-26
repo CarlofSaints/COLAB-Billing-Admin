@@ -1,15 +1,24 @@
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useMemo, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
-import { Megaphone, CheckCircle2, TriangleAlert, Trash2, Inbox } from "lucide-react";
+import {
+  Megaphone,
+  CheckCircle2,
+  TriangleAlert,
+  Trash2,
+  Inbox,
+  Search,
+} from "lucide-react";
 import { reportIssue, setIssueStatus, deleteIssue, type ReportState } from "@/app/actions/issues";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Select, Textarea, Field } from "@/components/ui/field";
+import { Input, Select, Textarea, Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/page";
+import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
+import { useTableSort } from "@/lib/use-table-sort";
 import { formatDateTime } from "@/lib/utils";
 import { ISSUE_CATEGORIES, ISSUE_STATUSES, statusLabel, statusTone } from "@/lib/issues";
 
@@ -80,36 +89,191 @@ function ReportForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-function ManageControls({ issue }: { issue: IssueRow }) {
+function StatusSelect({ issue }: { issue: IssueRow }) {
   const [pending, start] = useTransition();
   return (
-    <div className="flex items-center gap-1">
-      <select
-        value={issue.status}
-        disabled={pending}
-        onChange={(e) =>
-          start(() => setIssueStatus(issue.id, e.target.value as "open" | "in_progress" | "resolved"))
-        }
-        className="rounded-lg border border-line bg-white px-2 py-1 text-xs focus:border-brand-600 focus:outline-none"
-      >
-        {ISSUE_STATUSES.map((s) => (
-          <option key={s.value} value={s.value}>
-            {s.label}
-          </option>
-        ))}
-      </select>
-      <Button
-        variant="ghost"
-        size="sm"
-        title="Delete"
-        disabled={pending}
-        onClick={() => {
-          if (confirm("Delete this issue?")) start(() => deleteIssue(issue.id));
-        }}
-      >
-        <Trash2 className="h-3.5 w-3.5 text-red-500" />
-      </Button>
+    <select
+      value={issue.status}
+      disabled={pending}
+      onChange={(e) =>
+        start(() => setIssueStatus(issue.id, e.target.value as "open" | "in_progress" | "resolved"))
+      }
+      className="rounded-lg border border-line bg-white px-2 py-1 text-xs focus:border-brand-600 focus:outline-none"
+    >
+      {ISSUE_STATUSES.map((s) => (
+        <option key={s.value} value={s.value}>
+          {s.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function DeleteButton({ id }: { id: number }) {
+  const [pending, start] = useTransition();
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      title="Delete"
+      disabled={pending}
+      onClick={() => {
+        if (confirm("Delete this issue?")) start(() => deleteIssue(id));
+      }}
+    >
+      <Trash2 className="h-3.5 w-3.5 text-red-500" />
+    </Button>
+  );
+}
+
+/** Manager view: a sortable, filterable grid of every submission. */
+function IssuesGrid({ issues }: { issues: IssueRow[] }) {
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return issues.filter((i) => {
+      if (statusFilter !== "all" && i.status !== statusFilter) return false;
+      if (!q) return true;
+      return [i.category, i.detail, i.reportedByName].join(" ").toLowerCase().includes(q);
+    });
+  }, [issues, query, statusFilter]);
+
+  const { sorted, sort, toggle } = useTableSort(
+    filtered,
+    {
+      date: (i) => i.createdAt,
+      reporter: (i) => i.reportedByName,
+      type: (i) => i.category,
+      status: (i) => i.status,
+    },
+    { key: "date", dir: "desc" },
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative w-full max-w-xs">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            className="pl-9"
+            placeholder="Search issues…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <Select
+          className="w-40"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="all">All statuses</option>
+          {ISSUE_STATUSES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </Select>
+        <span className="text-sm text-muted">
+          {filtered.length} of {issues.length}
+        </span>
+      </div>
+
+      {issues.length === 0 ? (
+        <EmptyState
+          icon={<Inbox className="h-8 w-8" />}
+          title="Nothing reported"
+          description="Issues reported by the team will show up here."
+        />
+      ) : (
+        <Card>
+          <Table>
+            <THead>
+              <tr>
+                <SortableTH sortKey="date" sort={sort} onSort={toggle}>
+                  Date
+                </SortableTH>
+                <SortableTH sortKey="reporter" sort={sort} onSort={toggle}>
+                  Reported by
+                </SortableTH>
+                <SortableTH sortKey="type" sort={sort} onSort={toggle}>
+                  Type
+                </SortableTH>
+                <TH>Details</TH>
+                <SortableTH sortKey="status" sort={sort} onSort={toggle}>
+                  Status
+                </SortableTH>
+                <TH className="text-right">Actions</TH>
+              </tr>
+            </THead>
+            <tbody>
+              {sorted.length === 0 && (
+                <tr>
+                  <TD colSpan={6} className="py-10 text-center text-sm text-muted">
+                    No issues match this search or filter.
+                  </TD>
+                </tr>
+              )}
+              {sorted.map((i) => (
+                <TR key={i.id}>
+                  <TD className="whitespace-nowrap text-xs text-muted">
+                    {formatDateTime(i.createdAt)}
+                  </TD>
+                  <TD className="whitespace-nowrap">{i.reportedByName}</TD>
+                  <TD>
+                    <Badge tone="indigo">{i.category}</Badge>
+                  </TD>
+                  <TD>
+                    <div className="max-w-sm whitespace-pre-wrap text-sm text-slate-700">
+                      {i.detail}
+                    </div>
+                    {i.status === "resolved" && i.resolvedByName && (
+                      <div className="mt-0.5 text-[10px] text-muted">
+                        resolved by {i.resolvedByName}
+                      </div>
+                    )}
+                  </TD>
+                  <TD>
+                    <StatusSelect issue={i} />
+                  </TD>
+                  <TD className="text-right">
+                    <DeleteButton id={i.id} />
+                  </TD>
+                </TR>
+              ))}
+            </tbody>
+          </Table>
+        </Card>
+      )}
     </div>
+  );
+}
+
+/** Reporter view: a simple read-only list of your own reports. */
+function MyReports({ issues }: { issues: IssueRow[] }) {
+  if (issues.length === 0) {
+    return (
+      <EmptyState
+        icon={<Inbox className="h-8 w-8" />}
+        title="You haven't reported anything"
+        description="Spot a problem? Use the button above to report it."
+      />
+    );
+  }
+  return (
+    <Card className="divide-y divide-line">
+      {issues.map((i) => (
+        <div key={i.id} className="px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="indigo">{i.category}</Badge>
+            <Badge tone={statusTone(i.status)}>{statusLabel(i.status)}</Badge>
+            <span className="text-xs text-muted">{formatDateTime(i.createdAt)}</span>
+          </div>
+          <p className="mt-1.5 whitespace-pre-wrap text-sm text-slate-800">{i.detail}</p>
+        </div>
+      ))}
+    </Card>
   );
 }
 
@@ -140,40 +304,10 @@ export function IssuesClient({
       </div>
 
       <h2 className="text-sm font-semibold text-slate-700">
-        {canManage ? "Reported issues" : "Your reports"}
+        {canManage ? "All submissions" : "Your reports"}
       </h2>
 
-      {issues.length === 0 ? (
-        <EmptyState
-          icon={<Inbox className="h-8 w-8" />}
-          title={canManage ? "Nothing reported" : "You haven't reported anything"}
-          description={
-            canManage
-              ? "Issues reported by the team will show up here."
-              : "Spot a problem? Use the button above to report it."
-          }
-        />
-      ) : (
-        <Card className="divide-y divide-line">
-          {issues.map((i) => (
-            <div key={i.id} className="flex items-start justify-between gap-3 px-4 py-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone="indigo">{i.category}</Badge>
-                  <Badge tone={statusTone(i.status)}>{statusLabel(i.status)}</Badge>
-                </div>
-                <p className="mt-1.5 whitespace-pre-wrap text-sm text-slate-800">{i.detail}</p>
-                <p className="mt-1 text-xs text-muted">
-                  {canManage ? `${i.reportedByName} · ` : ""}
-                  {formatDateTime(i.createdAt)}
-                  {i.status === "resolved" && i.resolvedByName ? ` · resolved by ${i.resolvedByName}` : ""}
-                </p>
-              </div>
-              {canManage && <ManageControls issue={i} />}
-            </div>
-          ))}
-        </Card>
-      )}
+      {canManage ? <IssuesGrid issues={issues} /> : <MyReports issues={issues} />}
     </div>
   );
 }
