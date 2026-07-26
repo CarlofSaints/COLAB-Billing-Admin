@@ -67,6 +67,9 @@ export const PERMISSIONS: PermissionDef[] = [
     sort: 147,
   },
 
+  // User tags
+  { key: "tags.manage", label: "Manage user tags", category: "User Tags", sort: 146 },
+
   // Admin tasks
   { key: "tasks.view", label: "View admin tasks", category: "Admin Tasks", sort: 148 },
   { key: "tasks.manage", label: "Create & assign admin tasks", category: "Admin Tasks", sort: 149 },
@@ -140,6 +143,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "team.invite",
     "tasks.view",
     "tasks.manage",
+    "tags.manage",
   ],
 
   // Admin: the operator. Manages staff, groups, mail and runs billing —
@@ -162,6 +166,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "team.invite",
     "tasks.view",
     "tasks.manage",
+    "tags.manage",
   ],
 
   // Viewer: minimal read-only.

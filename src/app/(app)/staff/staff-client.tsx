@@ -23,6 +23,7 @@ import {
   type ImportState,
 } from "@/app/actions/staff";
 import { inviteTeamMember, type InviteState } from "@/app/actions/team";
+import { TagChip } from "@/components/tag-chip";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,7 @@ import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
 import { useTableSort } from "@/lib/use-table-sort";
 
 type CompanyOpt = { id: number; name: string; type: "colab" | "sub" };
+type TagOption = { id: number; name: string; color: string | null };
 export type StaffRow = {
   id: number;
   name: string;
@@ -45,6 +47,7 @@ export type StaffRow = {
   active: boolean;
   includeInBilling: boolean;
   hasAccount: boolean;
+  tags: TagOption[];
 };
 
 function SaveButton({ label }: { label: string }) {
@@ -86,18 +89,26 @@ function CompanySelect({ companies, defaultValue }: { companies: CompanyOpt[]; d
 
 function StaffForm({
   companies,
+  allTags,
   person,
   onDone,
 }: {
   companies: CompanyOpt[];
+  allTags: TagOption[];
   person?: StaffRow;
   onDone: () => void;
 }) {
   const action = person ? updateStaff : createStaff;
   const [state, formAction] = useActionState<ActionState, FormData>(action, {});
+  const [selectedTags, setSelectedTags] = useState<number[]>(
+    person ? person.tags.map((t) => t.id) : [],
+  );
   useEffect(() => {
     if (state.ok) onDone();
   }, [state.ok, onDone]);
+
+  const toggleTag = (id: number) =>
+    setSelectedTags((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   return (
     <form action={formAction} className="space-y-4">
@@ -140,6 +151,26 @@ function StaffForm({
           <option value="Yes">Yes</option>
           <option value="No">No</option>
         </Select>
+      </Field>
+      <Field label="Tags" hint={allTags.length ? "Click to add or remove." : undefined}>
+        {allTags.length === 0 ? (
+          <p className="text-sm text-muted">No tags yet — create some on the Tags page.</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {allTags.map((t) => (
+              <TagChip
+                key={t.id}
+                name={t.name}
+                color={t.color}
+                selected={selectedTags.includes(t.id)}
+                onClick={() => toggleTag(t.id)}
+              />
+            ))}
+          </div>
+        )}
+        {selectedTags.map((id) => (
+          <input key={id} type="hidden" name="tagId" value={id} />
+        ))}
       </Field>
       {state.error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
@@ -281,11 +312,13 @@ function InviteButton({ person }: { person: StaffRow }) {
 export function StaffManager({
   staff,
   companies,
+  allTags,
   canManage,
   canInvite,
 }: {
   staff: StaffRow[];
   companies: CompanyOpt[];
+  allTags: TagOption[];
   canManage: boolean;
   canInvite: boolean;
 }) {
@@ -422,6 +455,13 @@ export function StaffManager({
                   <TD>
                     <div className="font-medium text-slate-900">{s.name}</div>
                     {s.position && <div className="text-xs text-muted">{s.position}</div>}
+                    {s.tags.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {s.tags.map((t) => (
+                          <TagChip key={t.id} name={t.name} color={t.color} />
+                        ))}
+                      </div>
+                    )}
                   </TD>
                   <TD>
                     <Badge tone="brand">{s.companyName}</Badge>
@@ -473,7 +513,7 @@ export function StaffManager({
 
       {adding && (
         <Modal title="Add team member" open onOpenChange={setAdding}>
-          <StaffForm companies={companies} onDone={() => setAdding(false)} />
+          <StaffForm companies={companies} allTags={allTags} onDone={() => setAdding(false)} />
         </Modal>
       )}
       {editing && (
@@ -482,7 +522,12 @@ export function StaffManager({
           open
           onOpenChange={(o) => !o && setEditing(null)}
         >
-          <StaffForm companies={companies} person={editing} onDone={() => setEditing(null)} />
+          <StaffForm
+            companies={companies}
+            allTags={allTags}
+            person={editing}
+            onDone={() => setEditing(null)}
+          />
         </Modal>
       )}
       {importing && (

@@ -309,6 +309,37 @@ export const adminTasks = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* User tags (custom labels applied to team members)                  */
+/* ------------------------------------------------------------------ */
+
+// A custom label (e.g. "Reception", "Admin") that can be applied to any
+// number of team members. Distinct from roles/permissions — purely a label.
+export const tags = pgTable(
+  "tags",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    color: text("color"), // hex, e.g. "#4f46e5"
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("tags_name_unique").on(sql`lower(${t.name})`)],
+);
+
+// Many-to-many: a team member can carry several tags.
+export const staffTags = pgTable(
+  "staff_tags",
+  {
+    staffId: integer("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    tagId: integer("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.staffId, t.tagId] })],
+);
+
+/* ------------------------------------------------------------------ */
 /* Chat                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -838,6 +869,7 @@ export type MailSchedule = typeof mailSchedules.$inferSelect;
 export type HubEvent = typeof hubEvents.$inferSelect;
 export type SignupRequest = typeof signupRequests.$inferSelect;
 export type AdminTask = typeof adminTasks.$inferSelect;
+export type Tag = typeof tags.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type ChatAttachment = typeof chatAttachments.$inferSelect;

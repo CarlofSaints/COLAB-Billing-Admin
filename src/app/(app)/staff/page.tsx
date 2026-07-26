@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { staff, companies } from "@/db/schema";
+import { staff, companies, tags, staffTags } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page";
 import { StaffManager } from "./staff-client";
@@ -37,6 +37,22 @@ export default async function StaffPage() {
     .innerJoin(companies, eq(staff.companyId, companies.id))
     .orderBy(asc(staff.name));
 
+  const allTags = await db
+    .select({ id: tags.id, name: tags.name, color: tags.color })
+    .from(tags)
+    .orderBy(asc(tags.name));
+
+  const tagLinks = await db
+    .select({ staffId: staffTags.staffId, id: tags.id, name: tags.name, color: tags.color })
+    .from(staffTags)
+    .innerJoin(tags, eq(tags.id, staffTags.tagId));
+  const tagsByStaff = new Map<number, { id: number; name: string; color: string | null }[]>();
+  for (const l of tagLinks) {
+    const list = tagsByStaff.get(l.staffId) ?? [];
+    list.push({ id: l.id, name: l.name, color: l.color });
+    tagsByStaff.set(l.staffId, list);
+  }
+
   const data = staffRows.map((s) => ({
     id: s.id,
     name: s.name,
@@ -49,6 +65,7 @@ export default async function StaffPage() {
     active: s.active,
     includeInBilling: s.includeInBilling,
     hasAccount: s.userId != null,
+    tags: tagsByStaff.get(s.id) ?? [],
   }));
 
   return (
@@ -60,6 +77,7 @@ export default async function StaffPage() {
       <StaffManager
         staff={data}
         companies={companyRows}
+        allTags={allTags}
         canManage={canManage}
         canInvite={canInvite}
       />

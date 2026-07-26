@@ -1,14 +1,31 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import * as XLSX from "xlsx";
 import { db } from "@/db";
-import { staff, companies } from "@/db/schema";
+import { staff, companies, staffTags, tags } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { parseYesNo } from "@/lib/utils";
+
+/** Replace a team member's tags with the ones selected in the form. */
+async function syncTags(staffId: number, formData: FormData) {
+  const ids = [
+    ...new Set(
+      formData
+        .getAll("tagId")
+        .map((v) => Number(v))
+        .filter((n) => Number.isInteger(n) && n > 0),
+    ),
+  ];
+  await db.delete(staffTags).where(eq(staffTags.staffId, staffId));
+  if (ids.length === 0) return;
+  const valid = await db.select({ id: tags.id }).from(tags).where(inArray(tags.id, ids));
+  const rows = valid.map((t) => ({ staffId, tagId: t.id }));
+  if (rows.length) await db.insert(staffTags).values(rows).onConflictDoNothing();
+}
 
 const staffSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
@@ -40,6 +57,7 @@ export async function createStaff(_prev: ActionState, formData: FormData): Promi
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const [row] = await db.insert(staff).values(parsed.data).returning();
+  await syncTags(row.id, formData);
   await logEvent({
     action: "staff.create",
     summary: `Added team member ${row.name}`,
@@ -60,6 +78,7 @@ export async function updateStaff(_prev: ActionState, formData: FormData): Promi
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   await db.update(staff).set({ ...parsed.data, updatedAt: new Date() }).where(eq(staff.id, id));
+  await syncTags(id, formData);
   await logEvent({
     action: "staff.update",
     summary: `Updated team member ${parsed.data.name}`,
