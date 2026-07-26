@@ -7,6 +7,7 @@ import {
   commonSpaceSplits,
   companies,
   companyAllocations,
+  creditorLinks,
   expenseAccountMappings,
   fixedLineAllocations,
   fixedLineItems,
@@ -24,6 +25,7 @@ import { RENT_AMOUNT_KEY, TOTAL_SQM_KEY } from "./controls";
 import { fetchExpenseAccounts } from "./xero";
 import { getMonthCosts } from "./month-costs";
 import { periodLabel } from "./periods";
+import { METHOD_BY_KEY } from "./expense-accounts";
 import type { AccountMethod, PercentEntry } from "./expense-accounts";
 
 export type RunType = "recurring" | "month_end";
@@ -310,7 +312,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       });
     }
 
-    const [thisMonth, earlier, accountMappings] = await Promise.all([
+    const [thisMonth, earlier, accountMappings, creditorLinkRows] = await Promise.all([
       db.select().from(supplierSplits).where(eq(supplierSplits.period, period)),
       db
         .select()
@@ -318,7 +320,9 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
         .where(lt(supplierSplits.period, period))
         .orderBy(asc(supplierSplits.period)),
       db.select().from(expenseAccountMappings),
+      db.select().from(creditorLinks),
     ]);
+    const linkByContact = new Map(creditorLinkRows.map((l) => [l.xeroContactId, l]));
 
     const explicit = new Map(thisMonth.map((r) => [`${r.accountCode}|${r.xeroContactId}`, r]));
     const inherited = new Map<string, (typeof earlier)[number]>();
@@ -358,6 +362,9 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     const unsplitBalanceSuppliers: string[] = [];
     const creditedItems = new Set<number>();
     const duplicateItemUse = new Set<number>();
+    // Costs from creditors linked to a recurring fixed item — pooled here and
+    // reconciled after the loop instead of being split normally.
+    const creditorPool = new Map<string, { name: string; total: number; contributors: string[] }>();
 
     /**
      * A fixed line item set on the *account* covers the account as a whole,
@@ -379,6 +386,23 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
 
     for (const row of costs.rows) {
       const own = explicit.get(row.key);
+
+      // Linked creditor (e.g. the landlord) — already billed on the recurring
+      // invoice. Pool it for reconciliation and don't split it here. A manual
+      // this-month split still wins, as an escape hatch.
+      const link = linkByContact.get(row.contactId);
+      if (link && !own) {
+        const entry =
+          creditorPool.get(row.contactId) ??
+          { name: row.supplierName, total: 0, contributors: [] as string[] };
+        entry.total += row.amount;
+        entry.contributors.push(
+          `${accountNameByCode.get(row.accountCode) ?? row.accountCode}: ${formatRand(row.amount)}`,
+        );
+        creditorPool.set(row.contactId, entry);
+        continue;
+      }
+
       const prior = inherited.get(row.key);
       const accountDefault = byAccountCode.get(row.accountCode);
       const winner = own ?? prior ?? accountDefault ?? null;
@@ -504,6 +528,73 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       perAccount.set(code, entry);
     }
 
+    // ---- Linked creditors: reconcile actual (Xero) vs recurring -----
+    for (const [contactId, pool] of creditorPool) {
+      const link = linkByContact.get(contactId)!;
+      const itemName = fixedItemRows.find((i) => i.id === link.fixedLineItemId)?.name ?? "the recurring item";
+      const recovered = round2(recoveredByItem.get(link.fixedLineItemId) ?? 0);
+      const actual = round2(pool.total);
+      const variance = round2(actual - recovered);
+      recoveredElsewhere += Math.min(recovered, actual);
+
+      if (recovered <= 0) {
+        warnings.push({
+          level: "warn",
+          message: `${pool.name} is linked to "${itemName}", but that item bills nothing on the recurring invoice — check its allocations. Its R${actual.toFixed(2)} in Xero was NOT billed here.`,
+          href: "/controls",
+          linkLabel: "Open Controls",
+        });
+        continue;
+      }
+      if (Math.abs(variance) < 0.01) {
+        warnings.push({
+          level: "info",
+          message: `${pool.name}: R${actual.toFixed(2)} in Xero matches "${itemName}" on the recurring invoice — reconciled, not billed again.`,
+        });
+        continue;
+      }
+      if (variance < 0) {
+        warnings.push({
+          level: "warn",
+          message: `${pool.name}: R${recovered.toFixed(2)} billed on the recurring invoice for "${itemName}", but only R${actual.toFixed(2)} in Xero — R${Math.abs(variance).toFixed(2)} over-recovered. Review whether to credit it.`,
+        });
+        continue;
+      }
+
+      // Overage — split by the link's balance rule.
+      const bm = (link.balanceMethod ?? null) as AccountMethod | null;
+      if (!bm || bm === "fixed" || bm === "controls" || bm === "exclude") {
+        warnings.push({
+          level: "warn",
+          message: `${pool.name}: R${actual.toFixed(2)} in Xero vs R${recovered.toFixed(2)} on the recurring invoice — R${variance.toFixed(2)} over, but the link has no split rule, so it is NOT billed. Set one.`,
+          href: "/creditor-links",
+          linkLabel: "Set the rule",
+        });
+        continue;
+      }
+      const shares = allocate(variance, bm, basis, {
+        companyId: link.balanceCompanyId,
+        percentages: link.balancePercentages ?? null,
+      });
+      for (const c of companyRows) {
+        const amt = round2(shares[c.id] ?? 0);
+        if (Math.abs(amt) < 0.005) continue;
+        push(c.id, {
+          key: `creditor-${contactId}-${c.id}`,
+          description: `${pool.name} — over recurring — ${label}`,
+          amount: amt,
+          detail: [
+            `Actual R${actual.toFixed(2)} vs R${recovered.toFixed(2)} billed on the recurring invoice; R${variance.toFixed(2)} over, split by ${METHOD_BY_KEY[bm].short}`,
+            ...pool.contributors,
+          ],
+        });
+      }
+      warnings.push({
+        level: "info",
+        message: `${pool.name}: R${variance.toFixed(2)} over the recurring invoice is billed here (actual R${actual.toFixed(2)} vs R${recovered.toFixed(2)}).`,
+      });
+    }
+
     const sortedAccounts = [...perAccount.entries()].sort(
       (a, b) => b[1].total - a[1].total,
     );
@@ -565,6 +656,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       ...accountMappings.map((m) => m.fixedLineItemId).filter((id): id is number => id != null),
       ...thisMonth.map((s) => s.fixedLineItemId).filter((id): id is number => id != null),
       ...earlier.map((s) => s.fixedLineItemId).filter((id): id is number => id != null),
+      ...creditorLinkRows.map((l) => l.fixedLineItemId),
     ]);
     const unreferenced = fixedItemRows.filter(
       (i) => i.active && !referencedItems.has(i.id) && (recoveredByItem.get(i.id) ?? 0) > 0,

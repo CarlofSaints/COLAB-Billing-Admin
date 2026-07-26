@@ -329,6 +329,37 @@ export const receptionSlots = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Creditor links (a Xero creditor pre-billed by a recurring item)     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Links a Xero creditor (e.g. the landlord, the ISP) to the fixed line item
+ * that already recovers its cost on the recurring invoice. In the month-end
+ * run the creditor's Xero bills are auto-ignored (so nothing bills twice) and
+ * reconciled against what was billed; any overage splits by `balanceMethod`.
+ */
+export const creditorLinks = pgTable(
+  "creditor_links",
+  {
+    id: serial("id").primaryKey(),
+    xeroContactId: text("xero_contact_id").notNull(),
+    xeroContactName: text("xero_contact_name").notNull(),
+    fixedLineItemId: integer("fixed_line_item_id")
+      .notNull()
+      .references(() => fixedLineItems.id, { onDelete: "cascade" }),
+    // How an overage (actual > billed) is split. Null = flag it, don't bill.
+    balanceMethod: accountMethodEnum("balance_method"),
+    balanceCompanyId: integer("balance_company_id").references(() => companies.id, {
+      onDelete: "set null",
+    }),
+    balancePercentages: jsonb("balance_percentages").$type<PercentSplit[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("creditor_links_contact_unique").on(t.xeroContactId)],
+);
+
+/* ------------------------------------------------------------------ */
 /* User tags (custom labels applied to team members)                  */
 /* ------------------------------------------------------------------ */
 
@@ -891,6 +922,7 @@ export type SignupRequest = typeof signupRequests.$inferSelect;
 export type AdminTask = typeof adminTasks.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type ReceptionSlot = typeof receptionSlots.$inferSelect;
+export type CreditorLink = typeof creditorLinks.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type ChatAttachment = typeof chatAttachments.$inferSelect;
