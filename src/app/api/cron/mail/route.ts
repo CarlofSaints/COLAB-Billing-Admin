@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { mailSchedules } from "@/db/schema";
 import { runSchedule } from "@/lib/mail-runner";
+import { runTaskReminders } from "@/lib/task-reminders";
 import { isDue } from "@/lib/schedules";
 import { logEvent } from "@/lib/log";
 
@@ -38,7 +39,18 @@ export async function GET(req: Request) {
     results.push({ id: schedule.id, name: schedule.name, ...res });
   }
 
-  if (due.length === 0) {
+  // Recurring admin-task reminders share this daily tick.
+  const tasks = await runTaskReminders();
+  if (tasks.sent > 0) {
+    await logEvent({
+      action: "task.reminders_sent",
+      summary: `Sent ${tasks.sent} recurring task reminder(s)`,
+      entityType: "admin_task",
+      actorType: "system",
+    });
+  }
+
+  if (due.length === 0 && tasks.sent === 0) {
     // Recorded so there's evidence the cron is alive even on quiet days.
     await logEvent({
       action: "mail.cron_tick",
@@ -48,5 +60,10 @@ export async function GET(req: Request) {
     });
   }
 
-  return Response.json({ checked: rows.length, ran: results.length, results });
+  return Response.json({
+    checked: rows.length,
+    ran: results.length,
+    results,
+    taskReminders: tasks,
+  });
 }

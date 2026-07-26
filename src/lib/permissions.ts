@@ -67,6 +67,10 @@ export const PERMISSIONS: PermissionDef[] = [
     sort: 147,
   },
 
+  // Admin tasks
+  { key: "tasks.view", label: "View admin tasks", category: "Admin Tasks", sort: 148 },
+  { key: "tasks.manage", label: "Create & assign admin tasks", category: "Admin Tasks", sort: 149 },
+
   // Logs
   { key: "logs.view", label: "View activity log", category: "Activity Log", sort: 150 },
 ];
@@ -134,6 +138,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "profile.edit",
     "events.manage",
     "team.invite",
+    "tasks.view",
+    "tasks.manage",
   ],
 
   // Admin: the operator. Manages staff, groups, mail and runs billing —
@@ -154,6 +160,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "profile.edit",
     "events.manage",
     "team.invite",
+    "tasks.view",
+    "tasks.manage",
   ],
 
   // Viewer: minimal read-only.

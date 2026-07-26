@@ -17,6 +17,7 @@ import {
   UserRound,
   UserCheck,
   Sparkles,
+  ListChecks,
   ScrollText,
   Plug,
   LogOut,
@@ -74,6 +75,7 @@ const SECTIONS: NavSection[] = [
   {
     heading: "Administration",
     items: [
+      { href: "/admin-tasks", label: "Admin Tasks", icon: ListChecks, perm: "tasks.view" },
       { href: "/users", label: "Users", icon: UserCog, perm: "users.view" },
       {
         href: "/signup-requests",

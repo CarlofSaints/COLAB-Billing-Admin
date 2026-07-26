@@ -275,3 +275,115 @@ export function signupNotifyEmail(input: {
 
   return { subject, html, text };
 }
+
+function taskDetailsTable(rows: [string, string][]): string {
+  return `<table style="border-collapse:collapse;margin:16px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">${rows
+    .map(
+      ([k, v], i) =>
+        `<tr><td style="padding:10px 14px;color:#64748b${i ? ";border-top:1px solid #e2e8f0" : ""}">${escapeHtml(k)}</td><td style="padding:10px 14px${i ? ";border-top:1px solid #e2e8f0" : ""}">${escapeHtml(v)}</td></tr>`,
+    )
+    .join("")}</table>`;
+}
+
+/** Sent to the assignee when a task is created for them (or as a reminder). */
+export function taskAssignedEmail(input: {
+  assigneeName: string;
+  taskName: string;
+  description?: string | null;
+  dueDate?: string | null;
+  priorityLabel: string;
+  recurrenceLabel: string;
+  assignedByName: string;
+  tasksUrl: string;
+  isReminder?: boolean;
+}) {
+  const {
+    assigneeName,
+    taskName,
+    description,
+    dueDate,
+    priorityLabel,
+    recurrenceLabel,
+    assignedByName,
+    tasksUrl,
+    isReminder,
+  } = input;
+  const subject = isReminder
+    ? `Reminder: ${taskName}`
+    : `New task for you: ${taskName}`;
+
+  const lead = isReminder
+    ? `A quick reminder about a task assigned to you${assignedByName ? ` by ${escapeHtml(assignedByName)}` : ""}:`
+    : `${escapeHtml(assignedByName)} has assigned you a task on the COLAB hub:`;
+
+  const rows: [string, string][] = [["Task", taskName]];
+  if (description) rows.push(["Details", description]);
+  if (dueDate) rows.push(["Due", dueDate]);
+  rows.push(["Priority", priorityLabel]);
+  rows.push(["Repeats", recurrenceLabel]);
+
+  const html = `
+  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
+    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB Team Hub</p>
+    <p>Hi ${escapeHtml(assigneeName)},</p>
+    <p>${lead}</p>
+    ${taskDetailsTable(rows)}
+    <p><a href="${tasksUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">View my tasks</a></p>
+  </div>`;
+
+  const text = [
+    `Hi ${assigneeName},`,
+    "",
+    isReminder ? `Reminder — task: ${taskName}` : `${assignedByName} assigned you a task: ${taskName}`,
+    description ? `Details: ${description}` : "",
+    dueDate ? `Due: ${dueDate}` : "",
+    `Priority: ${priorityLabel}`,
+    `Repeats: ${recurrenceLabel}`,
+    "",
+    `View your tasks: ${tasksUrl}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return { subject, html, text };
+}
+
+/** Confirmation to the creator that their task was scheduled. */
+export function taskCreatedEmail(input: {
+  creatorName: string;
+  taskName: string;
+  assigneeName: string;
+  dueDate?: string | null;
+  tasksUrl: string;
+}) {
+  const { creatorName, taskName, assigneeName, dueDate, tasksUrl } = input;
+  const subject = `Task scheduled: ${taskName}`;
+
+  const rows: [string, string][] = [
+    ["Task", taskName],
+    ["Assigned to", assigneeName],
+  ];
+  if (dueDate) rows.push(["Due", dueDate]);
+
+  const html = `
+  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
+    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB Team Hub</p>
+    <p>Hi ${escapeHtml(creatorName)},</p>
+    <p>Your task has been scheduled and ${escapeHtml(assigneeName)} has been notified.</p>
+    ${taskDetailsTable(rows)}
+    <p><a href="${tasksUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Open admin tasks</a></p>
+  </div>`;
+
+  const text = [
+    `Hi ${creatorName},`,
+    "",
+    `Your task "${taskName}" has been scheduled and ${assigneeName} has been notified.`,
+    dueDate ? `Due: ${dueDate}` : "",
+    "",
+    `Open admin tasks: ${tasksUrl}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return { subject, html, text };
+}

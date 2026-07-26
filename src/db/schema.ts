@@ -43,6 +43,21 @@ export const mailAudienceEnum = pgEnum("mail_audience", ["groups", "company_cont
 // admin gates it; approval creates the team member + their login.
 export const signupStatusEnum = pgEnum("signup_status", ["pending", "approved", "declined"]);
 
+// Admin task scheduler enums.
+export const adminTaskPriorityEnum = pgEnum("admin_task_priority", [
+  "urgent",
+  "high",
+  "normal",
+  "low",
+]);
+export const adminTaskRecurrenceEnum = pgEnum("admin_task_recurrence", [
+  "once",
+  "daily",
+  "weekly",
+  "monthly",
+]);
+export const adminTaskStatusEnum = pgEnum("admin_task_status", ["open", "done"]);
+
 // How a common space is divided across the sub-companies.
 // "occupancy" = pro-rata by each company's occupied m²; "custom" = fixed % per company.
 export const splitMethodEnum = pgEnum("split_method", ["occupancy", "custom"]);
@@ -249,6 +264,44 @@ export const signupRequests = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("signup_status_idx").on(t.status)],
+);
+
+/* ------------------------------------------------------------------ */
+/* Admin task scheduler                                               */
+/* ------------------------------------------------------------------ */
+
+// A task an admin (or anyone with tasks.manage) assigns to a team member,
+// with a due date, priority and optional recurring email reminders.
+export const adminTasks = pgTable(
+  "admin_tasks",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    // Who has to do it — a team member (kept even if they leave: set null).
+    assigneeStaffId: integer("assignee_staff_id").references(() => staff.id, {
+      onDelete: "set null",
+    }),
+    // Who created it. No FK so the task survives if the creator is deleted.
+    createdByUserId: integer("created_by_user_id"),
+    createdByName: text("created_by_name"),
+    dueDate: date("due_date"),
+    priority: adminTaskPriorityEnum("priority").notNull().default("normal"),
+    // "once" = once-off; the others recur and drive reminder cadence.
+    recurrence: adminTaskRecurrenceEnum("recurrence").notNull().default("once"),
+    // Send recurring email reminders (only meaningful for recurring tasks).
+    reminders: boolean("reminders").notNull().default(true),
+    status: adminTaskStatusEnum("status").notNull().default("open"),
+    // Last time the reminder cron emailed the assignee (dedupes per cadence).
+    lastReminderAt: timestamp("last_reminder_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("admin_tasks_status_idx").on(t.status),
+    index("admin_tasks_assignee_idx").on(t.assigneeStaffId),
+  ],
 );
 
 /* ------------------------------------------------------------------ */
@@ -685,6 +738,7 @@ export type ExpenseAccountMapping = typeof expenseAccountMappings.$inferSelect;
 export type MailSchedule = typeof mailSchedules.$inferSelect;
 export type HubEvent = typeof hubEvents.$inferSelect;
 export type SignupRequest = typeof signupRequests.$inferSelect;
+export type AdminTask = typeof adminTasks.$inferSelect;
 export type SupplierSplit = typeof supplierSplits.$inferSelect;
 export type InvoiceRun = typeof invoiceRuns.$inferSelect;
 export type InvoiceRunInvoice = typeof invoiceRunInvoices.$inferSelect;
