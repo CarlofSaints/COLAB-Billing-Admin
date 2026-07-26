@@ -53,11 +53,25 @@ export async function reportIssue(_prev: ReportState, formData: FormData): Promi
         reporterName: user.name,
         issuesUrl: `${await appBaseUrl()}/issues`,
       });
-      await Promise.all(
-        recipients.map((r) =>
-          sendMail({ to: r.email, subject: mail.subject, html: mail.html, text: mail.text }),
-        ),
+      const results = await Promise.all(
+        recipients.map(async (r) => ({
+          email: r.email,
+          res: await sendMail({ to: r.email, subject: mail.subject, html: mail.html, text: mail.text }),
+        })),
       );
+      const failed = results.filter((x) => !x.res.ok);
+      await logEvent({
+        action: failed.length ? "issue.notify_partial" : "issue.notified",
+        summary: failed.length
+          ? `Issue notify: ${results.length - failed.length}/${results.length} accepted by Resend; failed → ${failed
+              .map((f) => `${f.email} (${!f.res.ok ? f.res.error : ""})`)
+              .join(", ")}`
+          : `Issue notify: Resend accepted all ${results.length} → ${results.map((x) => x.email).join(", ")}`,
+        actor: user,
+        entityType: "issue",
+        entityId: row.id,
+      });
+      if (failed.length) note = `Reported — but ${failed.length} notification(s) failed to send.`;
     } else {
       note = "Reported — but there are no directors or admins to notify.";
     }
