@@ -309,6 +309,26 @@ export const adminTasks = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Reception rota                                                     */
+/* ------------------------------------------------------------------ */
+
+// One time slot on the reception desk for a given day. Times are stored as
+// minutes-from-midnight so slot maths stays trivial and timezone-free.
+export const receptionSlots = pgTable(
+  "reception_slots",
+  {
+    id: serial("id").primaryKey(),
+    date: date("date").notNull(),
+    startMinute: integer("start_minute").notNull(),
+    endMinute: integer("end_minute").notNull(),
+    // Who's on the desk this slot (null = unassigned). Survives staff removal.
+    staffId: integer("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("reception_slots_date_idx").on(t.date)],
+);
+
+/* ------------------------------------------------------------------ */
 /* User tags (custom labels applied to team members)                  */
 /* ------------------------------------------------------------------ */
 
@@ -870,6 +890,7 @@ export type HubEvent = typeof hubEvents.$inferSelect;
 export type SignupRequest = typeof signupRequests.$inferSelect;
 export type AdminTask = typeof adminTasks.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
+export type ReceptionSlot = typeof receptionSlots.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type ChatAttachment = typeof chatAttachments.$inferSelect;
