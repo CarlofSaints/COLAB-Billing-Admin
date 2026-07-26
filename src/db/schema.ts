@@ -58,6 +58,10 @@ export const adminTaskRecurrenceEnum = pgEnum("admin_task_recurrence", [
 ]);
 export const adminTaskStatusEnum = pgEnum("admin_task_status", ["open", "done"]);
 
+// Chat conversation kinds: the company-wide "all" channel, a broadcast to an
+// email group, or a 1:1 direct message between two hub users.
+export const chatKindEnum = pgEnum("chat_kind", ["all", "group", "direct"]);
+
 // How a common space is divided across the sub-companies.
 // "occupancy" = pro-rata by each company's occupied m²; "custom" = fixed % per company.
 export const splitMethodEnum = pgEnum("split_method", ["occupancy", "custom"]);
@@ -302,6 +306,84 @@ export const adminTasks = pgTable(
     index("admin_tasks_status_idx").on(t.status),
     index("admin_tasks_assignee_idx").on(t.assigneeStaffId),
   ],
+);
+
+/* ------------------------------------------------------------------ */
+/* Chat                                                               */
+/* ------------------------------------------------------------------ */
+
+// A conversation is the "all" company channel (singleton), a group broadcast
+// channel (one per email group), or a 1:1 direct message.
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: serial("id").primaryKey(),
+    kind: chatKindEnum("kind").notNull(),
+    // Only for kind = "group": which email group this channel mirrors.
+    groupId: integer("group_id").references(() => emailGroups.id, { onDelete: "cascade" }),
+    // Only for kind = "direct": "<lowerUserId>-<higherUserId>", so a pair maps
+    // to exactly one conversation.
+    directKey: text("direct_key"),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("conversations_group_unique")
+      .on(t.groupId)
+      .where(sql`${t.groupId} is not null`),
+    uniqueIndex("conversations_direct_unique")
+      .on(t.directKey)
+      .where(sql`${t.directKey} is not null`),
+    uniqueIndex("conversations_all_unique")
+      .on(t.kind)
+      .where(sql`${t.kind} = 'all'`),
+  ],
+);
+
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: serial("id").primaryKey(),
+    conversationId: integer("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    // No hard delete of history if a user is removed — keep the snapshot name.
+    senderUserId: integer("sender_user_id").references(() => users.id, { onDelete: "set null" }),
+    senderName: text("sender_name").notNull(),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("chat_messages_conv_idx").on(t.conversationId, t.id)],
+);
+
+// Explicit membership — only needed for direct conversations (2 rows each).
+// "all" and "group" visibility is derived from role/email-group membership.
+export const chatParticipants = pgTable(
+  "chat_participants",
+  {
+    conversationId: integer("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.conversationId, t.userId] })],
+);
+
+// Per-user read cursor for unread badges.
+export const chatReads = pgTable(
+  "chat_reads",
+  {
+    conversationId: integer("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    lastReadMessageId: integer("last_read_message_id").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.conversationId, t.userId] })],
 );
 
 /* ------------------------------------------------------------------ */
@@ -739,6 +821,8 @@ export type MailSchedule = typeof mailSchedules.$inferSelect;
 export type HubEvent = typeof hubEvents.$inferSelect;
 export type SignupRequest = typeof signupRequests.$inferSelect;
 export type AdminTask = typeof adminTasks.$inferSelect;
+export type Conversation = typeof conversations.$inferSelect;
+export type ChatMessage = typeof chatMessages.$inferSelect;
 export type SupplierSplit = typeof supplierSplits.$inferSelect;
 export type InvoiceRun = typeof invoiceRuns.$inferSelect;
 export type InvoiceRunInvoice = typeof invoiceRunInvoices.$inferSelect;
