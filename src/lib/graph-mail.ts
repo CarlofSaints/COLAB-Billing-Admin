@@ -15,29 +15,45 @@ import "server-only";
  * scores worse with spam filters, and the templates in `mailer.ts` already
  * write both bodies.
  *
- * Required env:
- *   GRAPH_TENANT_ID      Directory (tenant) ID
- *   GRAPH_CLIENT_ID      Application (client) ID
- *   GRAPH_CLIENT_SECRET  Client secret value
- *   GRAPH_SENDER         Mailbox to send as, e.g. hub@colab2.co.za
+ * Required env (either spelling — see `env()` below):
+ *   GRAPH_TENANT_ID     / OJ_TENANT_ID      Directory (tenant) ID
+ *   GRAPH_CLIENT_ID     / OJ_CLIENT_ID      Application (client) ID
+ *   GRAPH_CLIENT_SECRET / OJ_CLIENT_SECRET  Client secret value
+ *   GRAPH_SENDER        / OJ_SENDER         Mailbox to send as, e.g. hub@colab2.co.za
  * Optional:
- *   GRAPH_SENDER_NAME    Display name on the From header (default "COLAB")
- *   GRAPH_REPLY_TO       Reply-To address if replies should go elsewhere
+ *   GRAPH_SENDER_NAME   / OJ_SENDER_NAME    Display name on the From header (default "COLAB")
+ *   GRAPH_REPLY_TO      / OJ_REPLY_TO       Reply-To address if replies should go elsewhere
  */
 
 const TOKEN_SCOPE = "https://graph.microsoft.com/.default";
 
+/**
+ * Returns the first of these env vars that holds a value.
+ *
+ * The app registration behind these credentials belongs to OuterJoin —
+ * colab2.co.za is a verified domain in that same Entra tenant — and they're
+ * stored under OJ_* names elsewhere. Accepting both spellings means the same
+ * credentials can be pasted into any project without a rename, and without a
+ * silent misconfiguration if the wrong prefix gets used.
+ */
+function env(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value) return value;
+  }
+  return undefined;
+}
+
+const tenantId = () => env("GRAPH_TENANT_ID", "OJ_TENANT_ID");
+const clientId = () => env("GRAPH_CLIENT_ID", "OJ_CLIENT_ID");
+const clientSecret = () => env("GRAPH_CLIENT_SECRET", "OJ_CLIENT_SECRET");
+
 export function graphConfigured(): boolean {
-  return Boolean(
-    process.env.GRAPH_TENANT_ID &&
-      process.env.GRAPH_CLIENT_ID &&
-      process.env.GRAPH_CLIENT_SECRET &&
-      process.env.GRAPH_SENDER,
-  );
+  return Boolean(tenantId() && clientId() && clientSecret() && graphSender());
 }
 
 export function graphSender(): string | undefined {
-  return process.env.GRAPH_SENDER;
+  return env("GRAPH_SENDER", "OJ_SENDER");
 }
 
 /**
@@ -51,10 +67,10 @@ async function accessToken(): Promise<string> {
   // Refresh a minute early so a token can't expire mid-request.
   if (cachedToken && cachedToken.expiresAt > now + 60_000) return cachedToken.value;
 
-  const tenant = process.env.GRAPH_TENANT_ID!;
+  const tenant = tenantId()!;
   const body = new URLSearchParams({
-    client_id: process.env.GRAPH_CLIENT_ID!,
-    client_secret: process.env.GRAPH_CLIENT_SECRET!,
+    client_id: clientId()!,
+    client_secret: clientSecret()!,
     scope: TOKEN_SCOPE,
     grant_type: "client_credentials",
   });
@@ -97,8 +113,8 @@ function encodeHeader(value: string): string {
 }
 
 function fromHeader(): string {
-  const address = process.env.GRAPH_SENDER!;
-  const name = process.env.GRAPH_SENDER_NAME ?? "COLAB";
+  const address = graphSender()!;
+  const name = env("GRAPH_SENDER_NAME", "OJ_SENDER_NAME") ?? "COLAB";
   return `${encodeHeader(`"${name.replace(/"/g, "")}"`)} <${address}>`;
 }
 
@@ -112,7 +128,7 @@ export type GraphMessage = {
 
 function buildMime(message: GraphMessage): string {
   const boundary = `colab-${crypto.randomUUID()}`;
-  const replyTo = process.env.GRAPH_REPLY_TO;
+  const replyTo = env("GRAPH_REPLY_TO", "OJ_REPLY_TO");
 
   const headers = [
     `From: ${fromHeader()}`,
@@ -151,12 +167,12 @@ export type GraphSendResult = { ok: true } | { ok: false; error: string };
  */
 export async function sendViaGraph(message: GraphMessage, attempt = 0): Promise<GraphSendResult> {
   if (!graphConfigured()) {
-    return { ok: false, error: "Microsoft Graph isn't configured (GRAPH_* env vars)." };
+    return { ok: false, error: "Microsoft Graph isn't configured (GRAPH_* / OJ_* env vars)." };
   }
 
   try {
     const token = await accessToken();
-    const sender = process.env.GRAPH_SENDER!;
+    const sender = graphSender()!;
     const res = await fetch(
       `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`,
       {
