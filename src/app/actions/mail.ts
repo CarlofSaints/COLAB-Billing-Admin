@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { emailGroupMembers, staff } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
+import { emailShell, plainBodyHtml } from "@/lib/email-layout";
 import { mailConfigured, sendBcc } from "@/lib/mailer";
 
 export type MailState = {
@@ -64,10 +65,12 @@ export async function sendAnnouncement(_prev: MailState, formData: FormData): Pr
     };
   }
 
-  const html = `<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.6;color:#0f172a">${body
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/\n/g, "<br>")}</div>`;
+  const html = emailShell({
+    preheader: body.split("\n").find((line) => line.trim())?.slice(0, 120) ?? subject,
+    eyebrow: "Announcement",
+    heading: subject,
+    content: plainBodyHtml(body, { linkify: true }),
+  });
 
   const result = await sendBcc({ bcc: emails, subject, html, text: body });
 

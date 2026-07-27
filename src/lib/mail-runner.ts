@@ -3,25 +3,22 @@ import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { companies, emailGroupMembers, mailSchedules, staff } from "@/db/schema";
 import { appBaseUrl, sendBatch, type OutgoingMessage } from "./mailer";
+import { emailShell, plainBodyHtml } from "./email-layout";
 import { applyTokens, monthLabel } from "./schedules";
 import { logEvent } from "./log";
 import type { MailSchedule } from "@/db/schema";
 
-/** Turn a plain-text body into the same simple HTML the announcements use. */
-function bodyHtml(body: string): string {
-  const escaped = body
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  // Linkify bare URLs so {{link}} is clickable.
-  const linked = escaped.replace(
-    /(https?:\/\/[^\s<]+)/g,
-    '<a href="$1" style="color:#1d4ed8">$1</a>',
-  );
-  return `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a">${linked.replace(
-    /\n/g,
-    "<br>",
-  )}</div>`;
+/**
+ * Wraps a reminder's plain-text body in the branded shell. Bare URLs are
+ * linkified so {{link}} is clickable.
+ */
+function bodyHtml(subject: string, body: string): string {
+  return emailShell({
+    preheader: body.split("\n").find((line) => line.trim())?.slice(0, 120) ?? subject,
+    eyebrow: "Reminder",
+    heading: subject,
+    content: plainBodyHtml(body, { linkify: true }),
+  });
 }
 
 /**
@@ -69,12 +66,8 @@ export async function buildMessages(
           link,
         };
         const body = applyTokens(schedule.body, values);
-        messages.push({
-          to: email,
-          subject: applyTokens(schedule.subject, values),
-          html: bodyHtml(body),
-          text: body,
-        });
+        const subject = applyTokens(schedule.subject, values);
+        messages.push({ to: email, subject, html: bodyHtml(subject, body), text: body });
       }
     }
     return messages;
@@ -99,12 +92,8 @@ export async function buildMessages(
     seen.add(email.toLowerCase());
     const values = { company: r.companyName, contact: r.name, month, link };
     const body = applyTokens(schedule.body, values);
-    messages.push({
-      to: email,
-      subject: applyTokens(schedule.subject, values),
-      html: bodyHtml(body),
-      text: body,
-    });
+    const subject = applyTokens(schedule.subject, values);
+    messages.push({ to: email, subject, html: bodyHtml(subject, body), text: body });
   }
   return messages;
 }

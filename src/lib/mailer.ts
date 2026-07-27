@@ -1,14 +1,26 @@
-import "server-only";
+﻿import "server-only";
 import { headers } from "next/headers";
 import { graphConfigured, graphSender, sendViaGraph } from "./graph-mail";
 
+// The templates are pure and live next door so they can be rendered outside a
+// Next request (see scripts/preview-emails.ts). Re-exported here because every
+// caller already imports its template and `sendMail` from the same place.
+export {
+  credentialsEmail,
+  hubInviteEmail,
+  issueReportedEmail,
+  signupNotifyEmail,
+  taskAssignedEmail,
+  taskCreatedEmail,
+} from "./email-templates";
+
 /**
  * The app's outbound mail layer. Every send in the codebase goes through
- * `sendMail`, `sendBatch` or `sendBcc` — nothing talks to a provider directly.
+ * `sendMail`, `sendBatch` or `sendBcc` â€” nothing talks to a provider directly.
  *
  * Two transports are supported:
- *   graph  — Microsoft Graph, sending as a real Exchange Online mailbox
- *   resend — the original Resend API, from billing.colab2.co.za
+ *   graph  â€” Microsoft Graph, sending as a real Exchange Online mailbox
+ *   resend â€” the original Resend API, from billing.colab2.co.za
  *
  * Graph is preferred whenever it's configured, because COLAB's recipients are
  * overwhelmingly on Microsoft 365 and mail from a genuine @colab2.co.za mailbox
@@ -105,7 +117,7 @@ async function send(input: {
 
     if (result.ok) {
       if (errors.length) {
-        // Surfaced in Vercel logs — a fallback that goes unnoticed is a
+        // Surfaced in Vercel logs â€” a fallback that goes unnoticed is a
         // transport quietly rotting until both providers are broken.
         console.warn(`[mail] fell back to ${provider} after: ${errors.join(" | ")}`);
       }
@@ -123,7 +135,7 @@ export async function sendMail(input: OutgoingMessage): Promise<SendResult> {
 }
 
 /**
- * Sends one announcement to many people at once — a single message addressed to
+ * Sends one announcement to many people at once â€” a single message addressed to
  * COLAB itself with everyone bcc'd, so recipients never see each other. One
  * request rather than N also keeps well clear of Exchange's per-mailbox rate
  * limits when a group is large.
@@ -146,7 +158,7 @@ export async function sendBcc(input: {
  * sees anyone else's address.
  *
  * Resend takes 100 per API call. Graph has no batch send, so those go one at a
- * time with a short gap between them — Exchange Online throttles a mailbox that
+ * time with a short gap between them â€” Exchange Online throttles a mailbox that
  * submits in a tight loop, and a throttled reminder run is worse than a slow one.
  */
 export async function sendBatch(
@@ -209,7 +221,7 @@ export async function sendBatch(
   return { sent, failed, error: firstError, byProvider };
 }
 
-/** "2 via graph, 1 via resend" — for activity-log summaries. */
+/** "2 via graph, 1 via resend" â€” for activity-log summaries. */
 export function describeProviders(byProvider: Partial<Record<MailProvider, number>>): string {
   const parts = (Object.entries(byProvider) as [MailProvider, number][])
     .filter(([, count]) => count > 0)
@@ -220,7 +232,7 @@ export function describeProviders(byProvider: Partial<Record<MailProvider, numbe
 /**
  * The app's public base URL for links in emails and shared invites.
  *
- * APP_BASE_URL wins when set — it pins every link (including background/cron
+ * APP_BASE_URL wins when set â€” it pins every link (including background/cron
  * sends that have no request to read a host from) to the canonical domain.
  * Without it we fall back to the incoming request's host, then Vercel's.
  */
@@ -234,315 +246,9 @@ export async function appBaseUrl(): Promise<string> {
     const host = h.get("x-forwarded-host") ?? h.get("host");
     if (host) return `${proto}://${host}`;
   } catch {
-    // No request scope (e.g. a background invocation) — fall through.
+    // No request scope (e.g. a background invocation) â€” fall through.
   }
   const fallback = process.env.VERCEL_PROJECT_PRODUCTION_URL;
   return fallback ? `https://${fallback}` : "https://hub.colab2.co.za";
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/**
- * The credential handover email — sent when an admin creates a user (or resets
- * a password) and asks for the details to be emailed.
- */
-export function credentialsEmail(input: {
-  name: string;
-  email: string;
-  password: string;
-  loginUrl: string;
-  mustChangePassword: boolean;
-  isReset: boolean;
-}) {
-  const { name, email, password, loginUrl, mustChangePassword, isReset } = input;
-  const subject = isReset
-    ? "Your COLAB Billing password has been reset"
-    : "Your COLAB Billing & Admin sign-in details";
-
-  const intro = isReset
-    ? "Your password for the COLAB Billing &amp; Admin portal has been reset. Use the temporary password below to sign in."
-    : "An account has been created for you on the COLAB Billing &amp; Admin portal. Use the details below to sign in.";
-
-  const closing = mustChangePassword
-    ? "You'll be asked to choose your own password the first time you sign in."
-    : "You can change your password at any time from the Account page.";
-
-  const html = `
-  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
-    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB</p>
-    <p>Hi ${escapeHtml(name)},</p>
-    <p>${intro}</p>
-    <table style="border-collapse:collapse;margin:16px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
-      <tr>
-        <td style="padding:10px 14px;color:#64748b">Sign in at</td>
-        <td style="padding:10px 14px"><a href="${loginUrl}" style="color:#1d4ed8">${escapeHtml(loginUrl)}</a></td>
-      </tr>
-      <tr>
-        <td style="padding:10px 14px;color:#64748b;border-top:1px solid #e2e8f0">Email</td>
-        <td style="padding:10px 14px;border-top:1px solid #e2e8f0">${escapeHtml(email)}</td>
-      </tr>
-      <tr>
-        <td style="padding:10px 14px;color:#64748b;border-top:1px solid #e2e8f0">Temporary password</td>
-        <td style="padding:10px 14px;border-top:1px solid #e2e8f0"><code style="font-family:ui-monospace,Menlo,monospace;font-size:14px">${escapeHtml(password)}</code></td>
-      </tr>
-    </table>
-    <p>${closing}</p>
-    <p style="color:#64748b;font-size:12px;margin-top:24px">If you weren't expecting this email, please let the COLAB office know.</p>
-  </div>`;
-
-  const text = [
-    `Hi ${name},`,
-    "",
-    isReset
-      ? "Your password for the COLAB Billing & Admin portal has been reset."
-      : "An account has been created for you on the COLAB Billing & Admin portal.",
-    "",
-    `Sign in at: ${loginUrl}`,
-    `Email: ${email}`,
-    `Temporary password: ${password}`,
-    "",
-    closing,
-  ].join("\n");
-
-  return { subject, html, text };
-}
-
-/**
- * Welcome email when a team member is turned into a hub user — carries their
- * sign-in details and points them straight at their profile to fill in.
- */
-export function hubInviteEmail(input: {
-  name: string;
-  email: string;
-  password: string;
-  loginUrl: string;
-  profileUrl: string;
-}) {
-  const { name, email, password, loginUrl, profileUrl } = input;
-  const subject = "You're on the COLAB Team Hub — set up your profile";
-
-  const html = `
-  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
-    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB Team Hub</p>
-    <p>Hi ${escapeHtml(name)},</p>
-    <p>You've been added to the COLAB Team Hub. Sign in with the details below, then tell everyone a bit about yourself — what you do, your birthday, hobbies and more.</p>
-    <table style="border-collapse:collapse;margin:16px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
-      <tr>
-        <td style="padding:10px 14px;color:#64748b">Sign in at</td>
-        <td style="padding:10px 14px"><a href="${loginUrl}" style="color:#1d4ed8">${escapeHtml(loginUrl)}</a></td>
-      </tr>
-      <tr>
-        <td style="padding:10px 14px;color:#64748b;border-top:1px solid #e2e8f0">Email</td>
-        <td style="padding:10px 14px;border-top:1px solid #e2e8f0">${escapeHtml(email)}</td>
-      </tr>
-      <tr>
-        <td style="padding:10px 14px;color:#64748b;border-top:1px solid #e2e8f0">Temporary password</td>
-        <td style="padding:10px 14px;border-top:1px solid #e2e8f0"><code style="font-family:ui-monospace,Menlo,monospace;font-size:14px">${escapeHtml(password)}</code></td>
-      </tr>
-    </table>
-    <p><a href="${profileUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Set up my profile</a></p>
-    <p style="color:#64748b">You'll be asked to choose your own password the first time you sign in.</p>
-    <p style="color:#64748b;font-size:12px;margin-top:24px">If you weren't expecting this email, please let the COLAB office know.</p>
-  </div>`;
-
-  const text = [
-    `Hi ${name},`,
-    "",
-    "You've been added to the COLAB Team Hub. Sign in and set up your profile:",
-    "",
-    `Sign in at: ${loginUrl}`,
-    `Email: ${email}`,
-    `Temporary password: ${password}`,
-    "",
-    `Set up your profile: ${profileUrl}`,
-    "",
-    "You'll be asked to choose your own password the first time you sign in.",
-  ].join("\n");
-
-  return { subject, html, text };
-}
-
-/**
- * Notifies a super admin that someone used the public join form, with a link
- * to review (approve / decline) the request in the app.
- */
-export function signupNotifyEmail(input: {
-  applicantName: string;
-  applicantEmail: string;
-  companyName: string;
-  reviewUrl: string;
-}) {
-  const { applicantName, applicantEmail, companyName, reviewUrl } = input;
-  const subject = `New hub sign-up: ${applicantName}`;
-
-  const html = `
-  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
-    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB Team Hub</p>
-    <p>Someone has asked to join the Team Hub. Nothing has been created yet — it's waiting for your approval.</p>
-    <table style="border-collapse:collapse;margin:16px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
-      <tr><td style="padding:10px 14px;color:#64748b">Name</td><td style="padding:10px 14px">${escapeHtml(applicantName)}</td></tr>
-      <tr><td style="padding:10px 14px;color:#64748b;border-top:1px solid #e2e8f0">Email</td><td style="padding:10px 14px;border-top:1px solid #e2e8f0">${escapeHtml(applicantEmail)}</td></tr>
-      <tr><td style="padding:10px 14px;color:#64748b;border-top:1px solid #e2e8f0">Company</td><td style="padding:10px 14px;border-top:1px solid #e2e8f0">${escapeHtml(companyName)}</td></tr>
-    </table>
-    <p><a href="${reviewUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Review request</a></p>
-  </div>`;
-
-  const text = [
-    "Someone has asked to join the COLAB Team Hub. It's waiting for your approval.",
-    "",
-    `Name: ${applicantName}`,
-    `Email: ${applicantEmail}`,
-    `Company: ${companyName}`,
-    "",
-    `Review it here: ${reviewUrl}`,
-  ].join("\n");
-
-  return { subject, html, text };
-}
-
-function taskDetailsTable(rows: [string, string][]): string {
-  return `<table style="border-collapse:collapse;margin:16px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">${rows
-    .map(
-      ([k, v], i) =>
-        `<tr><td style="padding:10px 14px;color:#64748b${i ? ";border-top:1px solid #e2e8f0" : ""}">${escapeHtml(k)}</td><td style="padding:10px 14px${i ? ";border-top:1px solid #e2e8f0" : ""}">${escapeHtml(v)}</td></tr>`,
-    )
-    .join("")}</table>`;
-}
-
-/** Sent to the assignee when a task is created for them (or as a reminder). */
-export function taskAssignedEmail(input: {
-  assigneeName: string;
-  taskName: string;
-  description?: string | null;
-  dueDate?: string | null;
-  priorityLabel: string;
-  recurrenceLabel: string;
-  assignedByName: string;
-  tasksUrl: string;
-  isReminder?: boolean;
-}) {
-  const {
-    assigneeName,
-    taskName,
-    description,
-    dueDate,
-    priorityLabel,
-    recurrenceLabel,
-    assignedByName,
-    tasksUrl,
-    isReminder,
-  } = input;
-  const subject = isReminder
-    ? `Reminder: ${taskName}`
-    : `New task for you: ${taskName}`;
-
-  const lead = isReminder
-    ? `A quick reminder about a task assigned to you${assignedByName ? ` by ${escapeHtml(assignedByName)}` : ""}:`
-    : `${escapeHtml(assignedByName)} has assigned you a task on the COLAB hub:`;
-
-  const rows: [string, string][] = [["Task", taskName]];
-  if (description) rows.push(["Details", description]);
-  if (dueDate) rows.push(["Due", dueDate]);
-  rows.push(["Priority", priorityLabel]);
-  rows.push(["Repeats", recurrenceLabel]);
-
-  const html = `
-  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
-    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB Team Hub</p>
-    <p>Hi ${escapeHtml(assigneeName)},</p>
-    <p>${lead}</p>
-    ${taskDetailsTable(rows)}
-    <p><a href="${tasksUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">View my tasks</a></p>
-  </div>`;
-
-  const text = [
-    `Hi ${assigneeName},`,
-    "",
-    isReminder ? `Reminder — task: ${taskName}` : `${assignedByName} assigned you a task: ${taskName}`,
-    description ? `Details: ${description}` : "",
-    dueDate ? `Due: ${dueDate}` : "",
-    `Priority: ${priorityLabel}`,
-    `Repeats: ${recurrenceLabel}`,
-    "",
-    `View your tasks: ${tasksUrl}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return { subject, html, text };
-}
-
-/** Sent to directors + admins when someone reports an office issue. */
-export function issueReportedEmail(input: {
-  category: string;
-  detail: string;
-  reporterName: string;
-  issuesUrl: string;
-}) {
-  const { category, detail, reporterName, issuesUrl } = input;
-  const subject = `Office issue reported: ${category}`;
-
-  const html = `
-  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
-    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB — Issue reported</p>
-    <p><strong>${escapeHtml(reporterName)}</strong> reported a <strong>${escapeHtml(category)}</strong> issue:</p>
-    <blockquote style="margin:12px 0;padding:10px 14px;background:#f8fafc;border-left:3px solid #4f46e5;border-radius:4px;white-space:pre-wrap">${escapeHtml(detail)}</blockquote>
-    <p><a href="${issuesUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">View & manage issues</a></p>
-  </div>`;
-
-  const text = [
-    `${reporterName} reported a ${category} issue:`,
-    "",
-    detail,
-    "",
-    `View & manage: ${issuesUrl}`,
-  ].join("\n");
-
-  return { subject, html, text };
-}
-
-/** Confirmation to the creator that their task was scheduled. */
-export function taskCreatedEmail(input: {
-  creatorName: string;
-  taskName: string;
-  assigneeName: string;
-  dueDate?: string | null;
-  tasksUrl: string;
-}) {
-  const { creatorName, taskName, assigneeName, dueDate, tasksUrl } = input;
-  const subject = `Task scheduled: ${taskName}`;
-
-  const rows: [string, string][] = [
-    ["Task", taskName],
-    ["Assigned to", assigneeName],
-  ];
-  if (dueDate) rows.push(["Due", dueDate]);
-
-  const html = `
-  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:520px">
-    <p style="font-size:18px;font-weight:600;margin:0 0 16px">COLAB Team Hub</p>
-    <p>Hi ${escapeHtml(creatorName)},</p>
-    <p>Your task has been scheduled and ${escapeHtml(assigneeName)} has been notified.</p>
-    ${taskDetailsTable(rows)}
-    <p><a href="${tasksUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Open admin tasks</a></p>
-  </div>`;
-
-  const text = [
-    `Hi ${creatorName},`,
-    "",
-    `Your task "${taskName}" has been scheduled and ${assigneeName} has been notified.`,
-    dueDate ? `Due: ${dueDate}` : "",
-    "",
-    `Open admin tasks: ${tasksUrl}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return { subject, html, text };
-}
