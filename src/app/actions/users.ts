@@ -122,8 +122,11 @@ async function mailCredentials(input: {
 
   await logEvent({
     action: res.ok ? "user.credentials_emailed" : "user.credentials_email_failed",
+    // Naming the transport matters: a send that quietly failed over to Resend
+    // looks identical to a healthy one from the recipient's end, right up until
+    // you go hunting for why nothing arrived.
     summary: res.ok
-      ? `Emailed sign-in details to ${input.email}`
+      ? `Emailed sign-in details to ${input.email} (via ${res.provider})`
       : `Failed to email sign-in details to ${input.email}: ${res.error}`,
     entityType: "user",
     entityId: input.actorId,
