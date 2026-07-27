@@ -97,8 +97,9 @@ export function MailComposer({
           <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              Email isn&apos;t configured yet. Add <code>RESEND_API_KEY</code> and{" "}
-              <code>MAIL_FROM</code> in Vercel to enable sending. You can still draft here.
+              Email isn&apos;t configured yet. Add the <code>GRAPH_*</code> variables (or{" "}
+              <code>RESEND_API_KEY</code> and <code>MAIL_FROM</code>) in Vercel to enable sending.
+              You can still draft here.
             </div>
           </div>
         )}

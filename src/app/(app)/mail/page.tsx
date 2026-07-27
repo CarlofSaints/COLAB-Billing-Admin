@@ -2,6 +2,7 @@ import { asc, sql, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { emailGroups, emailGroupMembers, mailSchedules, staff } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
+import { mailConfigured } from "@/lib/mailer";
 import { PageHeader } from "@/components/ui/page";
 import { MailTabs } from "./mail-tabs";
 import type { ScheduleRow } from "./schedules-client";
@@ -29,7 +30,7 @@ export default async function MailPage() {
     recipientCount: countMap.get(g.id) ?? 0,
   }));
 
-  const configured = Boolean(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
+  const configured = mailConfigured();
 
   const scheduleRows = await db
     .select()

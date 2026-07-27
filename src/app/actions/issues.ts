@@ -6,7 +6,14 @@ import { db } from "@/db";
 import { issues, users, roles } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
-import { appBaseUrl, mailConfigured, sendMail, issueReportedEmail } from "@/lib/mailer";
+import {
+  appBaseUrl,
+  describeProviders,
+  mailConfigured,
+  sendMail,
+  issueReportedEmail,
+  type MailProvider,
+} from "@/lib/mailer";
 import { isIssueCategory } from "@/lib/issues";
 
 export type ReportState = { error?: string; ok?: boolean; note?: string };
@@ -60,13 +67,18 @@ export async function reportIssue(_prev: ReportState, formData: FormData): Promi
         })),
       );
       const failed = results.filter((x) => !x.res.ok);
+      const byProvider: Partial<Record<MailProvider, number>> = {};
+      for (const { res } of results) {
+        if (res.ok) byProvider[res.provider] = (byProvider[res.provider] ?? 0) + 1;
+      }
+      const via = describeProviders(byProvider);
       await logEvent({
         action: failed.length ? "issue.notify_partial" : "issue.notified",
         summary: failed.length
-          ? `Issue notify: ${results.length - failed.length}/${results.length} accepted by Resend; failed → ${failed
+          ? `Issue notify: ${results.length - failed.length}/${results.length} sent${via ? ` (${via})` : ""}; failed → ${failed
               .map((f) => `${f.email} (${!f.res.ok ? f.res.error : ""})`)
               .join(", ")}`
-          : `Issue notify: Resend accepted all ${results.length} → ${results.map((x) => x.email).join(", ")}`,
+          : `Issue notify: all ${results.length} sent (${via}) → ${results.map((x) => x.email).join(", ")}`,
         actor: user,
         entityType: "issue",
         entityId: row.id,

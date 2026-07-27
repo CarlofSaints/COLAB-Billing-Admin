@@ -105,7 +105,8 @@ async function mailCredentials(input: {
   actorId: number;
 }): Promise<{ emailed: boolean; emailError?: string; emailTo: string }> {
   if (!mailConfigured()) {
-    const error = "Email isn't configured yet — add RESEND_API_KEY and MAIL_FROM in Vercel.";
+    const error =
+      "Email isn't configured yet — add the GRAPH_* variables (or RESEND_API_KEY and MAIL_FROM) in Vercel.";
     await logEvent({
       action: "user.credentials_email_blocked",
       summary: `Could not email sign-in details to ${input.email} — email not configured`,

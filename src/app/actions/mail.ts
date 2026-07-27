@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { emailGroupMembers, staff } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
+import { mailConfigured, sendBcc } from "@/lib/mailer";
 
 export type MailState = {
   error?: string;
@@ -48,10 +49,7 @@ export async function sendAnnouncement(_prev: MailState, formData: FormData): Pr
     return { error: "The selected group(s) have no team members with email addresses." };
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.MAIL_FROM;
-
-  if (!apiKey || !from) {
+  if (!mailConfigured()) {
     await logEvent({
       action: "mail.send_blocked",
       summary: `Announcement “${subject}” not sent — email not configured (${emails.length} recipients)`,
@@ -61,7 +59,7 @@ export async function sendAnnouncement(_prev: MailState, formData: FormData): Pr
     });
     return {
       error:
-        "Email isn't configured yet. Add RESEND_API_KEY and MAIL_FROM in Vercel, then try again.",
+        "Email isn't configured yet. Add the GRAPH_* variables (or RESEND_API_KEY and MAIL_FROM) in Vercel, then try again.",
       configured: false,
     };
   }
@@ -71,36 +69,25 @@ export async function sendAnnouncement(_prev: MailState, formData: FormData): Pr
     .replace(/</g, "&lt;")
     .replace(/\n/g, "<br>")}</div>`;
 
-  try {
-    const { Resend } = await import("resend");
-    const resend = new Resend(apiKey);
-    const { error } = await resend.emails.send({
-      from,
-      to: [from], // visible recipient is COLAB itself
-      bcc: emails, // everyone else is bcc'd for privacy
-      subject,
-      html,
-      text: body,
-    });
-    if (error) throw new Error(error.message);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
+  const result = await sendBcc({ bcc: emails, subject, html, text: body });
+
+  if (!result.ok) {
     await logEvent({
       action: "mail.send_failed",
-      summary: `Failed to send announcement “${subject}”: ${message}`,
+      summary: `Failed to send announcement “${subject}”: ${result.error}`,
       actor: user,
       entityType: "mail",
-      metadata: { subject, error: message },
+      metadata: { subject, error: result.error },
     });
-    return { error: `Send failed: ${message}` };
+    return { error: `Send failed: ${result.error}` };
   }
 
   await logEvent({
     action: "mail.send",
-    summary: `Sent announcement “${subject}” to ${emails.length} recipient(s)`,
+    summary: `Sent announcement “${subject}” to ${emails.length} recipient(s) via ${result.provider}`,
     actor: user,
     entityType: "mail",
-    metadata: { subject, recipients: emails.length, groupIds },
+    metadata: { subject, recipients: emails.length, groupIds, provider: result.provider },
   });
 
   return { ok: true, count: emails.length };
