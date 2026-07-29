@@ -2,10 +2,10 @@
 
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { users, roles } from "@/db/schema";
+import { users, roles, staff } from "@/db/schema";
 import { requirePermission, hashPassword } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { appBaseUrl, credentialsEmail, mailConfigured, sendMail } from "@/lib/mailer";
@@ -18,6 +18,8 @@ export type UserActionState = {
   emailed?: boolean;
   emailError?: string;
   emailTo?: string;
+  /** What happened about the team list, when the tickbox was used. */
+  teamNote?: string;
 };
 
 function tempPassword(): string {
@@ -64,13 +66,53 @@ export async function createUser(
     })
     .returning();
 
+  // A login and a place on the team list are separate things: a role decides
+  // what someone may do, the team list is who works here. Without this, an
+  // Admin or Director has hub access but no profile, never appears in the
+  // birthday panel, and can't be tagged — so no reception rota, no costed tags.
+  const addToTeam = formData.get("addToTeamList") != null;
+  const teamCompanyId = Number(formData.get("teamCompanyId") || 0);
+  let teamNote: string | null = null;
+
+  if (addToTeam) {
+    const [existingStaff] = await db
+      .select({ id: staff.id, name: staff.name, userId: staff.userId })
+      .from(staff)
+      .where(sql`lower(${staff.email}) = ${email}`)
+      .limit(1);
+
+    if (existingStaff) {
+      // Already on the list — link the login rather than create a duplicate.
+      await db
+        .update(staff)
+        .set({ userId: row.id, updatedAt: new Date() })
+        .where(eq(staff.id, existingStaff.id));
+      teamNote = `Linked to the existing team member ${existingStaff.name}.`;
+    } else if (teamCompanyId > 0) {
+      await db.insert(staff).values({
+        name: row.name,
+        email: row.email,
+        companyId: teamCompanyId,
+        userId: row.id,
+        // A login being created for someone doesn't say whether their company
+        // should be billed for them — that's a deliberate billing decision, so
+        // it starts off and an admin turns it on.
+        includeInBilling: false,
+      });
+      teamNote = "Added to the team list. They're excluded from billing headcount until you say otherwise.";
+    } else {
+      teamNote = "Not added to the team list — no company was chosen.";
+    }
+  }
+
   await logEvent({
     action: "user.create",
-    summary: `Created user ${row.name} (${row.email})`,
+    summary:
+      `Created user ${row.name} (${row.email})` + (addToTeam && teamNote ? ` — ${teamNote}` : ""),
     actor,
     entityType: "user",
     entityId: row.id,
-    metadata: { sendCredentials, mustChangePassword },
+    metadata: { sendCredentials, mustChangePassword, addToTeam },
   });
 
   const mail = sendCredentials
@@ -85,9 +127,11 @@ export async function createUser(
     : null;
 
   revalidatePath("/users");
+  revalidatePath("/staff");
   return {
     ok: true,
     tempPassword: pw,
+    ...(teamNote ? { teamNote } : {}),
     ...(mail ?? {}),
   };
 }

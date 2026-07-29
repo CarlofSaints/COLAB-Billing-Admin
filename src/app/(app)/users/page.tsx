@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { users, roles } from "@/db/schema";
+import { users, roles, companies } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page";
 import { UsersManager } from "./users-client";
@@ -13,6 +13,14 @@ export default async function UsersPage() {
   const canManage = me ? hasPermission(me, "users.manage") : false;
 
   const roleRows = await db.select().from(roles).orderBy(asc(roles.rank));
+
+  // Needed for the "also add them to the team list" option — a team member
+  // belongs to a company, so that has to be chosen at the same time.
+  const companyRows = await db
+    .select({ id: companies.id, name: companies.name })
+    .from(companies)
+    .where(eq(companies.active, true))
+    .orderBy(asc(companies.type), asc(companies.name));
 
   const userRows = await db
     .select({
@@ -51,6 +59,7 @@ export default async function UsersPage() {
       <UsersManager
         users={data}
         roles={roleRows.map((r) => ({ id: r.id, name: r.name, key: r.key }))}
+        companies={companyRows}
         canManage={canManage}
         currentUserId={me?.id ?? 0}
       />

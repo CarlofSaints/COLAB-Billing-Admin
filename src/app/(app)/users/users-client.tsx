@@ -85,10 +85,22 @@ function CheckOption({
   );
 }
 
-function AddUserForm({ roles, onDone }: { roles: RoleOpt[]; onDone: () => void }) {
+function AddUserForm({
+  roles,
+  companies,
+  onDone,
+}: {
+  roles: RoleOpt[];
+  companies: { id: number; name: string }[];
+  onDone: () => void;
+}) {
   const [state, action] = useActionState<UserActionState, FormData>(createUser, {});
   const [sendCredentials, setSendCredentials] = useState(true);
   const [mustChange, setMustChange] = useState(true);
+  // Off by default — creating a login for an outside accountant or auditor
+  // shouldn't quietly put them on the staff list.
+  const [addToTeam, setAddToTeam] = useState(false);
+  const [teamCompanyId, setTeamCompanyId] = useState(companies[0]?.id ?? 0);
 
   if (state.ok && state.tempPassword) {
     return (
@@ -104,6 +116,11 @@ function AddUserForm({ roles, onDone }: { roles: RoleOpt[]; onDone: () => void }
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             The user was created, but the email didn&apos;t send: {state.emailError} Share the
             password below instead.
+          </p>
+        )}
+        {state.teamNote && (
+          <p className="rounded-lg border border-line bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            {state.teamNote}
           </p>
         )}
         <TempPasswordNote pw={state.tempPassword} mustReset={mustChange} />
@@ -137,6 +154,39 @@ function AddUserForm({ roles, onDone }: { roles: RoleOpt[]; onDone: () => void }
 
       <div className="space-y-2">
         <CheckOption
+          name="addToTeamList"
+          label="Also add them to the team list"
+          hint="A role says what someone may do; the team list is who works here. Without this they can sign in but have no profile, never show in birthdays, and can't be tagged — so no reception rota and no tagged costs."
+          checked={addToTeam}
+          onChange={setAddToTeam}
+        />
+        {addToTeam && (
+          <div className="ml-7">
+            <Field label="Which company?">
+              <Select
+                name="teamCompanyId"
+                value={teamCompanyId}
+                onChange={(e) => setTeamCompanyId(Number(e.target.value))}
+                className="max-w-64"
+              >
+                <option value={0} disabled>
+                  Select a company…
+                </option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <p className="mt-1 text-xs text-muted">
+              If they&apos;re already on the team list under this email, they&apos;ll simply be
+              linked to it. New entries start excluded from the billing headcount — billing for
+              someone is a separate decision.
+            </p>
+          </div>
+        )}
+        <CheckOption
           name="sendCredentials"
           label="Send user credentials"
           hint="Emails them the sign-in link, their email address and the temporary password."
@@ -168,11 +218,13 @@ function AddUserForm({ roles, onDone }: { roles: RoleOpt[]; onDone: () => void }
 export function UsersManager({
   users,
   roles,
+  companies,
   canManage,
   currentUserId,
 }: {
   users: UserRow[];
   roles: RoleOpt[];
+  companies: { id: number; name: string }[];
   canManage: boolean;
   currentUserId: number;
 }) {
@@ -306,7 +358,11 @@ export function UsersManager({
 
       {adding && (
         <Modal title="Add user" open onOpenChange={setAdding}>
-          <AddUserForm roles={roles} onDone={() => setAdding(false)} />
+          <AddUserForm
+            roles={roles}
+            companies={companies}
+            onDone={() => setAdding(false)}
+          />
         </Modal>
       )}
       {resetPw && (
