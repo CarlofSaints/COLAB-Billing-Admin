@@ -16,7 +16,12 @@ function Submit() {
   );
 }
 
-export function ProfileForm({
+/**
+ * The team-hub half of a person's details (photo, bio, birthday, hobbies).
+ * Named distinctly from the account `ProfileForm`, which handles sign-in name
+ * and email — both now render on /account and the collision was confusing.
+ */
+export function HubProfileForm({
   bio,
   dateOfBirth,
   favouriteColour,

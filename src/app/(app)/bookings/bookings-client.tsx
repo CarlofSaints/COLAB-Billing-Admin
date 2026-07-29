@@ -59,6 +59,9 @@ type BookingBlock = {
   endMinute: number;
   bookedByName: string;
   bookedByUserId: number | null;
+  /** Set when booked on someone else's behalf — they're a holder too. */
+  bookedForName: string | null;
+  bookedForUserId: number | null;
   clientName: string | null;
   attendeeCount: number;
   seriesId: string | null;
@@ -219,12 +222,14 @@ function BookingForm({
   date,
   startMinute,
   allUsers,
+  currentUserId,
   onDone,
 }: {
   room: RoomOption;
   date: string;
   startMinute: number;
   allUsers: { id: number; name: string }[];
+  currentUserId: number;
   onDone: () => void;
 }) {
   const [state, action] = useActionState<BookingState, FormData>(createBooking, {});
@@ -233,6 +238,7 @@ function BookingForm({
   const [recurrence, setRecurrence] = useState<Recurrence>(DEFAULT_RECURRENCE);
   const [attendeeIds, setAttendeeIds] = useState<number[]>([]);
   const [attendeeCount, setAttendeeCount] = useState(1);
+  const [bookedForUserId, setBookedForUserId] = useState(0);
 
   useEffect(() => {
     if (state.ok) onDone();
@@ -267,8 +273,29 @@ function BookingForm({
         {room.notes ? ` · ${room.notes}` : ""}
       </div>
 
+      <input type="hidden" name="bookedForUserId" value={bookedForUserId} />
+
       <Field label="Meeting name">
         <Input name="title" required autoFocus maxLength={120} placeholder="e.g. Q3 planning" />
+      </Field>
+
+      <Field
+        label="Who is the room for?"
+        hint="Booking for someone else? They're shown as the holder, and you both get the reminder and any request for the room."
+      >
+        <Select
+          value={bookedForUserId}
+          onChange={(e) => setBookedForUserId(Number(e.target.value))}
+        >
+          <option value={0}>Me</option>
+          {allUsers
+            .filter((u) => u.id !== currentUserId)
+            .map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+        </Select>
       </Field>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -384,7 +411,13 @@ function BookingDetail({
       <form action={action} className="space-y-4">
         <input type="hidden" name="bookingId" value={booking.id} />
         <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
-          You're asking <strong>{booking.bookedByName}</strong> for {room.name} on{" "}
+          You're asking{" "}
+          <strong>
+            {booking.bookedForName
+              ? `${booking.bookedForName} and ${booking.bookedByName}`
+              : booking.bookedByName}
+          </strong>{" "}
+          for {room.name} on{" "}
           {longDateLabel(booking.date)} at {minuteLabel(booking.startMinute)}. They get an email and
           can approve or decline — the room stays theirs until they say yes.
         </p>
@@ -429,7 +462,12 @@ function BookingDetail({
         {[
           ["Room", room.name],
           ["When", `${longDateLabel(booking.date)}, ${minuteLabel(booking.startMinute)} – ${minuteLabel(booking.endMinute)}`],
-          ["Booked by", booking.bookedByName],
+          ...(booking.bookedForName
+            ? ([
+                ["Room is for", booking.bookedForName],
+                ["Booked by", booking.bookedByName],
+              ] as [string, string][])
+            : ([["Booked by", booking.bookedByName]] as [string, string][])),
           ["Attendees", String(booking.attendeeCount)],
           ...(booking.clientName ? [["Client", booking.clientName]] : []),
           ...(booking.attendees.length ? [["Internal", booking.attendees.join(", ")]] : []),
@@ -501,6 +539,7 @@ export function BookingsClient({
   today,
   bookings,
   allUsers,
+  currentUserId,
   canManageAny,
 }: {
   rooms: RoomOption[];
@@ -639,9 +678,16 @@ export function BookingsClient({
                         {b.title}
                       </span>
                       <span className="block truncate text-[10px] leading-tight text-slate-600">
-                        {b.bookedByName} · {b.attendeeCount}
+                        {/* Whose meeting it is comes first; who did the booking
+                            is the smaller detail. */}
+                        {b.bookedForName ?? b.bookedByName} · {b.attendeeCount}
                         {b.attendeeCount === 1 ? " person" : " people"}
                       </span>
+                      {b.bookedForName && (
+                        <span className="block truncate text-[10px] leading-tight text-slate-500">
+                          booked by {b.bookedByName}
+                        </span>
+                      )}
                       <span className="mt-0.5 flex items-center gap-1">
                         {b.recurrenceLabel && <Repeat className="h-2.5 w-2.5 text-slate-500" />}
                         {b.clientName && <Briefcase className="h-2.5 w-2.5 text-slate-500" />}
@@ -675,6 +721,7 @@ export function BookingsClient({
             date={booking.date}
             startMinute={booking.startMinute}
             allUsers={allUsers}
+            currentUserId={currentUserId}
             onDone={() => {
               setBooking(null);
               router.refresh();

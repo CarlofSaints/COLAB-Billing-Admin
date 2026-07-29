@@ -51,6 +51,8 @@ const bookingSchema = z.object({
   clientName: z.string().trim().max(120).optional(),
   attendeeCount: z.number().int().min(1).max(500),
   attendeeUserIds: z.array(z.number().int().positive()),
+  /** Booking for someone else. 0 / absent means it's for the booker. */
+  bookedForUserId: z.number().int().nonnegative(),
   recurrence: recurrenceSchema,
 });
 
@@ -75,6 +77,7 @@ function readBookingForm(formData: FormData) {
       .getAll("attendeeUserId")
       .map((v) => Number(v))
       .filter((n) => Number.isInteger(n) && n > 0),
+    bookedForUserId: Number(formData.get("bookedForUserId") || 0),
     recurrence,
   });
 }
@@ -82,6 +85,43 @@ function readBookingForm(formData: FormData) {
 function revalidateBookingPaths() {
   revalidatePath("/bookings");
   revalidatePath("/hub");
+}
+
+type HolderFields = {
+  bookedByUserId: number | null;
+  bookedByName: string;
+  bookedByEmail: string;
+  bookedForUserId: number | null;
+  bookedForName: string | null;
+  bookedForEmail: string | null;
+};
+
+/**
+ * A booking made on someone's behalf has two holders. Both may cancel it and
+ * both may answer a request for the room — otherwise a request stalls whenever
+ * the person who happened to click the button is out of the office.
+ */
+function isHolderOf(booking: HolderFields, userId: number): boolean {
+  return booking.bookedByUserId === userId || booking.bookedForUserId === userId;
+}
+
+/** Everyone who should hear about this booking, de-duplicated by address. */
+function holderRecipients(booking: HolderFields): { name: string; email: string }[] {
+  const out = [{ name: booking.bookedByName, email: booking.bookedByEmail }];
+  if (booking.bookedForEmail && booking.bookedForEmail !== booking.bookedByEmail) {
+    out.push({
+      name: booking.bookedForName ?? booking.bookedForEmail,
+      email: booking.bookedForEmail,
+    });
+  }
+  return out;
+}
+
+/** "Sarah (booked by Jane)" — how a two-person booking reads in one line. */
+function holderLabel(booking: HolderFields): string {
+  return booking.bookedForName
+    ? `${booking.bookedForName} (booked by ${booking.bookedByName})`
+    : booking.bookedByName;
 }
 
 /* ------------------------------------------------------------------ */
@@ -160,6 +200,19 @@ export async function createBooking(
     };
   }
 
+  // Booking on someone else's behalf. Both people are treated as holders from
+  // here on — reminders, requests for the room, and the right to answer them.
+  let bookedFor: { id: number; name: string; email: string } | null = null;
+  if (input.bookedForUserId && input.bookedForUserId !== user.id) {
+    const [target] = await db
+      .select({ id: users.id, name: users.name, email: users.email, active: users.active })
+      .from(users)
+      .where(eq(users.id, input.bookedForUserId))
+      .limit(1);
+    if (!target || !target.active) return { error: "That person can't be booked for." };
+    bookedFor = { id: target.id, name: target.name, email: target.email };
+  }
+
   const isSeries = dates.length > 1;
   const seriesId = isSeries ? randomUUID() : null;
   const recurrenceLabel = isSeries ? describeRecurrence(recurrence) : null;
@@ -176,6 +229,9 @@ export async function createBooking(
         bookedByUserId: user.id,
         bookedByName: user.name,
         bookedByEmail: user.email,
+        bookedForUserId: bookedFor?.id ?? null,
+        bookedForName: bookedFor?.name ?? null,
+        bookedForEmail: bookedFor?.email ?? null,
         clientName: input.clientName ?? null,
         attendeeCount: input.attendeeCount,
         seriesId,
@@ -197,6 +253,7 @@ export async function createBooking(
     summary:
       `Booked ${room.name} for "${input.title}" on ${longDateLabel(input.date)} ` +
       `${slotLabel(input.startMinute, input.endMinute)}` +
+      (bookedFor ? ` on behalf of ${bookedFor.name}` : "") +
       (isSeries ? ` — ${recurrenceLabel} (${dates.length} bookings)` : ""),
     actor: user,
     entityType: "room_booking",
@@ -204,9 +261,7 @@ export async function createBooking(
   });
 
   const attendeeNames = await namesFor(input.attendeeUserIds);
-  const emailed = await sendBookingConfirmation({
-    to: user.email,
-    bookerName: user.name,
+  const details = {
     roomName: room.name,
     title: input.title,
     date: input.date,
@@ -217,7 +272,20 @@ export async function createBooking(
     attendees: attendeeNames,
     recurrenceLabel,
     occurrences: dates.length,
+    bookedForName: bookedFor?.name ?? null,
+    bookedByName: user.name,
+  };
+
+  // Both holders get the confirmation, so the person the room is for knows it
+  // exists without being told separately.
+  const emailed = await sendBookingConfirmation({
+    ...details,
+    to: user.email,
+    bookerName: user.name,
   });
+  if (bookedFor) {
+    await sendBookingConfirmation({ ...details, to: bookedFor.email, bookerName: bookedFor.name });
+  }
 
   revalidateBookingPaths();
   return {
@@ -248,6 +316,8 @@ async function sendBookingConfirmation(input: {
   attendees: string[];
   recurrenceLabel: string | null;
   occurrences: number;
+  bookedForName?: string | null;
+  bookedByName?: string | null;
 }): Promise<boolean> {
   if (!mailConfigured()) return false;
   const base = await appBaseUrl();
@@ -262,6 +332,8 @@ async function sendBookingConfirmation(input: {
     attendees: input.attendees,
     recurrenceLabel: input.recurrenceLabel,
     occurrences: input.occurrences,
+    bookedForName: input.bookedForName,
+    bookedByName: input.bookedByName,
     bookingsUrl: `${base}/bookings`,
   });
   const res = await sendMail({
@@ -282,7 +354,7 @@ export async function cancelBooking(id: number, scope: "one" | "series" = "one")
   const [booking] = await db.select().from(roomBookings).where(eq(roomBookings.id, id)).limit(1);
   if (!booking) return;
 
-  const isOwner = booking.bookedByUserId === user.id;
+  const isOwner = isHolderOf(booking, user.id);
   if (!isOwner && !hasPermission(user, "bookings.manage")) return;
 
   if (scope === "series" && booking.seriesId) {
@@ -310,7 +382,7 @@ export async function cancelBooking(id: number, scope: "one" | "series" = "one")
     summary:
       `Cancelled ${scope === "series" ? "the whole series of " : ""}"${booking.title}" on ` +
       `${longDateLabel(booking.date)}` +
-      (isOwner ? "" : ` (booked by ${booking.bookedByName})`),
+      (isOwner ? "" : ` (held by ${holderLabel(booking)})`),
     actor: user,
     entityType: "room_booking",
     entityId: id,
@@ -354,7 +426,7 @@ export async function requestSteal(
     .where(eq(roomBookings.id, input.bookingId))
     .limit(1);
   if (!booking || booking.status !== "confirmed") return { error: "That booking is no longer live." };
-  if (booking.bookedByUserId === user.id) return { error: "You already have this room." };
+  if (isHolderOf(booking, user.id)) return { error: "You already have this room." };
 
   const [room] = await db.select().from(rooms).where(eq(rooms.id, booking.roomId)).limit(1);
   if (room && input.attendeeCount > room.capacity) {
@@ -392,30 +464,33 @@ export async function requestSteal(
   let delivered = false;
   if (mailConfigured()) {
     const base = await appBaseUrl();
-    const mail = roomStealRequestEmail({
-      holderName: booking.bookedByName,
-      requesterName: user.name,
-      requesterMeeting: input.title,
-      message: input.message,
-      roomName: room?.name ?? "the room",
-      dateLabel: longDateLabel(booking.date),
-      timeLabel: slotLabel(booking.startMinute, booking.endMinute),
-      yourMeeting: booking.title,
-      approveUrl: `${base}/bookings/request/${token}?action=approve`,
-      declineUrl: `${base}/bookings/request/${token}?action=decline`,
-    });
-    const res = await sendMail({
-      to: booking.bookedByEmail,
-      subject: mail.subject,
-      html: mail.html,
-      text: mail.text,
-    });
-    delivered = res.ok;
+    // Both holders are asked, and either can answer — whoever gets to it first.
+    for (const holder of holderRecipients(booking)) {
+      const mail = roomStealRequestEmail({
+        holderName: holder.name,
+        requesterName: user.name,
+        requesterMeeting: input.title,
+        message: input.message,
+        roomName: room?.name ?? "the room",
+        dateLabel: longDateLabel(booking.date),
+        timeLabel: slotLabel(booking.startMinute, booking.endMinute),
+        yourMeeting: booking.title,
+        approveUrl: `${base}/bookings/request/${token}?action=approve`,
+        declineUrl: `${base}/bookings/request/${token}?action=decline`,
+      });
+      const res = await sendMail({
+        to: holder.email,
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
+      });
+      if (res.ok) delivered = true;
+    }
   }
 
   await logEvent({
     action: "booking.steal_request",
-    summary: `Asked ${booking.bookedByName} for ${room?.name ?? "a room"} on ${longDateLabel(booking.date)}${delivered ? "" : " (email failed)"}`,
+    summary: `Asked ${holderLabel(booking)} for ${room?.name ?? "a room"} on ${longDateLabel(booking.date)}${delivered ? "" : " (email failed)"}`,
     actor: user,
     entityType: "room_booking",
     entityId: input.bookingId,
@@ -466,7 +541,7 @@ export async function respondToSteal(
 
   // The token names the request; it does not authorise it. Only the person
   // holding the room (or an admin) can answer.
-  const isHolder = booking.bookedByUserId === user.id;
+  const isHolder = isHolderOf(booking, user.id);
   if (!isHolder && !hasPermission(user, "bookings.manage")) {
     return { error: "Only the person who booked the room can answer this." };
   }
@@ -483,6 +558,12 @@ export async function respondToSteal(
         bookedByUserId: request.requesterUserId,
         bookedByName: request.requesterName,
         bookedByEmail: request.requesterEmail,
+        // The slot has changed hands, so the previous "booked for" person is no
+        // longer a holder — leaving it would keep emailing them about a meeting
+        // that is no longer theirs, and let them answer requests for it.
+        bookedForUserId: null,
+        bookedForName: null,
+        bookedForEmail: null,
         clientName: request.clientName,
         attendeeCount: request.attendeeCount,
         // A handed-over occurrence is its own booking now — it must not be
@@ -518,7 +599,7 @@ export async function respondToSteal(
     if (base) {
       const mail = roomStealApprovedEmail({
         requesterName: request.requesterName,
-        holderName: booking.bookedByName,
+        holderName: holderLabel(booking),
         roomName: room?.name ?? "the room",
         dateLabel: longDateLabel(booking.date),
         timeLabel: slotLabel(booking.startMinute, booking.endMinute),
@@ -549,7 +630,7 @@ export async function respondToSteal(
     if (base) {
       const mail = roomStealDeclinedEmail({
         requesterName: request.requesterName,
-        holderName: booking.bookedByName,
+        holderName: holderLabel(booking),
         roomName: room?.name ?? "the room",
         dateLabel: longDateLabel(booking.date),
         timeLabel: slotLabel(booking.startMinute, booking.endMinute),

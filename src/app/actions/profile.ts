@@ -107,7 +107,7 @@ export async function updateMyProfile(
     entityId: record.id,
   });
 
-  revalidatePath("/profile");
+  revalidatePath("/account");
   return { ok: true };
 }
 
@@ -176,7 +176,7 @@ export async function uploadProfilePhoto(
     entityId: record.id,
   });
 
-  revalidatePath("/profile");
+  revalidatePath("/account");
   revalidatePath("/hub");
   return { ok: true };
 }
@@ -205,7 +205,7 @@ export async function removeProfilePhoto(): Promise<PhotoState> {
     entityId: record.id,
   });
 
-  revalidatePath("/profile");
+  revalidatePath("/account");
   revalidatePath("/hub");
   return { ok: true };
 }

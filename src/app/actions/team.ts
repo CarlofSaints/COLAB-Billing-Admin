@@ -74,7 +74,7 @@ async function createLoginForStaff(person: {
       email,
       password: pw,
       loginUrl: `${base}/login`,
-      profileUrl: `${base}/profile`,
+      profileUrl: `${base}/account`,
     });
     const res = await sendMail({ to: email, subject, html, text });
     emailed = res.ok;

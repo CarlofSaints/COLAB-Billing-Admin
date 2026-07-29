@@ -315,6 +315,9 @@ type BookingDetails = {
   attendees?: string[];
   recurrenceLabel?: string | null;
   occurrences?: number;
+  /** Set when someone booked on another person's behalf. */
+  bookedForName?: string | null;
+  bookedByName?: string | null;
 };
 
 function bookingRows(b: BookingDetails): [string, string][] {
@@ -324,6 +327,10 @@ function bookingRows(b: BookingDetails): [string, string][] {
     ["When", escapeHtml(`${b.dateLabel}, ${b.timeLabel}`)],
     ["Attendees", escapeHtml(String(b.attendeeCount))],
   ];
+  if (b.bookedForName) {
+    rows.push(["Booked for", escapeHtml(b.bookedForName)]);
+    if (b.bookedByName) rows.push(["Booked by", escapeHtml(b.bookedByName)]);
+  }
   if (b.clientName) rows.push(["Client", escapeHtml(b.clientName)]);
   if (b.attendees && b.attendees.length > 0) {
     rows.push(["Internal attendees", escapeHtml(b.attendees.join(", "))]);
@@ -347,6 +354,8 @@ function bookingTextLines(b: BookingDetails): string[] {
     `Meeting: ${b.title}`,
     `When: ${b.dateLabel}, ${b.timeLabel}`,
     `Attendees: ${b.attendeeCount}`,
+    b.bookedForName ? `Booked for: ${b.bookedForName}` : "",
+    b.bookedForName && b.bookedByName ? `Booked by: ${b.bookedByName}` : "",
     b.clientName ? `Client: ${b.clientName}` : "",
     b.attendees && b.attendees.length ? `Internal attendees: ${b.attendees.join(", ")}` : "",
     b.recurrenceLabel ? `Repeats: ${b.recurrenceLabel}` : "",

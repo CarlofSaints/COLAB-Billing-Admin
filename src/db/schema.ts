@@ -917,6 +917,19 @@ export const roomBookings = pgTable(
     }),
     bookedByName: text("booked_by_name").notNull(),
     bookedByEmail: text("booked_by_email").notNull(),
+    /**
+     * Who the room is actually for, when someone books on another person's
+     * behalf (a PA booking for a director). Null means it's for the booker.
+     *
+     * Both people count as holders: both get the day-before reminder, both are
+     * emailed when someone asks for the room, and either can answer — so a
+     * request can't stall because the one who clicked the button is on leave.
+     */
+    bookedForUserId: integer("booked_for_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    bookedForName: text("booked_for_name"),
+    bookedForEmail: text("booked_for_email"),
     clientName: text("client_name"),
     attendeeCount: integer("attendee_count").notNull().default(1),
     // Groups the occurrences of one recurring booking.

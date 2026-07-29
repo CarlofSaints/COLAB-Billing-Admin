@@ -58,8 +58,13 @@ export default async function StealRequestPage({
     ? await db.select().from(rooms).where(eq(rooms.id, booking.roomId)).limit(1)
     : [];
 
-  const isHolder = booking?.bookedByUserId === user?.id;
+  // A booking made on someone's behalf has two holders, and either may answer.
+  const isHolder =
+    booking?.bookedByUserId === user?.id || booking?.bookedForUserId === user?.id;
   const canAnswer = isHolder || (user ? hasPermission(user, "bookings.manage") : false);
+  const holderLabel = booking?.bookedForName
+    ? `${booking.bookedForName} or ${booking.bookedByName}`
+    : (booking?.bookedByName ?? "");
 
   if (!booking || booking.status !== "confirmed") {
     return (
@@ -97,7 +102,7 @@ export default async function StealRequestPage({
             dateLabel: longDateLabel(booking.date),
             timeLabel: slotLabel(booking.startMinute, booking.endMinute),
             yourMeeting: booking.title,
-            holderName: booking.bookedByName,
+            holderName: holderLabel,
           }}
         />
       </Card>

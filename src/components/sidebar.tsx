@@ -15,7 +15,6 @@ import {
   Send,
   ShieldCheck,
   UserCog,
-  UserRound,
   UserCheck,
   Sparkles,
   MessagesSquare,
@@ -51,7 +50,8 @@ const SECTIONS: NavSection[] = [
       { href: "/bookings", label: "Room Bookings", icon: CalendarDays, perm: "hub.view" },
       { href: "/chat", label: "Chat", icon: MessagesSquare, perm: "hub.view" },
       { href: "/issues", label: "Say Something!", icon: Megaphone, perm: "hub.view" },
-      { href: "/profile", label: "My Profile", icon: UserRound, perm: "profile.edit" },
+      // "My Profile" used to sit here. It's part of My Account now — the
+      // avatar bottom-left is the single place for anything about you.
     ],
   },
   {

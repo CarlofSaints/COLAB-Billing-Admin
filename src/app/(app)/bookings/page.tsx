@@ -56,6 +56,8 @@ export default async function BookingsPage({
       endMinute: roomBookings.endMinute,
       bookedByUserId: roomBookings.bookedByUserId,
       bookedByName: roomBookings.bookedByName,
+      bookedForUserId: roomBookings.bookedForUserId,
+      bookedForName: roomBookings.bookedForName,
       clientName: roomBookings.clientName,
       attendeeCount: roomBookings.attendeeCount,
       seriesId: roomBookings.seriesId,
@@ -105,7 +107,9 @@ export default async function BookingsPage({
     attendees: attendeeRows.filter((a) => a.bookingId === b.id).map((a) => a.name),
     pendingRequests: pendingRows.filter((p) => p.bookingId === b.id).length,
     iAsked: pendingRows.some((p) => p.bookingId === b.id && p.requesterUserId === user?.id),
-    isMine: b.bookedByUserId === user?.id,
+    // Both holders count as "mine" — the person it was booked for shouldn't be
+    // offered a button to ask themselves for their own room.
+    isMine: b.bookedByUserId === user?.id || b.bookedForUserId === user?.id,
   }));
 
   const bookableUsers = await db
