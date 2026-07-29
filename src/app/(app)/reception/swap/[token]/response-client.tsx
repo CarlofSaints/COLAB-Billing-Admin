@@ -3,22 +3,17 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Check, X, TriangleAlert } from "lucide-react";
-import { respondToSteal, type BookingState } from "@/app/actions/bookings";
+import { respondToSwap, type SwapState } from "@/app/actions/reception-swaps";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Field, Textarea } from "@/components/ui/field";
 
 type Detail = {
   requesterName: string;
-  requesterMeeting: string;
-  message: string;
-  attendeeCount: number;
-  clientName: string | null;
-  roomName: string;
-  dateLabel: string;
-  timeLabel: string;
-  yourMeeting: string;
-  holderName: string;
+  targetName: string;
+  message: string | null;
+  youGiveUp: string;
+  youTake: string;
 };
 
 function SubmitButton({ label, busy }: { label: string; busy: string }) {
@@ -30,7 +25,7 @@ function SubmitButton({ label, busy }: { label: string; busy: string }) {
   );
 }
 
-export function StealResponseClient({
+export function SwapResponseClient({
   token,
   status,
   canAnswer,
@@ -42,40 +37,37 @@ export function StealResponseClient({
   status: string;
   canAnswer: boolean;
   declineReason: string | null;
-  /** Which button the email link pre-selected. */
   initialAction: "approve" | "decline" | null;
   detail: Detail;
 }) {
-  const [state, action] = useActionState<BookingState, FormData>(respondToSteal, {});
-  // The email link only pre-opens the right form — it never submits on its own,
-  // so a link preview or scanner in their mail client can't answer for them.
+  const [state, action] = useActionState<SwapState, FormData>(respondToSwap, {});
+  // The email link only pre-opens the right form; it never submits on its own,
+  // so a link scanner in a mail client can't answer on someone's behalf.
   const [mode, setMode] = useState<"approve" | "decline" | null>(initialAction);
-
-  const rows: [string, string][] = [
-    ["Your booking", detail.yourMeeting],
-    ["Room", detail.roomName],
-    ["When", `${detail.dateLabel}, ${detail.timeLabel}`],
-    ["They want it for", detail.requesterMeeting],
-    ["Their attendees", String(detail.attendeeCount)],
-    ...(detail.clientName ? ([["Their client", detail.clientName]] as [string, string][]) : []),
-  ];
 
   const summary = (
     <>
+      <p className="mb-3 text-sm text-slate-700">
+        <strong>{detail.requesterName}</strong> would like to swap reception shifts with you.
+      </p>
       <dl className="divide-y divide-line rounded-lg border border-line">
-        {rows.map(([label, value]) => (
-          <div key={label} className="flex gap-3 px-3 py-2 text-sm">
-            <dt className="w-32 shrink-0 text-muted">{label}</dt>
-            <dd className="text-slate-800">{value}</dd>
-          </div>
-        ))}
+        <div className="flex gap-3 px-3 py-2 text-sm">
+          <dt className="w-28 shrink-0 text-muted">You give up</dt>
+          <dd className="text-slate-800">{detail.youGiveUp}</dd>
+        </div>
+        <div className="flex gap-3 px-3 py-2 text-sm">
+          <dt className="w-28 shrink-0 text-muted">You take</dt>
+          <dd className="text-slate-800">{detail.youTake}</dd>
+        </div>
       </dl>
-      <div className="mt-3">
-        <p className="mb-1 text-sm text-muted">{detail.requesterName} says:</p>
-        <blockquote className="rounded-lg border-l-4 border-brand-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-          {detail.message}
-        </blockquote>
-      </div>
+      {detail.message && (
+        <div className="mt-3">
+          <p className="mb-1 text-sm text-muted">{detail.requesterName} says:</p>
+          <blockquote className="rounded-lg border-l-4 border-brand-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            {detail.message}
+          </blockquote>
+        </div>
+      )}
     </>
   );
 
@@ -87,10 +79,10 @@ export function StealResponseClient({
         <div className="rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-700">
           {resolved === "approved" && (
             <>
-              <Badge tone="brand">Approved</Badge>
+              <Badge tone="brand">Swapped</Badge>
               <p className="mt-2">
-                {detail.requesterName} has the room. It's booked in their name and they've been
-                emailed — nothing further for you to do.
+                The rota has been updated — you&apos;re now on {detail.youTake}, and{" "}
+                {detail.requesterName} takes {detail.youGiveUp}. They&apos;ve been emailed.
               </p>
             </>
           )}
@@ -98,7 +90,7 @@ export function StealResponseClient({
             <>
               <Badge tone="slate">Declined</Badge>
               <p className="mt-2">
-                You kept the room and {detail.requesterName} has been told why.
+                Nothing changed and {detail.requesterName} has been told why.
                 {declineReason ? ` You said: "${declineReason}"` : ""}
               </p>
             </>
@@ -107,8 +99,7 @@ export function StealResponseClient({
             <>
               <Badge tone="slate">No longer needed</Badge>
               <p className="mt-2">
-                This request was withdrawn — the booking was cancelled or handed over to someone
-                else.
+                This was withdrawn, or the rota changed after it was asked.
               </p>
             </>
           )}
@@ -123,8 +114,8 @@ export function StealResponseClient({
         {summary}
         <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          Only {detail.holderName}, who booked the room, can answer this. If they forwarded you the
-          email, they'll need to click it themselves.
+          Only {detail.targetName} can answer this. If they forwarded you the email, they&apos;ll
+          need to click it themselves — or an admin can answer on their behalf.
         </p>
       </div>
     );
@@ -140,7 +131,7 @@ export function StealResponseClient({
             <X className="h-4 w-4" /> Decline
           </Button>
           <Button onClick={() => setMode("approve")}>
-            <Check className="h-4 w-4" /> Let them steal it
+            <Check className="h-4 w-4" /> Agree to the swap
           </Button>
         </div>
       )}
@@ -150,8 +141,8 @@ export function StealResponseClient({
           <input type="hidden" name="token" value={token} />
           <input type="hidden" name="decision" value="approve" />
           <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
-            The slot passes straight to {detail.requesterName} — it becomes their meeting, at the
-            same room and time, and your booking goes. They'll be emailed.
+            The rota changes as soon as you confirm: you take {detail.youTake},{" "}
+            {detail.requesterName} takes {detail.youGiveUp}.
           </p>
           {state.error && (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
@@ -160,7 +151,7 @@ export function StealResponseClient({
             <Button type="button" variant="ghost" onClick={() => setMode(null)}>
               Back
             </Button>
-            <SubmitButton label="Yes, give them the room" busy="Handing over…" />
+            <SubmitButton label="Yes, swap us" busy="Swapping…" />
           </div>
         </form>
       )}
@@ -169,7 +160,7 @@ export function StealResponseClient({
         <form action={action} className="space-y-3">
           <input type="hidden" name="token" value={token} />
           <input type="hidden" name="decision" value="decline" />
-          <Field label="Why are you keeping it?" hint="They'll see this word for word.">
+          <Field label="Why can't you swap?" hint="They'll see this word for word.">
             <Textarea name="reason" required rows={3} maxLength={1000} autoFocus />
           </Field>
           {state.error && (
@@ -179,7 +170,7 @@ export function StealResponseClient({
             <Button type="button" variant="ghost" onClick={() => setMode(null)}>
               Back
             </Button>
-            <SubmitButton label="Decline the request" busy="Sending…" />
+            <SubmitButton label="Decline the swap" busy="Sending…" />
           </div>
         </form>
       )}

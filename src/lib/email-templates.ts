@@ -302,6 +302,120 @@ export function taskCreatedEmail(input: {
 }
 
 /* ------------------------------------------------------------------ */
+/* Reception rota — shift swaps                                        */
+/* ------------------------------------------------------------------ */
+
+/** "Can you take my Tuesday?" — to the person being asked. */
+export function receptionSwapRequestEmail(input: {
+  targetName: string;
+  requesterName: string;
+  theirSlot: string;
+  yourSlot: string;
+  message?: string | null;
+  approveUrl: string;
+  declineUrl: string;
+}) {
+  const subject = `${input.requesterName} wants to swap reception shifts`;
+
+  const html = emailShell({
+    preheader: `${input.requesterName} would like to swap their ${input.theirSlot} for your ${input.yourSlot}.`,
+    eyebrow: "Reception swap",
+    heading: `Hi ${input.targetName},`,
+    content: [
+      p(
+        `${escapeHtml(input.requesterName)} would like to swap reception shifts with you. Nothing changes on the rota unless you agree.`,
+      ),
+      detailTable([
+        ["They'd take", escapeHtml(input.yourSlot)],
+        ["You'd take", escapeHtml(input.theirSlot)],
+      ]),
+      ...(input.message ? [p("They said:"), quote(input.message)] : []),
+      button(input.approveUrl, "Agree to the swap"),
+      p(link(input.declineUrl, "Or decline, and say why")),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.targetName},`,
+    "",
+    `${input.requesterName} would like to swap reception shifts with you. Nothing changes unless you agree.`,
+    "",
+    `They'd take: ${input.yourSlot}`,
+    `You'd take: ${input.theirSlot}`,
+    ...(input.message ? ["", "They said:", input.message] : []),
+    "",
+    `Agree: ${input.approveUrl}`,
+    `Decline: ${input.declineUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/** The answer, back to whoever asked. */
+export function receptionSwapOutcomeEmail(input: {
+  requesterName: string;
+  targetName: string;
+  approved: boolean;
+  /** After a swap, this is what the requester now has. */
+  yourSlot: string;
+  theirSlot: string;
+  reason?: string | null;
+  rotaUrl: string;
+}) {
+  const subject = input.approved
+    ? `${input.targetName} agreed to swap reception shifts`
+    : `${input.targetName} can't swap reception shifts`;
+
+  const html = emailShell({
+    preheader: input.approved
+      ? `You're now on ${input.yourSlot}.`
+      : `Your swap request was declined.`,
+    eyebrow: input.approved ? "Swap agreed" : "Swap declined",
+    heading: `Hi ${input.requesterName},`,
+    content: input.approved
+      ? [
+          p(
+            `${escapeHtml(input.targetName)} agreed to the swap and the rota has been updated.`,
+          ),
+          detailTable([
+            ["You're now on", escapeHtml(input.yourSlot)],
+            [`${escapeHtml(input.targetName)} takes`, escapeHtml(input.theirSlot)],
+          ]),
+          button(input.rotaUrl, "View the rota"),
+        ].join("")
+      : [
+          p(
+            `${escapeHtml(input.targetName)} can't swap, so the rota is unchanged and you're still on ${escapeHtml(input.theirSlot)}.`,
+          ),
+          ...(input.reason ? [p("They said:"), quote(input.reason)] : []),
+          button(input.rotaUrl, "View the rota"),
+        ].join(""),
+  });
+
+  const text = input.approved
+    ? [
+        `Hi ${input.requesterName},`,
+        "",
+        `${input.targetName} agreed to the swap and the rota has been updated.`,
+        "",
+        `You're now on: ${input.yourSlot}`,
+        `${input.targetName} takes: ${input.theirSlot}`,
+        "",
+        `View the rota: ${input.rotaUrl}`,
+      ].join("\n")
+    : [
+        `Hi ${input.requesterName},`,
+        "",
+        `${input.targetName} can't swap, so the rota is unchanged and you're still on ${input.theirSlot}.`,
+        ...(input.reason ? ["", "They said:", input.reason] : []),
+        "",
+        `View the rota: ${input.rotaUrl}`,
+      ].join("\n");
+
+  return { subject, html, text };
+}
+
+/* ------------------------------------------------------------------ */
 /* Meeting rooms                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -377,7 +491,7 @@ export function bookingConfirmedEmail(
       detailTable(bookingRows(input)),
       button(input.bookingsUrl, "View the room calendar"),
       note(
-        "If someone else needs the room they can ask you for it from the calendar, and you'll get an email to approve or decline.",
+        "If someone else needs the room they can Steal This Room from the calendar — you'll get an email and nothing changes unless you approve it.",
       ),
     ].join(""),
   });
@@ -443,15 +557,15 @@ export function roomStealRequestEmail(input: {
   approveUrl: string;
   declineUrl: string;
 }) {
-  const subject = `${input.requesterName} is asking for ${input.roomName} — ${input.dateLabel}`;
+  const subject = `${input.requesterName} wants to steal ${input.roomName} — ${input.dateLabel}`;
 
   const html = emailShell({
-    preheader: `${input.requesterName} would like your ${input.timeLabel} slot in ${input.roomName}.`,
-    eyebrow: "Room request",
+    preheader: `${input.requesterName} wants to steal your ${input.timeLabel} slot in ${input.roomName}.`,
+    eyebrow: "Steal This Room",
     heading: `Hi ${input.holderName},`,
     content: [
       p(
-        `${escapeHtml(input.requesterName)} would like the room you have booked. Nothing changes unless you say yes.`,
+        `${escapeHtml(input.requesterName)} wants to steal the room you have booked. Nothing changes unless you say yes.`,
       ),
       detailTable([
         ["Your booking", escapeHtml(input.yourMeeting)],
@@ -461,7 +575,7 @@ export function roomStealRequestEmail(input: {
       ]),
       p("Their reason:"),
       quote(input.message),
-      button(input.approveUrl, "Let them have it"),
+      button(input.approveUrl, "Let them steal it"),
       p(link(input.declineUrl, "Or decline, and say why")),
     ].join(""),
   });
@@ -469,7 +583,7 @@ export function roomStealRequestEmail(input: {
   const text = [
     `Hi ${input.holderName},`,
     "",
-    `${input.requesterName} would like the room you have booked. Nothing changes unless you say yes.`,
+    `${input.requesterName} wants to steal the room you have booked. Nothing changes unless you say yes.`,
     "",
     `Your booking: ${input.yourMeeting}`,
     `Room: ${input.roomName}`,

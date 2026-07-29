@@ -533,7 +533,7 @@ function BookingDetail({
           <Button type="button" variant="ghost" onClick={() => setAsking(false)}>
             Back
           </Button>
-          <SubmitButton label="Send the request" busy="Sending…" />
+          <SubmitButton label="Steal This Room" busy="Sending…" />
         </div>
       </form>
     );
@@ -602,10 +602,10 @@ function BookingDetail({
         )}
         {!booking.isMine &&
           (booking.iAsked ? (
-            <Badge tone="slate">You've asked for this slot</Badge>
+            <Badge tone="slate">You&apos;ve asked to steal this room</Badge>
           ) : (
             <Button onClick={() => setAsking(true)}>
-              <HandHelping className="h-4 w-4" /> Steal the room
+              <HandHelping className="h-4 w-4" /> Steal This Room
             </Button>
           ))}
       </div>

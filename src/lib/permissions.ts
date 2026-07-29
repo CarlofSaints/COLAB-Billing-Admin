@@ -73,8 +73,15 @@ export const PERMISSIONS: PermissionDef[] = [
   // User tags
   { key: "tags.manage", label: "Manage user tags", category: "User Tags", sort: 146 },
 
-  // Reception rota
-  { key: "reception.manage", label: "Manage the reception rota", category: "Reception", sort: 147 },
+  // Reception rota. Viewing is for everyone — the desk rota is something the
+  // whole office needs to be able to look up; editing it is not.
+  { key: "reception.view", label: "View the reception rota", category: "Reception", sort: 146 },
+  {
+    key: "reception.manage",
+    label: "View & edit the reception rota",
+    category: "Reception",
+    sort: 147,
+  },
 
   // Meeting rooms. Booking itself needs only hub.view — everyone books; these
   // two are for looking after the rooms and sorting out other people's slots.
@@ -160,6 +167,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "tasks.view",
     "tasks.manage",
     "tags.manage",
+    "reception.view",
     "reception.manage",
     "issues.manage",
     "rooms.manage",
@@ -187,6 +195,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "tasks.view",
     "tasks.manage",
     "tags.manage",
+    "reception.view",
     "reception.manage",
     "issues.manage",
     "rooms.manage",
@@ -194,11 +203,18 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   ],
 
   // Viewer: minimal read-only.
-  viewer: ["companies.view", "staff.view", "logs.view", "hub.view", "profile.edit"],
+  viewer: [
+    "companies.view",
+    "staff.view",
+    "logs.view",
+    "hub.view",
+    "profile.edit",
+    "reception.view",
+  ],
 
   // Team Member: just the social hub — see the team dashboard and maintain
   // their own profile. No billing, admin or settings access.
-  team_member: ["hub.view", "profile.edit"],
+  team_member: ["hub.view", "profile.edit", "reception.view"],
 };
 
 // The Super Admin role can never have permissions removed via the grid,

@@ -79,7 +79,7 @@ const SECTIONS: NavSection[] = [
     heading: "People",
     items: [
       { href: "/staff", label: "Team Members", icon: Users, perm: "staff.view" },
-      { href: "/reception", label: "Reception Rota", icon: CalendarClock, perm: "reception.manage" },
+      { href: "/reception", label: "Reception Rota", icon: CalendarClock, perm: "reception.view" },
       { href: "/rooms", label: "Meeting Rooms", icon: DoorOpen, perm: "rooms.manage" },
       { href: "/email-groups", label: "Email Groups", icon: Mails, perm: "groups.view" },
       { href: "/mail", label: "Mail Sender", icon: Send, perm: "mail.send" },

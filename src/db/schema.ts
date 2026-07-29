@@ -862,6 +862,51 @@ export const activityLog = pgTable(
   ],
 );
 
+export const swapStatusEnum = pgEnum("swap_status", [
+  "pending",
+  "approved",
+  "declined",
+  "withdrawn",
+]);
+
+/**
+ * "Can you take my Tuesday and I'll take your Thursday?"
+ *
+ * Both sides of the swap are named up front — the requester's slot and the one
+ * they want — so approving is a single exchange with nothing left to choose.
+ * Stores the staff ids as they were, so the request still reads correctly if
+ * either slot is later reassigned by an admin.
+ */
+export const receptionSwapRequests = pgTable(
+  "reception_swap_requests",
+  {
+    id: serial("id").primaryKey(),
+    fromSlotId: integer("from_slot_id")
+      .notNull()
+      .references(() => receptionSlots.id, { onDelete: "cascade" }),
+    toSlotId: integer("to_slot_id")
+      .notNull()
+      .references(() => receptionSlots.id, { onDelete: "cascade" }),
+    requesterStaffId: integer("requester_staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    targetStaffId: integer("target_staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    message: text("message"),
+    status: swapStatusEnum("status").notNull().default("pending"),
+    declineReason: text("decline_reason"),
+    /** Names the request in the email links; does not authenticate it. */
+    token: text("token").notNull(),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("reception_swap_token_unique").on(t.token),
+    index("reception_swap_from_idx").on(t.fromSlotId),
+  ],
+);
+
 /* ------------------------------------------------------------------ */
 /* Meeting rooms & bookings                                           */
 /* ------------------------------------------------------------------ */

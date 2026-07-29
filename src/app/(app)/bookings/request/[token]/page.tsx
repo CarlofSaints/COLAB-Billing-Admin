@@ -8,7 +8,7 @@ import { longDateLabel, slotLabel } from "@/lib/bookings";
 import { HandHelping } from "lucide-react";
 import { StealResponseClient } from "./response-client";
 
-export const metadata = { title: "Room request — COLAB" };
+export const metadata = { title: "Steal This Room — COLAB" };
 
 /**
  * Where the Approve / Decline links in the request email land.
@@ -39,7 +39,7 @@ export default async function StealRequestPage({
   if (!request) {
     return (
       <div className="mx-auto max-w-xl">
-        <PageHeader title="Room request" />
+        <PageHeader title="Steal This Room" />
         <EmptyState
           icon={<HandHelping className="h-8 w-8" />}
           title="That request no longer exists"
@@ -69,7 +69,7 @@ export default async function StealRequestPage({
   if (!booking || booking.status !== "confirmed") {
     return (
       <div className="mx-auto max-w-xl">
-        <PageHeader title="Room request" />
+        <PageHeader title="Steal This Room" />
         <EmptyState
           icon={<HandHelping className="h-8 w-8" />}
           title="That booking is no longer live"
@@ -82,7 +82,7 @@ export default async function StealRequestPage({
   return (
     <div className="mx-auto max-w-xl">
       <PageHeader
-        title="Can they have the room?"
+        title="They want to steal your room"
         description="Nothing has changed yet. The room is still yours unless you approve this."
       />
       <Card className="p-4">
