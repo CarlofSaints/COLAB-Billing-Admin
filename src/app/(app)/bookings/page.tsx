@@ -1,6 +1,14 @@
 import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { db } from "@/db";
-import { roomBookingAttendees, roomBookings, rooms, roomStealRequests, users } from "@/db/schema";
+import {
+  companies,
+  roomBookingAttendees,
+  roomBookings,
+  rooms,
+  roomStealRequests,
+  staff,
+  users,
+} from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { PageHeader, EmptyState } from "@/components/ui/page";
 import { addDays, weekDays, weekStart } from "@/lib/bookings";
@@ -80,9 +88,13 @@ export default async function BookingsPage({
   // both so the calendar can show the full picture without a second click.
   const attendeeRows = ids.length
     ? await db
-        .select({ bookingId: roomBookingAttendees.bookingId, name: users.name })
+        .select({
+          bookingId: roomBookingAttendees.bookingId,
+          staffId: roomBookingAttendees.staffId,
+          name: staff.name,
+        })
         .from(roomBookingAttendees)
-        .innerJoin(users, eq(roomBookingAttendees.userId, users.id))
+        .innerJoin(staff, eq(roomBookingAttendees.staffId, staff.id))
         .where(inArray(roomBookingAttendees.bookingId, ids))
     : [];
 
@@ -102,16 +114,35 @@ export default async function BookingsPage({
         )
     : [];
 
-  const bookings = bookingRows.map((b) => ({
-    ...b,
-    attendees: attendeeRows.filter((a) => a.bookingId === b.id).map((a) => a.name),
-    pendingRequests: pendingRows.filter((p) => p.bookingId === b.id).length,
-    iAsked: pendingRows.some((p) => p.bookingId === b.id && p.requesterUserId === user?.id),
+  const canManageAny = user ? hasPermission(user, "bookings.manage") : false;
+
+  const bookings = bookingRows.map((b) => {
     // Both holders count as "mine" — the person it was booked for shouldn't be
     // offered a button to ask themselves for their own room.
-    isMine: b.bookedByUserId === user?.id || b.bookedForUserId === user?.id,
-  }));
+    const isMine = b.bookedByUserId === user?.id || b.bookedForUserId === user?.id;
+    return {
+      ...b,
+      attendees: attendeeRows.filter((a) => a.bookingId === b.id).map((a) => a.name),
+      // Ids too, so the edit form can pre-tick the current guest list.
+      attendeeIds: attendeeRows.filter((a) => a.bookingId === b.id).map((a) => a.staffId),
+      pendingRequests: pendingRows.filter((p) => p.bookingId === b.id).length,
+      iAsked: pendingRows.some((p) => p.bookingId === b.id && p.requesterUserId === user?.id),
+      isMine,
+      canEdit: isMine || canManageAny,
+    };
+  });
 
+  // Attendees come from the team list — most of the office has no login, and
+  // "who is coming" is a question about people, not accounts.
+  const teamMembers = await db
+    .select({ id: staff.id, name: staff.name, companyName: companies.name })
+    .from(staff)
+    .innerJoin(companies, eq(staff.companyId, companies.id))
+    .where(eq(staff.active, true))
+    .orderBy(asc(staff.name));
+
+  // "Booked for" still has to be a login, because that person becomes a holder
+  // — they get the emails and can approve or decline a request for the room.
   const bookableUsers = await db
     .select({ id: users.id, name: users.name })
     .from(users)
@@ -137,9 +168,10 @@ export default async function BookingsPage({
         days={days}
         today={sastDateKey(new Date())}
         bookings={bookings}
+        teamMembers={teamMembers}
         allUsers={bookableUsers}
         currentUserId={user?.id ?? 0}
-        canManageAny={user ? hasPermission(user, "bookings.manage") : false}
+        canManageAny={canManageAny}
       />
     </div>
   );

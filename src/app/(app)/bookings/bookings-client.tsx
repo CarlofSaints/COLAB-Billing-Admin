@@ -12,11 +12,13 @@ import {
   HandHelping,
   Trash2,
   Briefcase,
+  Pencil,
 } from "lucide-react";
 import {
   cancelBooking,
   createBooking,
   requestSteal,
+  updateBooking,
   type BookingState,
 } from "@/app/actions/bookings";
 import { Button } from "@/components/ui/button";
@@ -40,6 +42,7 @@ import {
   parseDateKey,
   slotStarts,
   weekRangeLabel,
+  weekStart,
   type Recurrence,
 } from "@/lib/bookings";
 
@@ -67,10 +70,15 @@ type BookingBlock = {
   seriesId: string | null;
   recurrenceLabel: string | null;
   attendees: string[];
+  attendeeIds: number[];
   pendingRequests: number;
   iAsked: boolean;
   isMine: boolean;
+  /** Whether the viewer may edit or cancel it — holder, or an admin. */
+  canEdit: boolean;
 };
+
+type TeamMember = { id: number; name: string; companyName: string };
 
 const FALLBACK_COLOR = "#0d9488";
 const SLOTS = slotStarts();
@@ -221,24 +229,37 @@ function BookingForm({
   room,
   date,
   startMinute,
+  teamMembers,
   allUsers,
   currentUserId,
+  existing,
   onDone,
 }: {
   room: RoomOption;
   date: string;
   startMinute: number;
+  teamMembers: TeamMember[];
   allUsers: { id: number; name: string }[];
   currentUserId: number;
+  /** Set when editing rather than creating. */
+  existing?: BookingBlock;
   onDone: () => void;
 }) {
-  const [state, action] = useActionState<BookingState, FormData>(createBooking, {});
-  const [start, setStart] = useState(minuteLabel(startMinute));
-  const [duration, setDuration] = useState(SLOT_MINUTES);
+  const editing = !!existing;
+  const [state, action] = useActionState<BookingState, FormData>(
+    editing ? updateBooking : createBooking,
+    {},
+  );
+  const [start, setStart] = useState(minuteLabel(existing?.startMinute ?? startMinute));
+  const [duration, setDuration] = useState(
+    existing ? existing.endMinute - existing.startMinute : SLOT_MINUTES,
+  );
+  const [bookingDate, setBookingDate] = useState(existing?.date ?? date);
   const [recurrence, setRecurrence] = useState<Recurrence>(DEFAULT_RECURRENCE);
-  const [attendeeIds, setAttendeeIds] = useState<number[]>([]);
-  const [attendeeCount, setAttendeeCount] = useState(1);
-  const [bookedForUserId, setBookedForUserId] = useState(0);
+  const [attendeeIds, setAttendeeIds] = useState<number[]>(existing?.attendeeIds ?? []);
+  const [attendeeCount, setAttendeeCount] = useState(existing?.attendeeCount ?? 1);
+  const [bookedForUserId, setBookedForUserId] = useState(existing?.bookedForUserId ?? 0);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     if (state.ok) onDone();
@@ -257,26 +278,55 @@ function BookingForm({
       return next;
     });
 
+  // 77 people is too many to scan, so the list filters — and anyone already
+  // picked stays pinned at the top so they can't be lost behind a search term.
+  const picked = teamMembers.filter((m) => attendeeIds.includes(m.id));
+  const term = search.trim().toLowerCase();
+  const rest = teamMembers.filter(
+    (m) =>
+      !attendeeIds.includes(m.id) &&
+      (term === "" ||
+        m.name.toLowerCase().includes(term) ||
+        m.companyName.toLowerCase().includes(term)),
+  );
+
   return (
     <form action={action} className="space-y-4">
+      {editing && <input type="hidden" name="id" value={existing.id} />}
       <input type="hidden" name="roomId" value={room.id} />
-      <input type="hidden" name="date" value={date} />
+      <input type="hidden" name="date" value={bookingDate} />
       <input type="hidden" name="startMinute" value={startMin} />
       <input type="hidden" name="endMinute" value={endMin} />
       <input type="hidden" name="recurrence" value={JSON.stringify(recurrence)} />
       {attendeeIds.map((id) => (
-        <input key={id} type="hidden" name="attendeeUserId" value={id} />
+        <input key={id} type="hidden" name="attendeeStaffId" value={id} />
       ))}
 
       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
-        <strong>{room.name}</strong> · {longDateLabel(date)} · seats {room.capacity}
+        <strong>{room.name}</strong> · seats {room.capacity}
         {room.notes ? ` · ${room.notes}` : ""}
       </div>
 
       <input type="hidden" name="bookedForUserId" value={bookedForUserId} />
 
       <Field label="Meeting name">
-        <Input name="title" required autoFocus maxLength={120} placeholder="e.g. Q3 planning" />
+        <Input
+          name="title"
+          required
+          autoFocus
+          maxLength={120}
+          defaultValue={existing?.title ?? ""}
+          placeholder="e.g. Q3 planning"
+        />
+      </Field>
+
+      <Field label="Date">
+        <Input
+          type="date"
+          value={bookingDate}
+          onChange={(e) => setBookingDate(e.target.value)}
+          className="max-w-52"
+        />
       </Field>
 
       <Field
@@ -317,29 +367,45 @@ function BookingForm({
       </p>
 
       <Field label="Client name" hint="Optional — if this meeting is for a client.">
-        <Input name="clientName" maxLength={120} />
+        <Input name="clientName" maxLength={120} defaultValue={existing?.clientName ?? ""} />
       </Field>
 
-      <Field label="Internal attendees" hint="Who from the office is coming. Nobody is emailed.">
-        <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto rounded-lg border border-line bg-white p-2">
-          {allUsers.map((u) => {
-            const on = attendeeIds.includes(u.id);
-            return (
-              <button
-                key={u.id}
-                type="button"
-                onClick={() => toggleAttendee(u.id)}
-                className={cn(
-                  "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
-                  on
-                    ? "border-brand-600 bg-brand-50 text-brand-700"
-                    : "border-line text-slate-500 hover:bg-slate-50",
-                )}
-              >
-                {u.name}
-              </button>
-            );
-          })}
+      <Field
+        label={`Internal attendees${attendeeIds.length ? ` (${attendeeIds.length})` : ""}`}
+        hint="Anyone on the team list, whether or not they have a login. Nobody is emailed — this is who's coming."
+      >
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search the team…"
+          className="mb-2"
+        />
+        <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto rounded-lg border border-line bg-white p-2">
+          {picked.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => toggleAttendee(m.id)}
+              title={m.companyName}
+              className="rounded-full border border-brand-600 bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-700"
+            >
+              {m.name} ×
+            </button>
+          ))}
+          {rest.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => toggleAttendee(m.id)}
+              title={m.companyName}
+              className="rounded-full border border-line px-2.5 py-0.5 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50"
+            >
+              {m.name}
+            </button>
+          ))}
+          {picked.length === 0 && rest.length === 0 && (
+            <p className="px-1 py-2 text-xs text-muted">Nobody matches “{search}”.</p>
+          )}
         </div>
       </Field>
 
@@ -358,7 +424,19 @@ function BookingForm({
         />
       </Field>
 
-      <RecurrenceEditor value={recurrence} onChange={setRecurrence} startDate={date} />
+      {/* Editing changes this one occurrence only — repeating an existing
+          booking into new dates would silently create bookings the person
+          didn't ask for, and can't be undone from here. */}
+      {editing ? (
+        existing.recurrenceLabel && (
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-muted">
+            Part of a repeating booking ({existing.recurrenceLabel}). Changes here apply to this
+            occurrence only.
+          </p>
+        )
+      ) : (
+        <RecurrenceEditor value={recurrence} onChange={setRecurrence} startDate={bookingDate} />
+      )}
 
       {endsTooLate && (
         <p className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -376,7 +454,10 @@ function BookingForm({
         <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
         </Button>
-        <SubmitButton label="Book the room" busy="Booking…" />
+        <SubmitButton
+          label={editing ? "Save changes" : "Book the room"}
+          busy={editing ? "Saving…" : "Booking…"}
+        />
       </div>
     </form>
   );
@@ -390,11 +471,13 @@ function BookingDetail({
   booking,
   room,
   canManageAny,
+  onEdit,
   onDone,
 }: {
   booking: BookingBlock;
   room: RoomOption;
   canManageAny: boolean;
+  onEdit: () => void;
   onDone: () => void;
 }) {
   const [asking, setAsking] = useState(false);
@@ -490,6 +573,9 @@ function BookingDetail({
       <div className="flex flex-wrap justify-end gap-2">
         {canCancel && (
           <>
+            <Button variant="outline" onClick={onEdit}>
+              <Pencil className="h-4 w-4" /> Edit
+            </Button>
             {booking.seriesId && (
               <Button
                 variant="ghost"
@@ -538,6 +624,7 @@ export function BookingsClient({
   days,
   today,
   bookings,
+  teamMembers,
   allUsers,
   currentUserId,
   canManageAny,
@@ -548,6 +635,7 @@ export function BookingsClient({
   days: string[];
   today: string;
   bookings: BookingBlock[];
+  teamMembers: TeamMember[];
   allUsers: { id: number; name: string }[];
   currentUserId: number;
   canManageAny: boolean;
@@ -558,6 +646,7 @@ export function BookingsClient({
 
   const [booking, setBooking] = useState<{ date: string; startMinute: number } | null>(null);
   const [viewing, setViewing] = useState<BookingBlock | null>(null);
+  const [editing, setEditing] = useState<BookingBlock | null>(null);
 
   const go = (roomId: number, week: string) =>
     router.push(`/bookings?room=${roomId}&week=${week}`);
@@ -594,9 +683,18 @@ export function BookingsClient({
           <Button variant="ghost" size="sm" onClick={() => go(selectedRoomId, addDays(monday, 7))}>
             <ChevronRight className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => go(selectedRoomId, today)}>
-            This week
-          </Button>
+          {/* On the current week this is a label, not an offer; once you've
+              navigated away it becomes the way back. A static "This week" that
+              stayed put while the dates moved just read as a wrong caption. */}
+          {monday === weekStart(today) ? (
+            <span className="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700">
+              This week
+            </span>
+          ) : (
+            <Button variant="outline" size="sm" onClick={() => go(selectedRoomId, today)}>
+              Back to this week
+            </Button>
+          )}
         </div>
       </div>
 
@@ -666,6 +764,15 @@ export function BookingsClient({
                       key={b.id}
                       type="button"
                       onClick={() => setViewing(b)}
+                      // Double-click jumps straight to editing, which is what
+                      // people reach for; single click still shows the detail.
+                      onDoubleClick={() => {
+                        if (b.canEdit) {
+                          setViewing(null);
+                          setEditing(b);
+                        }
+                      }}
+                      title={b.canEdit ? "Click for detail, double-click to edit" : undefined}
                       className="absolute left-0.5 right-0.5 overflow-hidden rounded-md border px-1.5 py-1 text-left transition-shadow hover:shadow-md"
                       style={{
                         top: (b.startMinute - DAY_START_MINUTE) * PX_PER_MIN,
@@ -688,9 +795,14 @@ export function BookingsClient({
                           booked by {b.bookedByName}
                         </span>
                       )}
+                      {b.clientName && (
+                        <span className="flex items-center gap-1 truncate text-[10px] font-medium leading-tight text-slate-700">
+                          <Briefcase className="h-2.5 w-2.5 shrink-0" />
+                          {b.clientName}
+                        </span>
+                      )}
                       <span className="mt-0.5 flex items-center gap-1">
                         {b.recurrenceLabel && <Repeat className="h-2.5 w-2.5 text-slate-500" />}
-                        {b.clientName && <Briefcase className="h-2.5 w-2.5 text-slate-500" />}
                         {b.pendingRequests > 0 && (
                           <HandHelping className="h-2.5 w-2.5 text-amber-600" />
                         )}
@@ -720,6 +832,7 @@ export function BookingsClient({
             room={room}
             date={booking.date}
             startMinute={booking.startMinute}
+            teamMembers={teamMembers}
             allUsers={allUsers}
             currentUserId={currentUserId}
             onDone={() => {
@@ -736,8 +849,36 @@ export function BookingsClient({
             booking={viewing}
             room={room}
             canManageAny={canManageAny}
+            onEdit={() => {
+              const b = viewing;
+              setViewing(null);
+              setEditing(b);
+            }}
             onDone={() => {
               setViewing(null);
+              router.refresh();
+            }}
+          />
+        </Modal>
+      )}
+
+      {editing && (
+        <Modal
+          title={`Edit ${editing.title}`}
+          open
+          onOpenChange={(o) => !o && setEditing(null)}
+          wide
+        >
+          <BookingForm
+            room={room}
+            date={editing.date}
+            startMinute={editing.startMinute}
+            teamMembers={teamMembers}
+            allUsers={allUsers}
+            currentUserId={currentUserId}
+            existing={editing}
+            onDone={() => {
+              setEditing(null);
               router.refresh();
             }}
           />

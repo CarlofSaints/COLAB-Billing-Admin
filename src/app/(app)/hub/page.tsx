@@ -6,6 +6,7 @@ import { requirePermission, hasPermission } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/page";
 import { initials } from "@/lib/utils";
+import { HubWallpaper } from "@/components/hub-wallpaper";
 import { EventsManager } from "./events-manager";
 
 export const metadata = { title: "Team Hub — COLAB" };
@@ -97,6 +98,7 @@ export default async function HubPage() {
 
   return (
     <div className="space-y-6">
+      <HubWallpaper />
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
           Hi {user.name.split(" ")[0]} 👋

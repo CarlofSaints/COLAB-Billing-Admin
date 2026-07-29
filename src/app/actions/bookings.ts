@@ -5,7 +5,14 @@ import { randomUUID } from "node:crypto";
 import { and, eq, gte, inArray, lte, ne } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { roomBookingAttendees, roomBookings, rooms, roomStealRequests, users } from "@/db/schema";
+import {
+  roomBookingAttendees,
+  roomBookings,
+  rooms,
+  roomStealRequests,
+  staff,
+  users,
+} from "@/db/schema";
 import { requireUser, hasPermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import {
@@ -50,7 +57,7 @@ const bookingSchema = z.object({
   endMinute: z.number().int().min(0).max(24 * 60),
   clientName: z.string().trim().max(120).optional(),
   attendeeCount: z.number().int().min(1).max(500),
-  attendeeUserIds: z.array(z.number().int().positive()),
+  attendeeStaffIds: z.array(z.number().int().positive()),
   /** Booking for someone else. 0 / absent means it's for the booker. */
   bookedForUserId: z.number().int().nonnegative(),
   recurrence: recurrenceSchema,
@@ -73,8 +80,8 @@ function readBookingForm(formData: FormData) {
     endMinute: Number(formData.get("endMinute")),
     clientName: String(formData.get("clientName") ?? "").trim() || undefined,
     attendeeCount: Number(formData.get("attendeeCount") || 1),
-    attendeeUserIds: formData
-      .getAll("attendeeUserId")
+    attendeeStaffIds: formData
+      .getAll("attendeeStaffId")
       .map((v) => Number(v))
       .filter((n) => Number.isInteger(n) && n > 0),
     bookedForUserId: Number(formData.get("bookedForUserId") || 0),
@@ -240,10 +247,10 @@ export async function createBooking(
     )
     .returning({ id: roomBookings.id });
 
-  if (input.attendeeUserIds.length > 0) {
+  if (input.attendeeStaffIds.length > 0) {
     await db.insert(roomBookingAttendees).values(
       inserted.flatMap((b) =>
-        input.attendeeUserIds.map((userId) => ({ bookingId: b.id, userId })),
+        input.attendeeStaffIds.map((staffId) => ({ bookingId: b.id, staffId })),
       ),
     );
   }
@@ -260,7 +267,7 @@ export async function createBooking(
     entityId: inserted[0]?.id,
   });
 
-  const attendeeNames = await namesFor(input.attendeeUserIds);
+  const attendeeNames = await namesFor(input.attendeeStaffIds);
   const details = {
     roomName: room.name,
     title: input.title,
@@ -294,12 +301,12 @@ export async function createBooking(
   };
 }
 
-async function namesFor(userIds: number[]): Promise<string[]> {
-  if (userIds.length === 0) return [];
+async function namesFor(staffIds: number[]): Promise<string[]> {
+  if (staffIds.length === 0) return [];
   const rows = await db
-    .select({ name: users.name })
-    .from(users)
-    .where(inArray(users.id, userIds));
+    .select({ name: staff.name })
+    .from(staff)
+    .where(inArray(staff.id, staffIds));
   return rows.map((r) => r.name);
 }
 
@@ -343,6 +350,128 @@ async function sendBookingConfirmation(input: {
     text: mail.text,
   });
   return res.ok;
+}
+
+/* ------------------------------------------------------------------ */
+/* Edit                                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Change an existing booking — time, room, details, attendees.
+ *
+ * Only ever touches this one occurrence. Editing a whole series would need to
+ * decide what to do with occurrences that have already been handed over or
+ * moved, and silently rewriting those is worse than making someone edit the
+ * two dates they actually care about.
+ */
+export async function updateBooking(
+  _prev: BookingState,
+  formData: FormData,
+): Promise<BookingState> {
+  const user = await requireUser();
+  const id = Number(formData.get("id"));
+  if (!id) return { error: "Missing booking id" };
+
+  const [booking] = await db.select().from(roomBookings).where(eq(roomBookings.id, id)).limit(1);
+  if (!booking) return { error: "That booking no longer exists." };
+  if (booking.status !== "confirmed") return { error: "That booking has been cancelled." };
+  if (!isHolderOf(booking, user.id) && !hasPermission(user, "bookings.manage")) {
+    return { error: "Only the people holding this room can change it." };
+  }
+
+  const parsed = readBookingForm(formData);
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const input = parsed.data;
+
+  if (input.endMinute - input.startMinute < MIN_DURATION) {
+    return { error: `A meeting has to be at least ${MIN_DURATION} minutes long.` };
+  }
+  if (input.startMinute < DAY_START_MINUTE || input.endMinute > DAY_END_MINUTE) {
+    return {
+      error: `Bookings run between ${minuteLabel(DAY_START_MINUTE)} and ${minuteLabel(DAY_END_MINUTE)}.`,
+    };
+  }
+
+  const [room] = await db.select().from(rooms).where(eq(rooms.id, input.roomId)).limit(1);
+  if (!room || !room.active) return { error: "That room isn't available." };
+  if (input.attendeeCount > room.capacity) {
+    return { error: `${room.name} seats ${room.capacity}.` };
+  }
+
+  // Re-check the slot, excluding this booking — otherwise it would always
+  // collide with itself.
+  const clashes = await db
+    .select({
+      id: roomBookings.id,
+      date: roomBookings.date,
+      startMinute: roomBookings.startMinute,
+      endMinute: roomBookings.endMinute,
+      title: roomBookings.title,
+      bookedByName: roomBookings.bookedByName,
+    })
+    .from(roomBookings)
+    .where(
+      and(
+        eq(roomBookings.roomId, input.roomId),
+        eq(roomBookings.status, "confirmed"),
+        eq(roomBookings.date, input.date),
+        ne(roomBookings.id, id),
+      ),
+    );
+
+  const conflict = findConflicts(
+    [{ date: input.date, startMinute: input.startMinute, endMinute: input.endMinute }],
+    clashes,
+  )[0];
+  if (conflict) {
+    return {
+      error:
+        `${room.name} is already taken at ${minuteLabel(conflict.clash.startMinute)} — ` +
+        `"${conflict.clash.title}" by ${conflict.clash.bookedByName}.`,
+    };
+  }
+
+  // Moving a booking to a new day or time means the day-before reminder that
+  // may already have gone is now wrong, so let it send again.
+  const moved =
+    booking.date !== input.date ||
+    booking.startMinute !== input.startMinute ||
+    booking.endMinute !== input.endMinute;
+
+  await db
+    .update(roomBookings)
+    .set({
+      roomId: input.roomId,
+      title: input.title,
+      date: input.date,
+      startMinute: input.startMinute,
+      endMinute: input.endMinute,
+      clientName: input.clientName ?? null,
+      attendeeCount: input.attendeeCount,
+      ...(moved ? { reminderSentAt: null } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(roomBookings.id, id));
+
+  await db.delete(roomBookingAttendees).where(eq(roomBookingAttendees.bookingId, id));
+  if (input.attendeeStaffIds.length > 0) {
+    await db
+      .insert(roomBookingAttendees)
+      .values(input.attendeeStaffIds.map((staffId) => ({ bookingId: id, staffId })));
+  }
+
+  await logEvent({
+    action: "booking.update",
+    summary:
+      `Edited "${input.title}" in ${room.name} — ${longDateLabel(input.date)} ` +
+      `${slotLabel(input.startMinute, input.endMinute)}`,
+    actor: user,
+    entityType: "room_booking",
+    entityId: id,
+  });
+
+  revalidateBookingPaths();
+  return { ok: true };
 }
 
 /* ------------------------------------------------------------------ */

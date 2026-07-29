@@ -951,18 +951,25 @@ export const roomBookings = pgTable(
   ],
 );
 
-/** The internal people invited to a booking. Display only — no invites sent. */
+/**
+ * The internal people invited to a booking. Display only — no invites sent.
+ *
+ * Points at `staff`, not `users`: most of the office is on the team list but
+ * has no login, and "who is coming to this meeting" is a question about people,
+ * not about accounts. Keying it to users meant only the handful with logins
+ * could be added.
+ */
 export const roomBookingAttendees = pgTable(
   "room_booking_attendees",
   {
     bookingId: integer("booking_id")
       .notNull()
       .references(() => roomBookings.id, { onDelete: "cascade" }),
-    userId: integer("user_id")
+    staffId: integer("staff_id")
       .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+      .references(() => staff.id, { onDelete: "cascade" }),
   },
-  (t) => [primaryKey({ columns: [t.bookingId, t.userId] })],
+  (t) => [primaryKey({ columns: [t.bookingId, t.staffId] })],
 );
 
 export const stealStatusEnum = pgEnum("steal_status", [

@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { roomBookingAttendees, roomBookings, rooms, users } from "@/db/schema";
+import { roomBookingAttendees, roomBookings, rooms, staff } from "@/db/schema";
 import { appBaseUrl, bookingReminderEmail, mailConfigured, sendMail } from "@/lib/mailer";
 import { longDateLabel, slotLabel } from "@/lib/bookings";
 import { sastDateKey } from "@/lib/schedules";
@@ -54,9 +54,9 @@ export async function runBookingReminders(): Promise<{ checked: number; sent: nu
     if (!b.bookedByEmail) continue;
 
     const attendees = await db
-      .select({ name: users.name })
+      .select({ name: staff.name })
       .from(roomBookingAttendees)
-      .innerJoin(users, eq(roomBookingAttendees.userId, users.id))
+      .innerJoin(staff, eq(roomBookingAttendees.staffId, staff.id))
       .where(eq(roomBookingAttendees.bookingId, b.id));
 
     // Whoever booked it and, when it was booked on someone's behalf, whoever
