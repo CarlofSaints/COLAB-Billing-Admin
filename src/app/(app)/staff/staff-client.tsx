@@ -25,7 +25,7 @@ import {
 } from "@/app/actions/staff";
 import { inviteTeamMember, type InviteState } from "@/app/actions/team";
 import { TagChip } from "@/components/tag-chip";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -370,18 +370,52 @@ export function StaffManager({
   const [editing, setEditing] = useState<StaffRow | null>(null);
   const [query, setQuery] = useState("");
   const [companyFilter, setCompanyFilter] = useState<"all" | number>("all");
+  // Tag ids to filter by. Several at once narrows — someone must carry all of
+  // them — because "Reception AND Admin" is the question people actually ask;
+  // "anyone with either" is what the unfiltered list already shows.
+  const [tagFilter, setTagFilter] = useState<number[]>([]);
+  const [untaggedOnly, setUntaggedOnly] = useState(false);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return staff.filter((s) => {
       if (companyFilter !== "all" && s.companyId !== companyFilter) return false;
+      if (untaggedOnly && s.tags.length > 0) return false;
+      if (tagFilter.length > 0) {
+        const mine = new Set(s.tags.map((t) => t.id));
+        if (!tagFilter.every((id) => mine.has(id))) return false;
+      }
       if (!q) return true;
-      return [s.name, s.email, s.companyName, s.position, s.gender]
+      return [s.name, s.email, s.companyName, s.position, s.gender, ...s.tags.map((t) => t.name)]
         .join(" ")
         .toLowerCase()
         .includes(q);
     });
-  }, [staff, query, companyFilter]);
+  }, [staff, query, companyFilter, tagFilter, untaggedOnly]);
+
+  const toggleTagFilter = (id: number) => {
+    setUntaggedOnly(false);
+    setTagFilter((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  // How many people each tag would leave, given the other filters already on —
+  // so a chip that would empty the list says so before it's clicked.
+  const tagCounts = useMemo(() => {
+    const base = staff.filter(
+      (s) => companyFilter === "all" || s.companyId === companyFilter,
+    );
+    const counts = new Map<number, number>();
+    for (const s of base) for (const t of s.tags) counts.set(t.id, (counts.get(t.id) ?? 0) + 1);
+    return counts;
+  }, [staff, companyFilter]);
+
+  const untaggedCount = useMemo(
+    () =>
+      staff.filter(
+        (s) => (companyFilter === "all" || s.companyId === companyFilter) && s.tags.length === 0,
+      ).length,
+    [staff, companyFilter],
+  );
 
   const { sorted, sort, toggle } = useTableSort(
     filtered,
@@ -429,6 +463,18 @@ export function StaffManager({
               </option>
             ))}
           </Select>
+          {(tagFilter.length > 0 || untaggedOnly) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setTagFilter([]);
+                setUntaggedOnly(false);
+              }}
+            >
+              Clear tags
+            </Button>
+          )}
           <span className="text-sm text-muted">
             {filtered.length} of {staff.length}
           </span>
@@ -460,6 +506,53 @@ export function StaffManager({
           )}
         </div>
       </div>
+
+      {allTags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-xs font-medium uppercase tracking-wide text-muted">
+            Tags
+          </span>
+          {allTags.map((t) => {
+            const on = tagFilter.includes(t.id);
+            const count = tagCounts.get(t.id) ?? 0;
+            // A tag nobody in the current view carries is shown but faded —
+            // hiding it would make the row jump around as you filter.
+            return (
+              <TagChip
+                key={t.id}
+                name={`${t.name} ${count}`}
+                color={t.color}
+                selected={on}
+                onClick={count === 0 && !on ? undefined : () => toggleTagFilter(t.id)}
+                className={count === 0 && !on ? "opacity-40" : undefined}
+              />
+            );
+          })}
+          {untaggedCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setTagFilter([]);
+                setUntaggedOnly((v) => !v);
+              }}
+              className={cn(
+                "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
+                untaggedOnly
+                  ? "border-slate-700 bg-slate-700 text-white"
+                  : "border-line text-slate-500 hover:bg-slate-50",
+              )}
+              title="People carrying no tags at all"
+            >
+              Untagged {untaggedCount}
+            </button>
+          )}
+          {tagFilter.length > 1 && (
+            <span className="text-xs text-muted">
+              — showing people with <strong>all</strong> of these
+            </span>
+          )}
+        </div>
+      )}
 
       {staff.length === 0 ? (
         <EmptyState
