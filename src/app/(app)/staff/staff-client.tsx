@@ -24,6 +24,7 @@ import {
 } from "@/app/actions/staff";
 import { inviteTeamMember, type InviteState } from "@/app/actions/team";
 import { TagChip } from "@/components/tag-chip";
+import { formatCurrency } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +35,13 @@ import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
 import { useTableSort } from "@/lib/use-table-sort";
 
 type CompanyOpt = { id: number; name: string; type: "colab" | "sub" };
-type TagOption = { id: number; name: string; color: string | null };
+type TagOption = {
+  id: number;
+  name: string;
+  color: string | null;
+  /** Set on a billable tag — what applying it costs the person's company. */
+  costPerPerson?: number | null;
+};
 export type StaffRow = {
   id: number;
   name: string;
@@ -152,7 +159,14 @@ function StaffForm({
           <option value="No">No</option>
         </Select>
       </Field>
-      <Field label="Tags" hint={allTags.length ? "Click to add or remove." : undefined}>
+      <Field
+        label="Tags"
+        hint={
+          allTags.length
+            ? "Click to add or remove. A tag showing an amount is billable — adding it charges this person's sub-company that much a month."
+            : undefined
+        }
+      >
         {allTags.length === 0 ? (
           <p className="text-sm text-muted">No tags yet — create some on the Tags page.</p>
         ) : (
@@ -160,7 +174,9 @@ function StaffForm({
             {allTags.map((t) => (
               <TagChip
                 key={t.id}
-                name={t.name}
+                name={
+                  t.costPerPerson != null ? `${t.name} · ${formatCurrency(t.costPerPerson)}` : t.name
+                }
                 color={t.color}
                 selected={selectedTags.includes(t.id)}
                 onClick={() => toggleTag(t.id)}

@@ -396,6 +396,13 @@ export const tags = pgTable(
     id: serial("id").primaryKey(),
     name: text("name").notNull(),
     color: text("color"), // hex, e.g. "#4f46e5"
+    /**
+     * What one tagged person costs per month, or null for a plain label tag
+     * (Reception, Admin). A costed tag is billable: it keeps a fixed line item
+     * in step with it, and each company is billed this much per tagged head.
+     * The tag is the source of truth for the price — the item mirrors it.
+     */
+    costPerPerson: numeric("cost_per_person", { precision: 12, scale: 2 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("tags_name_unique").on(sql`lower(${t.name})`)],
@@ -593,20 +600,38 @@ export const fixedSplitModeEnum = pgEnum("fixed_split_mode", ["quantity", "perce
 
 // A fixed line item billed directly to companies (e.g. parking bays, or one
 // person's salary split by agreed percentages).
-export const fixedLineItems = pgTable("fixed_line_items", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  splitMode: fixedSplitModeEnum("split_mode").notNull().default("quantity"),
-  // A price per unit in "quantity" mode; the total cost in "percent" mode.
-  unitAmount: numeric("unit_amount", { precision: 12, scale: 2 }).notNull().default("0"),
-  // Hide the rand values from anyone without "View restricted values" —
-  // salaries shouldn't be readable by everyone with billing access.
-  sensitive: boolean("sensitive").notNull().default(false),
-  notes: text("notes"),
-  active: boolean("active").notNull().default(true),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const fixedLineItems = pgTable(
+  "fixed_line_items",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    splitMode: fixedSplitModeEnum("split_mode").notNull().default("quantity"),
+    /**
+     * Set when this item is driven by a costed tag (Parking, VOIP). The per
+     * company quantities are then counted live from who carries the tag rather
+     * than read from `fixed_line_allocations`, and the name/price mirror the
+     * tag. Always "quantity" mode. Clearing a tag's cost deactivates the item
+     * rather than deleting it, so account and supplier links survive.
+     */
+    tagId: integer("tag_id").references(() => tags.id, { onDelete: "set null" }),
+    // A price per unit in "quantity" mode; the total cost in "percent" mode.
+    unitAmount: numeric("unit_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+    // Hide the rand values from anyone without "View restricted values" —
+    // salaries shouldn't be readable by everyone with billing access.
+    sensitive: boolean("sensitive").notNull().default(false),
+    notes: text("notes"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  // At most one item per costed tag, so costing a tag twice can't produce two
+  // competing recurring lines.
+  (t) => [
+    uniqueIndex("fixed_item_tag_unique")
+      .on(t.tagId)
+      .where(sql`${t.tagId} is not null`),
+  ],
+);
 
 // A company's share of a fixed line item. In "quantity" mode this is a number
 // of units (Parking: OuterJoin ×3); in "percent" mode it is a percentage.

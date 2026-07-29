@@ -2,7 +2,18 @@
 
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { Ruler, Users, Receipt, Plus, Trash2, Pencil, DoorOpen, Lock } from "lucide-react";
+import Link from "next/link";
+import {
+  Ruler,
+  Users,
+  Receipt,
+  Plus,
+  Trash2,
+  Pencil,
+  DoorOpen,
+  Lock,
+  Tag as TagIcon,
+} from "lucide-react";
 import { SensitiveAmount } from "@/components/sensitive-amount";
 import {
   saveSquareMetres,
@@ -37,6 +48,8 @@ type FixedItemRow = {
   unitAmount: number | null;
   sensitive: boolean;
   notes: string;
+  /** Set when a costed tag owns this item — quantities are counted, not typed. */
+  tagName: string | null;
   allocations: FixedAllocation[];
 };
 type ControlCompany = {
@@ -630,7 +643,8 @@ function FixedTab({
           <CardTitle>Fixed line items</CardTitle>
           <CardDescription>
             Costs billed directly to companies — e.g. parking. One item (shared name & price) can
-            cover several companies, each with its own quantity.
+            cover several companies, each with its own quantity. Items marked with a tag count
+            their quantities from who carries that tag, and are edited on the User Tags page.
           </CardDescription>
         </div>
         <div className="flex items-center gap-3">
@@ -663,6 +677,11 @@ function FixedTab({
                         <Lock className="mr-1 h-3 w-3" /> Restricted
                       </Badge>
                     )}
+                    {it.tagName && (
+                      <Badge tone="brand">
+                        <TagIcon className="mr-1 h-3 w-3" /> Tag: {it.tagName}
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 text-xs text-muted">
                     <SensitiveAmount amount={it.unitAmount} canUnlock={canUnlock} />
@@ -674,27 +693,41 @@ function FixedTab({
                   <span className="text-sm font-medium text-slate-700">
                     <SensitiveAmount amount={itemTotal(it)} canUnlock={canUnlock} />
                   </span>
-                  {canManage && (
-                    <>
-                      <Button variant="ghost" size="sm" onClick={() => setEditing(it)}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          if (confirm(`Remove “${it.name}”?`)) deleteFixedItem(it.id);
-                        }}
+                  {/* A tag owns its item — editing it here would be overwritten
+                      the next time the tag is saved, so send them to the tag. */}
+                  {canManage &&
+                    (it.tagName ? (
+                      <Link
+                        href="/tags"
+                        className="text-xs font-medium text-brand-700 hover:underline"
                       >
-                        <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                      </Button>
-                    </>
-                  )}
+                        Edit on Tags
+                      </Link>
+                    ) : (
+                      <>
+                        <Button variant="ghost" size="sm" onClick={() => setEditing(it)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            if (confirm(`Remove “${it.name}”?`)) deleteFixedItem(it.id);
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                        </Button>
+                      </>
+                    ))}
                 </div>
               </div>
               <div className="divide-y divide-line">
                 {it.allocations.length === 0 ? (
-                  <div className="px-4 py-2 text-xs text-muted">Not assigned to any company.</div>
+                  <div className="px-4 py-2 text-xs text-muted">
+                    {it.tagName
+                      ? `Nobody billable carries the "${it.tagName}" tag yet, so this charges nothing.`
+                      : "Not assigned to any company."}
+                  </div>
                 ) : (
                   it.allocations.map((a) => (
                     <div

@@ -263,6 +263,16 @@ export async function saveFixedItem(
 
   let itemId = id;
   if (id) {
+    // A costed tag owns its item and rewrites it on every tag save, so an edit
+    // here would silently vanish. The UI hides the button; this is the backstop.
+    const [existing] = await db
+      .select({ tagId: fixedLineItems.tagId })
+      .from(fixedLineItems)
+      .where(eq(fixedLineItems.id, id))
+      .limit(1);
+    if (existing?.tagId != null) {
+      return { error: "This item is driven by a tag — change its cost on the User Tags page." };
+    }
     await db
       .update(fixedLineItems)
       .set({
@@ -306,6 +316,14 @@ export async function saveFixedItem(
 
 export async function deleteFixedItem(id: number) {
   const user = await requirePermission("controls.manage");
+  // Tag-owned items are removed by clearing the tag's cost, not from here —
+  // deleting would blank the fixedLineItemId on any account linked to it.
+  const [existing] = await db
+    .select({ tagId: fixedLineItems.tagId })
+    .from(fixedLineItems)
+    .where(eq(fixedLineItems.id, id))
+    .limit(1);
+  if (existing?.tagId != null) return;
   await db.delete(fixedLineItems).where(eq(fixedLineItems.id, id));
   await logEvent({
     action: "controls.fixed_delete",

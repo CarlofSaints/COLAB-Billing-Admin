@@ -13,6 +13,7 @@ import {
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { TOTAL_SQM_KEY, RENT_AMOUNT_KEY } from "@/lib/controls";
 import { maskAmount, revealState } from "@/lib/sensitive";
+import { loadFixedAllocations, tagNames } from "@/lib/tag-billing";
 import { PageHeader } from "@/components/ui/page";
 import { RevealToggle } from "@/components/sensitive-amount";
 import { ControlsManager } from "./controls-client";
@@ -58,6 +59,21 @@ export default async function ControlsPage() {
     .from(fixedLineAllocations)
     .innerJoin(companies, eq(fixedLineAllocations.companyId, companies.id));
 
+  // Tag-driven items get their quantities counted from who carries the tag,
+  // through the same helper the invoice run uses.
+  const resolvedAllocs = await loadFixedAllocations(
+    items,
+    fixedAllocs.map((a) => ({
+      fixedLineItemId: a.itemId,
+      companyId: a.companyId,
+      quantity: a.quantity,
+    })),
+  );
+  const itemTagNames = await tagNames(
+    items.map((i) => i.tagId).filter((id): id is number => id !== null),
+  );
+  const companyNameById = new Map(subs.map((c) => [c.id, c.name]));
+
   const fixedData = items.map((it) => ({
     id: it.id,
     name: it.name,
@@ -66,13 +82,12 @@ export default async function ControlsPage() {
     // A restricted amount is replaced with null before it leaves the server.
     unitAmount: maskAmount(Number(it.unitAmount), it.sensitive, reveal.unlocked),
     notes: it.notes ?? "",
-    allocations: fixedAllocs
-      .filter((a) => a.itemId === it.id)
-      .map((a) => ({
-        companyId: a.companyId,
-        companyName: a.companyName,
-        quantity: Number(a.quantity),
-      })),
+    tagName: it.tagId === null ? null : (itemTagNames.get(it.tagId) ?? null),
+    allocations: (resolvedAllocs.get(it.id) ?? []).map((a) => ({
+      companyId: a.companyId,
+      companyName: companyNameById.get(a.companyId) ?? "—",
+      quantity: a.quantity,
+    })),
   }));
 
   const totalSetting = await db

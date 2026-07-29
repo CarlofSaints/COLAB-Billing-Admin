@@ -37,10 +37,18 @@ export default async function StaffPage() {
     .innerJoin(companies, eq(staff.companyId, companies.id))
     .orderBy(asc(staff.name));
 
-  const allTags = await db
-    .select({ id: tags.id, name: tags.name, color: tags.color })
+  const allTagRows = await db
+    .select({ id: tags.id, name: tags.name, color: tags.color, cost: tags.costPerPerson })
     .from(tags)
     .orderBy(asc(tags.name));
+  // Applying a costed tag bills the person's sub-company, so the form has to
+  // say what it costs before it's clicked.
+  const allTags = allTagRows.map((t) => ({
+    id: t.id,
+    name: t.name,
+    color: t.color,
+    costPerPerson: t.cost === null ? null : Number(t.cost),
+  }));
 
   const tagLinks = await db
     .select({ staffId: staffTags.staffId, id: tags.id, name: tags.name, color: tags.color })

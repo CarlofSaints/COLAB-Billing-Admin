@@ -25,6 +25,7 @@ import { RENT_AMOUNT_KEY, TOTAL_SQM_KEY } from "./controls";
 import { fetchExpenseAccounts } from "./xero";
 import { getMonthCosts } from "./month-costs";
 import { periodLabel } from "./periods";
+import { loadFixedAllocations } from "./tag-billing";
 import { METHOD_BY_KEY } from "./expense-accounts";
 import type { AccountMethod, PercentEntry } from "./expense-accounts";
 
@@ -254,11 +255,13 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       .where(eq(fixedLineItems.active, true))
       .orderBy(asc(fixedLineItems.name));
     const allocations = await db.select().from(fixedLineAllocations);
+    // Tag-driven items count their quantities from who carries the tag.
+    const resolved = await loadFixedAllocations(items, allocations);
 
     for (const item of items) {
       const spec = { splitMode: item.splitMode, unitAmount: Number(item.unitAmount) };
-      for (const alloc of allocations.filter((a) => a.fixedLineItemId === item.id)) {
-        const share = Number(alloc.quantity);
+      for (const alloc of resolved.get(item.id) ?? []) {
+        const share = alloc.quantity;
         const amount = fixedAllocationAmount(spec, share);
         if (amount <= 0) continue;
         push(alloc.companyId, {
@@ -268,7 +271,9 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
           detail: [
             spec.splitMode === "percent"
               ? `${share}% of ${formatRand(spec.unitAmount)}`
-              : `${share} × ${formatRand(spec.unitAmount)}`,
+              : alloc.fromTag
+                ? `${share} × ${formatRand(spec.unitAmount)} (tagged team members)`
+                : `${share} × ${formatRand(spec.unitAmount)}`,
           ],
         });
       }
@@ -340,15 +345,20 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     // What each fixed line item recovers from the companies each month.
     const fixedItemRows = await db.select().from(fixedLineItems);
     const fixedAllocRows = await db.select().from(fixedLineAllocations);
+    // Same resolution as the recurring run above — otherwise a tagged item
+    // would recover a different amount here than it billed, and the balance
+    // would be wrong by exactly that difference.
+    const resolvedRecovery = await loadFixedAllocations(fixedItemRows, fixedAllocRows);
     const recoveredByItem = new Map<number, number>();
     for (const item of fixedItemRows) {
+      // An inactive item never went out on the recurring invoice, so it
+      // recovers nothing — deducting it here would under-recharge silently.
+      if (!item.active) continue;
       recoveredByItem.set(
         item.id,
         fixedItemTotal(
           { splitMode: item.splitMode, unitAmount: Number(item.unitAmount) },
-          fixedAllocRows
-            .filter((a) => a.fixedLineItemId === item.id)
-            .map((a) => Number(a.quantity)),
+          (resolvedRecovery.get(item.id) ?? []).map((a) => a.quantity),
         ),
       );
     }
