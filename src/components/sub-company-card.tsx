@@ -20,8 +20,11 @@ export function SubCompanyCard({
   href?: string;
   staffCount?: number;
   sqm?: number;
-  /** Each item's name plus how this company's share reads, e.g. "×3" or "25%". */
-  fixedItems?: { name: string; share: string }[];
+  /**
+   * Each item's name, how this company's share reads ("×3", "25%", or
+   * "3 tagged" for a costed tag), and what it comes to.
+   */
+  fixedItems?: { name: string; share: string; amount?: number }[];
   /** Monthly rent share, from the effective floor-space calculation. */
   rent?: number;
   /** Everything else billed monthly (currently the fixed line items). */
@@ -102,10 +105,25 @@ export function SubCompanyCard({
                 </span>
               </div>
               {fixedItems && fixedItems.length > 0 && (
-                <div className="mt-0.5 text-[11px] leading-tight text-muted">
-                  {/* Always show the share — a bare "Parking Bays" next to a
-                      "Parking Bays ×3" reads as if the count is missing. */}
-                  {fixedItems.map((f) => `${f.name} ${f.share}`).join(", ")}
+                <div className="mt-1 space-y-0.5">
+                  {/* Itemised rather than a comma-separated run-on: a costed
+                      tag's line is a real charge, and "Parking 3 tagged" with
+                      no amount next to it invites the question anyway. */}
+                  {fixedItems.map((f) => (
+                    <div
+                      key={f.name}
+                      className="flex items-center justify-between gap-2 text-[11px] leading-tight text-muted"
+                    >
+                      <span className="truncate">
+                        {f.name} <span className="text-slate-400">{f.share}</span>
+                      </span>
+                      {typeof f.amount === "number" && (
+                        <span className="shrink-0 tabular-nums text-slate-600">
+                          {formatCurrency(f.amount)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

@@ -14,7 +14,8 @@ import {
 } from "@/db/schema";
 import { requireUser, hasPermission } from "@/lib/auth";
 import { buildPreview } from "@/lib/invoice-engine";
-import { fixedAllocationLabel } from "@/lib/billing-calc";
+import { fixedAllocationAmount, fixedAllocationLabel } from "@/lib/billing-calc";
+import { loadFixedAllocations } from "@/lib/tag-billing";
 import { defaultPeriod, isPeriod, periodLabel, recentPeriods } from "@/lib/periods";
 import { Card, CardContent } from "@/components/ui/card";
 import { SubCompanyCard } from "@/components/sub-company-card";
@@ -67,23 +68,35 @@ export default async function Dashboard({
     .from(companyAllocations);
   const sqmByCompany = new Map(allocations.map((a) => [a.companyId, Number(a.sqm)]));
 
-  const fixedRows = await db
-    .select({
-      companyId: fixedLineAllocations.companyId,
-      name: fixedLineItems.name,
-      quantity: fixedLineAllocations.quantity,
-      splitMode: fixedLineItems.splitMode,
-    })
-    .from(fixedLineAllocations)
-    .innerJoin(fixedLineItems, eq(fixedLineAllocations.fixedLineItemId, fixedLineItems.id))
+  // The per-company breakdown on each card. Resolved through the same helper
+  // the invoice run uses, so a costed tag (Parking, VOIP) shows up here with
+  // its live head count — reading fixed_line_allocations directly would miss
+  // tag-driven items entirely, since they have no allocation rows.
+  const activeItems = await db
+    .select()
+    .from(fixedLineItems)
     .where(eq(fixedLineItems.active, true));
-  const fixedByCompany = new Map<number, { name: string; share: string }[]>();
-  for (const f of fixedRows) {
-    if (!fixedByCompany.has(f.companyId)) fixedByCompany.set(f.companyId, []);
-    fixedByCompany
-      .get(f.companyId)!
-      .push({ name: f.name, share: fixedAllocationLabel(f.splitMode, Number(f.quantity)) });
+  const manualAllocs = await db.select().from(fixedLineAllocations);
+  const resolvedFixed = await loadFixedAllocations(activeItems, manualAllocs);
+
+  const fixedByCompany = new Map<number, { name: string; share: string; amount: number }[]>();
+  for (const item of activeItems) {
+    const spec = { splitMode: item.splitMode, unitAmount: Number(item.unitAmount) };
+    for (const alloc of resolvedFixed.get(item.id) ?? []) {
+      const amount = fixedAllocationAmount(spec, alloc.quantity);
+      if (amount <= 0) continue;
+      if (!fixedByCompany.has(alloc.companyId)) fixedByCompany.set(alloc.companyId, []);
+      fixedByCompany.get(alloc.companyId)!.push({
+        name: item.name,
+        // A tag-driven item reads as a head count, because that's what it is.
+        share: alloc.fromTag
+          ? `${alloc.quantity} tagged`
+          : fixedAllocationLabel(spec.splitMode, alloc.quantity),
+        amount,
+      });
+    }
   }
+  for (const list of fixedByCompany.values()) list.sort((a, b) => b.amount - a.amount);
 
   // The card figures come from the same engine that builds the invoices, so
   // what a company sees here is exactly what it will be billed.

@@ -53,8 +53,14 @@ function prettyDate(iso: string): string {
 
 function AssigneeSelect({ slot, people }: { slot: Slot; people: Person[] }) {
   const [, start] = useTransition();
+  // Only people tagged for reception. Everyone else was previously listed
+  // under "Others", which made it far too easy to put the wrong person on the
+  // desk. To add someone, tag them — that's the one place it's decided.
   const eligible = people.filter((p) => p.eligible);
-  const others = people.filter((p) => !p.eligible);
+  // Whoever is already on this slot stays selectable even if their tag has
+  // since been removed, so opening the rota can't silently reassign them.
+  const current = people.find((p) => p.id === slot.staffId && !p.eligible);
+
   return (
     <select
       defaultValue={slot.staffId ?? ""}
@@ -64,23 +70,18 @@ function AssigneeSelect({ slot, people }: { slot: Slot; people: Person[] }) {
       className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-100"
     >
       <option value="">— Unassigned —</option>
-      {eligible.length > 0 && (
-        <optgroup label="Reception">
-          {eligible.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </optgroup>
+      {eligible.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+        </option>
+      ))}
+      {current && (
+        <option value={current.id}>{current.name} (no longer tagged Reception)</option>
       )}
-      {others.length > 0 && (
-        <optgroup label="Others">
-          {others.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </optgroup>
+      {eligible.length === 0 && !current && (
+        <option value="" disabled>
+          Nobody is tagged Reception yet
+        </option>
       )}
     </select>
   );

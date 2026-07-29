@@ -31,6 +31,8 @@ export default async function StaffPage() {
       active: staff.active,
       includeInBilling: staff.includeInBilling,
       userId: staff.userId,
+      dateOfBirth: staff.dateOfBirth,
+      dateOfBirthAdmin: staff.dateOfBirthAdmin,
       companyName: companies.name,
     })
     .from(staff)
@@ -73,6 +75,8 @@ export default async function StaffPage() {
     active: s.active,
     includeInBilling: s.includeInBilling,
     hasAccount: s.userId != null,
+    dateOfBirthSelf: s.dateOfBirth,
+    dateOfBirthAdmin: s.dateOfBirthAdmin,
     tags: tagsByStaff.get(s.id) ?? [],
   }));
 

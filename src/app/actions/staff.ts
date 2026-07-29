@@ -35,6 +35,13 @@ const staffSchema = z.object({
   position: z.string().trim().optional(),
   companyId: z.coerce.number().int().positive("Choose a company"),
   includeInBilling: z.boolean(),
+  // Writes to `dateOfBirthAdmin` only. The person's own `dateOfBirth` is set
+  // from My Profile and is never touched from here.
+  dateOfBirthAdmin: z
+    .string()
+    .trim()
+    .refine((v) => v === "" || /^\d{4}-\d{2}-\d{2}$/.test(v), "Enter a valid date of birth")
+    .transform((v) => (v === "" ? null : v)),
 });
 
 export type ActionState = { error?: string; ok?: boolean };
@@ -48,6 +55,7 @@ function parse(formData: FormData) {
     position: formData.get("position") || undefined,
     companyId: formData.get("companyId"),
     includeInBilling: parseYesNo(formData.get("includeInBilling")),
+    dateOfBirthAdmin: String(formData.get("dateOfBirthAdmin") ?? ""),
   });
 }
 
@@ -77,7 +85,19 @@ export async function updateStaff(_prev: ActionState, formData: FormData): Promi
   const parsed = parse(formData);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  await db.update(staff).set({ ...parsed.data, updatedAt: new Date() }).where(eq(staff.id, id));
+  // Where the person has set their own date of birth the form disables the
+  // admin field — and a disabled input submits nothing, which would read as
+  // "clear it". Leave the stored admin date alone in that case.
+  const [existing] = await db
+    .select({ dateOfBirth: staff.dateOfBirth })
+    .from(staff)
+    .where(eq(staff.id, id))
+    .limit(1);
+  const values = existing?.dateOfBirth
+    ? (({ dateOfBirthAdmin: _ignored, ...rest }) => rest)(parsed.data)
+    : parsed.data;
+
+  await db.update(staff).set({ ...values, updatedAt: new Date() }).where(eq(staff.id, id));
   await syncTags(id, formData);
   await logEvent({
     action: "staff.update",

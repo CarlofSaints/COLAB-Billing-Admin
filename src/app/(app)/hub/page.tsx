@@ -58,12 +58,15 @@ export default async function HubPage() {
   const today = now.toISOString().slice(0, 10);
   const joke = JOKES[dayOfYear(now) % JOKES.length];
 
-  // Birthdays this month, sorted by day.
+  // Birthdays this month, sorted by day. Falls back to the date an admin
+  // entered where the person hasn't given their own — the whole reason the
+  // admin field exists is to stop gaps here.
+  const effectiveDob = sql`coalesce(${staff.dateOfBirth}, ${staff.dateOfBirthAdmin})`;
   const birthdays = await db
     .select({
       id: staff.id,
       name: staff.name,
-      dob: staff.dateOfBirth,
+      dob: effectiveDob.mapWith(String),
       photoUrl: staff.photoUrl,
       favouriteColour: staff.favouriteColour,
       companyName: companies.name,
@@ -73,11 +76,11 @@ export default async function HubPage() {
     .where(
       and(
         eq(staff.active, true),
-        sql`${staff.dateOfBirth} is not null`,
-        sql`extract(month from ${staff.dateOfBirth}) = ${month}`,
+        sql`${effectiveDob} is not null`,
+        sql`extract(month from ${effectiveDob}) = ${month}`,
       ),
     )
-    .orderBy(sql`extract(day from ${staff.dateOfBirth})`);
+    .orderBy(sql`extract(day from ${effectiveDob})`);
 
   const events = await db
     .select({

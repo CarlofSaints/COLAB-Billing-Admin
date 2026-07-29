@@ -208,7 +208,19 @@ export const staff = pgTable(
     // links user↔team-member by email (the UID), but a nullable FK lets us
     // tell "has an account" from "profile filled in" and survives email edits.
     userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * The person's own date of birth, set by them on My Profile. Always wins
+     * over `dateOfBirthAdmin` — their own answer is the authoritative one.
+     */
     dateOfBirth: date("date_of_birth"), // drives "birthdays this month"
+    /**
+     * An admin's entry for someone who hasn't filled theirs in. Kept in a
+     * separate column rather than writing to `dateOfBirth`, so that the day the
+     * person does set their own it takes over automatically — and an admin's
+     * guess can never quietly overwrite what someone said about themselves.
+     * Read through `effectiveDateOfBirth()` in lib/staff-profile.ts.
+     */
+    dateOfBirthAdmin: date("date_of_birth_admin"),
     bio: text("bio"), // free text: "what I do at COLAB"
     favouriteColour: text("favourite_colour"), // stored as hex, e.g. "#4f46e5"
     hobbies: jsonb("hobbies").$type<string[]>(), // rendered as chips

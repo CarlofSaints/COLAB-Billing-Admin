@@ -10,6 +10,7 @@ import {
   Trash2,
   Search,
   Download,
+  FileSpreadsheet,
   UserPlus,
   CheckCircle2,
   TriangleAlert,
@@ -54,6 +55,10 @@ export type StaffRow = {
   active: boolean;
   includeInBilling: boolean;
   hasAccount: boolean;
+  /** What the person set on My Profile — read-only here, and it always wins. */
+  dateOfBirthSelf: string | null;
+  /** The admin's stand-in, used only while the person hasn't set their own. */
+  dateOfBirthAdmin: string | null;
   tags: TagOption[];
 };
 
@@ -144,6 +149,27 @@ function StaffForm({
           <Input name="position" defaultValue={person?.position} />
         </Field>
       </div>
+      <Field
+        label="Date of birth"
+        hint={
+          person?.dateOfBirthSelf
+            ? "They've set this themselves on My Profile, so it's theirs to change — anything entered here is ignored while that stands."
+            : "For the birthday list on the Team Dashboard. If they later fill it in on My Profile, their own answer takes over."
+        }
+      >
+        <Input
+          name="dateOfBirthAdmin"
+          type="date"
+          defaultValue={person?.dateOfBirthAdmin ?? ""}
+          disabled={!!person?.dateOfBirthSelf}
+          className="max-w-52"
+        />
+      </Field>
+      {person?.dateOfBirthSelf && (
+        <p className="-mt-2 text-xs text-muted">
+          Set by {person.name.split(" ")[0]}: <strong>{person.dateOfBirthSelf}</strong>
+        </p>
+      )}
       <Field label="Company">
         <CompanySelect companies={companies} defaultValue={person?.companyId} />
       </Field>
@@ -407,22 +433,32 @@ export function StaffManager({
             {filtered.length} of {staff.length}
           </span>
         </div>
-        {canManage && (
-          <div className="flex flex-wrap gap-2">
-            <a
-              href="/api/staff/template"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              <Download className="h-4 w-4" /> Template
-            </a>
-            <Button variant="outline" onClick={() => setImporting(true)}>
-              <Upload className="h-4 w-4" /> Import Excel
-            </Button>
-            <Button onClick={() => setAdding(true)}>
-              <Plus className="h-4 w-4" /> Add team member
-            </Button>
-          </div>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {/* Exporting is a read, so anyone who can see the list can take it. */}
+          <a
+            href="/api/staff/export"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+            title="Every field, plus a 1/0 column per tag"
+          >
+            <FileSpreadsheet className="h-4 w-4" /> Export to Excel
+          </a>
+          {canManage && (
+            <>
+              <a
+                href="/api/staff/template"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                <Download className="h-4 w-4" /> Template
+              </a>
+              <Button variant="outline" onClick={() => setImporting(true)}>
+                <Upload className="h-4 w-4" /> Import Excel
+              </Button>
+              <Button onClick={() => setAdding(true)}>
+                <Plus className="h-4 w-4" /> Add team member
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {staff.length === 0 ? (
