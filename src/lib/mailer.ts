@@ -6,9 +6,14 @@ import { graphConfigured, graphSender, sendViaGraph } from "./graph-mail";
 // Next request (see scripts/preview-emails.ts). Re-exported here because every
 // caller already imports its template and `sendMail` from the same place.
 export {
+  bookingConfirmedEmail,
+  bookingReminderEmail,
   credentialsEmail,
   hubInviteEmail,
   issueReportedEmail,
+  roomStealApprovedEmail,
+  roomStealDeclinedEmail,
+  roomStealRequestEmail,
   signupNotifyEmail,
   taskAssignedEmail,
   taskCreatedEmail,

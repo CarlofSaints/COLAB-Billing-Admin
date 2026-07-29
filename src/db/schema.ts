@@ -851,6 +851,146 @@ export const activityLog = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Meeting rooms & bookings                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A bookable meeting room. `colour` tints the room's blocks on the calendar,
+ * the same way a tag colours its chip.
+ */
+export const rooms = pgTable(
+  "rooms",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    capacity: integer("capacity").notNull().default(1),
+    color: text("color"), // hex, e.g. "#4f46e5"
+    notes: text("notes"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("rooms_name_unique").on(sql`lower(${t.name})`)],
+);
+
+export const bookingStatusEnum = pgEnum("booking_status", ["confirmed", "cancelled"]);
+
+/**
+ * One booking of one room for one slot on one day.
+ *
+ * Times are `date` + minutes-from-midnight, the same shape as `reception_slots`
+ * — the office is entirely in SAST and this keeps every comparison a plain
+ * integer, with no timezone to get wrong on a server running UTC.
+ *
+ * A recurring booking is **expanded into one row per occurrence** sharing a
+ * `seriesId`, rather than stored as a rule and evaluated on read. That way a
+ * single occurrence can be moved, cancelled or stolen without inventing
+ * exception records, which is also how Outlook behaves in practice.
+ */
+export const roomBookings = pgTable(
+  "room_bookings",
+  {
+    id: serial("id").primaryKey(),
+    roomId: integer("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    date: date("date").notNull(),
+    startMinute: integer("start_minute").notNull(),
+    endMinute: integer("end_minute").notNull(),
+    // Who holds the room. The name and email are snapshotted so a reminder
+    // still knows where to go if the user is later renamed or deactivated.
+    bookedByUserId: integer("booked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    bookedByName: text("booked_by_name").notNull(),
+    bookedByEmail: text("booked_by_email").notNull(),
+    clientName: text("client_name"),
+    attendeeCount: integer("attendee_count").notNull().default(1),
+    // Groups the occurrences of one recurring booking.
+    seriesId: text("series_id"),
+    // Human description of the recurrence, e.g. "Every week on Mon, Wed".
+    recurrenceLabel: text("recurrence_label"),
+    status: bookingStatusEnum("status").notNull().default("confirmed"),
+    cancelReason: text("cancel_reason"),
+    // Set once the day-before reminder has gone, so the daily cron can run
+    // twice without emailing twice.
+    reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("room_bookings_room_date_idx").on(t.roomId, t.date),
+    index("room_bookings_date_idx").on(t.date),
+    index("room_bookings_series_idx").on(t.seriesId),
+  ],
+);
+
+/** The internal people invited to a booking. Display only — no invites sent. */
+export const roomBookingAttendees = pgTable(
+  "room_booking_attendees",
+  {
+    bookingId: integer("booking_id")
+      .notNull()
+      .references(() => roomBookings.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.bookingId, t.userId] })],
+);
+
+export const stealStatusEnum = pgEnum("steal_status", [
+  "pending",
+  "approved",
+  "declined",
+  "withdrawn",
+]);
+
+/**
+ * "Can I please have the room?" — a request from one user to the holder of a
+ * booking.
+ *
+ * The request carries the requester's own meeting details, not just a plea, so
+ * that approving it can hand the slot straight over. Freeing the slot and
+ * telling them to re-book would leave a gap for someone else to take it.
+ */
+export const roomStealRequests = pgTable(
+  "room_steal_requests",
+  {
+    id: serial("id").primaryKey(),
+    bookingId: integer("booking_id")
+      .notNull()
+      .references(() => roomBookings.id, { onDelete: "cascade" }),
+    requesterUserId: integer("requester_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    requesterName: text("requester_name").notNull(),
+    requesterEmail: text("requester_email").notNull(),
+    /** Why they need it — the case they're making to the current holder. */
+    message: text("message").notNull(),
+    /** What they'd put in the room if they got it. */
+    title: text("title").notNull(),
+    clientName: text("client_name"),
+    attendeeCount: integer("attendee_count").notNull().default(1),
+    status: stealStatusEnum("status").notNull().default("pending"),
+    declineReason: text("decline_reason"),
+    /**
+     * Unguessable id for the Approve / Decline links in the email. It names the
+     * request, it does not authenticate — the responder still has to be signed
+     * in as the booking's holder.
+     */
+    token: text("token").notNull(),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("steal_token_unique").on(t.token),
+    index("steal_booking_idx").on(t.bookingId),
+  ],
+);
+
+/* ------------------------------------------------------------------ */
 /* Relations                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -981,3 +1121,6 @@ export type SupplierSplit = typeof supplierSplits.$inferSelect;
 export type InvoiceRun = typeof invoiceRuns.$inferSelect;
 export type InvoiceRunInvoice = typeof invoiceRunInvoices.$inferSelect;
 export type ActivityLogEntry = typeof activityLog.$inferSelect;
+export type Room = typeof rooms.$inferSelect;
+export type RoomBooking = typeof roomBookings.$inferSelect;
+export type RoomStealRequest = typeof roomStealRequests.$inferSelect;

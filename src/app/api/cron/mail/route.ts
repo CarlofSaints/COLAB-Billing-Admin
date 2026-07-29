@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { mailSchedules } from "@/db/schema";
 import { runSchedule } from "@/lib/mail-runner";
 import { runTaskReminders } from "@/lib/task-reminders";
+import { runBookingReminders } from "@/lib/booking-reminders";
 import { isDue } from "@/lib/schedules";
 import { logEvent } from "@/lib/log";
 
@@ -50,7 +51,18 @@ export async function GET(req: Request) {
     });
   }
 
-  if (due.length === 0 && tasks.sent === 0) {
+  // As do "your room is booked tomorrow" nudges.
+  const bookings = await runBookingReminders();
+  if (bookings.sent > 0) {
+    await logEvent({
+      action: "booking.reminders_sent",
+      summary: `Sent ${bookings.sent} room-booking reminder(s) for tomorrow`,
+      entityType: "room_booking",
+      actorType: "system",
+    });
+  }
+
+  if (due.length === 0 && tasks.sent === 0 && bookings.sent === 0) {
     // Recorded so there's evidence the cron is alive even on quiet days.
     await logEvent({
       action: "mail.cron_tick",
@@ -65,5 +77,6 @@ export async function GET(req: Request) {
     ran: results.length,
     results,
     taskReminders: tasks,
+    bookingReminders: bookings,
   });
 }

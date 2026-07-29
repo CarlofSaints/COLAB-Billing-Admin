@@ -76,6 +76,16 @@ export const PERMISSIONS: PermissionDef[] = [
   // Reception rota
   { key: "reception.manage", label: "Manage the reception rota", category: "Reception", sort: 147 },
 
+  // Meeting rooms. Booking itself needs only hub.view — everyone books; these
+  // two are for looking after the rooms and sorting out other people's slots.
+  { key: "rooms.manage", label: "Add / edit meeting rooms", category: "Meeting Rooms", sort: 151 },
+  {
+    key: "bookings.manage",
+    label: "Cancel or edit anyone's room booking",
+    category: "Meeting Rooms",
+    sort: 152,
+  },
+
   // Admin tasks
   { key: "tasks.view", label: "View admin tasks", category: "Admin Tasks", sort: 148 },
   { key: "tasks.manage", label: "Create & assign admin tasks", category: "Admin Tasks", sort: 149 },
@@ -152,6 +162,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "tags.manage",
     "reception.manage",
     "issues.manage",
+    "rooms.manage",
+    "bookings.manage",
   ],
 
   // Admin: the operator. Manages staff, groups, mail and runs billing —
@@ -177,6 +189,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "tags.manage",
     "reception.manage",
     "issues.manage",
+    "rooms.manage",
+    "bookings.manage",
   ],
 
   // Viewer: minimal read-only.

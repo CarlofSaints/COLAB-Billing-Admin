@@ -300,3 +300,264 @@ export function taskCreatedEmail(input: {
 
   return { subject, html, text };
 }
+
+/* ------------------------------------------------------------------ */
+/* Meeting rooms                                                       */
+/* ------------------------------------------------------------------ */
+
+type BookingDetails = {
+  roomName: string;
+  title: string;
+  dateLabel: string;
+  timeLabel: string;
+  attendeeCount: number;
+  clientName?: string | null;
+  attendees?: string[];
+  recurrenceLabel?: string | null;
+  occurrences?: number;
+};
+
+function bookingRows(b: BookingDetails): [string, string][] {
+  const rows: [string, string][] = [
+    ["Room", escapeHtml(b.roomName)],
+    ["Meeting", escapeHtml(b.title)],
+    ["When", escapeHtml(`${b.dateLabel}, ${b.timeLabel}`)],
+    ["Attendees", escapeHtml(String(b.attendeeCount))],
+  ];
+  if (b.clientName) rows.push(["Client", escapeHtml(b.clientName)]);
+  if (b.attendees && b.attendees.length > 0) {
+    rows.push(["Internal attendees", escapeHtml(b.attendees.join(", "))]);
+  }
+  if (b.recurrenceLabel) {
+    rows.push([
+      "Repeats",
+      escapeHtml(
+        b.occurrences && b.occurrences > 1
+          ? `${b.recurrenceLabel} (${b.occurrences} bookings)`
+          : b.recurrenceLabel,
+      ),
+    ]);
+  }
+  return rows;
+}
+
+function bookingTextLines(b: BookingDetails): string[] {
+  return [
+    `Room: ${b.roomName}`,
+    `Meeting: ${b.title}`,
+    `When: ${b.dateLabel}, ${b.timeLabel}`,
+    `Attendees: ${b.attendeeCount}`,
+    b.clientName ? `Client: ${b.clientName}` : "",
+    b.attendees && b.attendees.length ? `Internal attendees: ${b.attendees.join(", ")}` : "",
+    b.recurrenceLabel ? `Repeats: ${b.recurrenceLabel}` : "",
+  ].filter(Boolean);
+}
+
+/** Confirmation to whoever booked the room. */
+export function bookingConfirmedEmail(
+  input: BookingDetails & { bookerName: string; bookingsUrl: string },
+) {
+  const subject = `Room booked: ${input.roomName} — ${input.dateLabel}`;
+
+  const html = emailShell({
+    preheader: `${input.roomName} is yours on ${input.dateLabel} at ${input.timeLabel}.`,
+    eyebrow: "Booking confirmed",
+    heading: `Hi ${input.bookerName},`,
+    content: [
+      p("Your meeting room is booked. Here are the details:"),
+      detailTable(bookingRows(input)),
+      button(input.bookingsUrl, "View the room calendar"),
+      note(
+        "If someone else needs the room they can ask you for it from the calendar, and you'll get an email to approve or decline.",
+      ),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.bookerName},`,
+    "",
+    "Your meeting room is booked.",
+    "",
+    ...bookingTextLines(input),
+    "",
+    `Room calendar: ${input.bookingsUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/** The day-before nudge. */
+export function bookingReminderEmail(
+  input: BookingDetails & { bookerName: string; bookingsUrl: string },
+) {
+  const subject = `Tomorrow: ${input.roomName} — ${input.title}`;
+
+  const html = emailShell({
+    preheader: `A reminder that you have ${input.roomName} tomorrow at ${input.timeLabel}.`,
+    eyebrow: "Room booking tomorrow",
+    heading: `Hi ${input.bookerName},`,
+    content: [
+      p("A reminder that you have a meeting room booked tomorrow."),
+      detailTable(bookingRows(input)),
+      button(input.bookingsUrl, "View the room calendar"),
+      note("If you no longer need it, please cancel so someone else can use the room."),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.bookerName},`,
+    "",
+    "A reminder that you have a meeting room booked tomorrow.",
+    "",
+    ...bookingTextLines(input),
+    "",
+    `Room calendar: ${input.bookingsUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
+ * "Please can I have the room?" — to the current holder, with the two
+ * outcomes. Both links land on the same page; declining asks for a reason
+ * there rather than trying to collect one from an email.
+ */
+export function roomStealRequestEmail(input: {
+  holderName: string;
+  requesterName: string;
+  requesterMeeting: string;
+  message: string;
+  roomName: string;
+  dateLabel: string;
+  timeLabel: string;
+  yourMeeting: string;
+  approveUrl: string;
+  declineUrl: string;
+}) {
+  const subject = `${input.requesterName} is asking for ${input.roomName} — ${input.dateLabel}`;
+
+  const html = emailShell({
+    preheader: `${input.requesterName} would like your ${input.timeLabel} slot in ${input.roomName}.`,
+    eyebrow: "Room request",
+    heading: `Hi ${input.holderName},`,
+    content: [
+      p(
+        `${escapeHtml(input.requesterName)} would like the room you have booked. Nothing changes unless you say yes.`,
+      ),
+      detailTable([
+        ["Your booking", escapeHtml(input.yourMeeting)],
+        ["Room", escapeHtml(input.roomName)],
+        ["When", escapeHtml(`${input.dateLabel}, ${input.timeLabel}`)],
+        ["They need it for", escapeHtml(input.requesterMeeting)],
+      ]),
+      p("Their reason:"),
+      quote(input.message),
+      button(input.approveUrl, "Let them have it"),
+      p(link(input.declineUrl, "Or decline, and say why")),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.holderName},`,
+    "",
+    `${input.requesterName} would like the room you have booked. Nothing changes unless you say yes.`,
+    "",
+    `Your booking: ${input.yourMeeting}`,
+    `Room: ${input.roomName}`,
+    `When: ${input.dateLabel}, ${input.timeLabel}`,
+    `They need it for: ${input.requesterMeeting}`,
+    "",
+    "Their reason:",
+    input.message,
+    "",
+    `Approve: ${input.approveUrl}`,
+    `Decline: ${input.declineUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/** Outcome to the requester — approved, so the slot is now theirs. */
+export function roomStealApprovedEmail(input: {
+  requesterName: string;
+  holderName: string;
+  roomName: string;
+  dateLabel: string;
+  timeLabel: string;
+  title: string;
+  bookingsUrl: string;
+}) {
+  const subject = `You have ${input.roomName} — ${input.dateLabel}`;
+
+  const html = emailShell({
+    preheader: `${input.holderName} gave you the room.`,
+    eyebrow: "Request approved",
+    heading: `Hi ${input.requesterName},`,
+    content: [
+      p(
+        `${escapeHtml(input.holderName)} has given you the room. It is booked in your name — nothing further to do.`,
+      ),
+      detailTable([
+        ["Room", escapeHtml(input.roomName)],
+        ["Meeting", escapeHtml(input.title)],
+        ["When", escapeHtml(`${input.dateLabel}, ${input.timeLabel}`)],
+      ]),
+      button(input.bookingsUrl, "View the room calendar"),
+      note("Worth thanking them — they gave up their slot."),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.requesterName},`,
+    "",
+    `${input.holderName} has given you the room. It is booked in your name.`,
+    "",
+    `Room: ${input.roomName}`,
+    `Meeting: ${input.title}`,
+    `When: ${input.dateLabel}, ${input.timeLabel}`,
+    "",
+    `Room calendar: ${input.bookingsUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/** Outcome to the requester — declined, with the holder's reason. */
+export function roomStealDeclinedEmail(input: {
+  requesterName: string;
+  holderName: string;
+  roomName: string;
+  dateLabel: string;
+  timeLabel: string;
+  reason: string;
+  bookingsUrl: string;
+}) {
+  const subject = `${input.holderName} is keeping ${input.roomName} — ${input.dateLabel}`;
+
+  const html = emailShell({
+    preheader: `Your request for ${input.roomName} was declined.`,
+    eyebrow: "Request declined",
+    heading: `Hi ${input.requesterName},`,
+    content: [
+      p(
+        `${escapeHtml(input.holderName)} is keeping the ${escapeHtml(input.roomName)} booking on ${escapeHtml(input.dateLabel)} at ${escapeHtml(input.timeLabel)}.`,
+      ),
+      p("Their reason:"),
+      quote(input.reason),
+      button(input.bookingsUrl, "Find another slot"),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.requesterName},`,
+    "",
+    `${input.holderName} is keeping the ${input.roomName} booking on ${input.dateLabel} at ${input.timeLabel}.`,
+    "",
+    "Their reason:",
+    input.reason,
+    "",
+    `Find another slot: ${input.bookingsUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}

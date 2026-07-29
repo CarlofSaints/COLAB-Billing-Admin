@@ -23,6 +23,8 @@ import {
   ListChecks,
   Tag,
   CalendarClock,
+  CalendarDays,
+  DoorOpen,
   ScrollText,
   Plug,
   LogOut,
@@ -46,6 +48,7 @@ const SECTIONS: NavSection[] = [
     heading: "Team Hub",
     items: [
       { href: "/hub", label: "Team Dashboard", icon: Sparkles, perm: "hub.view" },
+      { href: "/bookings", label: "Room Bookings", icon: CalendarDays, perm: "hub.view" },
       { href: "/chat", label: "Chat", icon: MessagesSquare, perm: "hub.view" },
       { href: "/issues", label: "Say Something!", icon: Megaphone, perm: "hub.view" },
       { href: "/profile", label: "My Profile", icon: UserRound, perm: "profile.edit" },
@@ -77,6 +80,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { href: "/staff", label: "Team Members", icon: Users, perm: "staff.view" },
       { href: "/reception", label: "Reception Rota", icon: CalendarClock, perm: "reception.manage" },
+      { href: "/rooms", label: "Meeting Rooms", icon: DoorOpen, perm: "rooms.manage" },
       { href: "/email-groups", label: "Email Groups", icon: Mails, perm: "groups.view" },
       { href: "/mail", label: "Mail Sender", icon: Send, perm: "mail.send" },
     ],
