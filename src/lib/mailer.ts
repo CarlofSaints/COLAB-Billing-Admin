@@ -11,6 +11,7 @@ export {
   credentialsEmail,
   hubInviteEmail,
   issueReportedEmail,
+  receptionDutyReminderEmail,
   receptionSwapOutcomeEmail,
   receptionSwapRequestEmail,
   roomStealApprovedEmail,

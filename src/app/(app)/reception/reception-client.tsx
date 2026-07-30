@@ -28,10 +28,13 @@ import { cn } from "@/lib/utils";
 import {
   DAY_NAMES,
   DEFAULT_WEEKDAYS,
+  REMINDER_CRON_MINUTES,
+  REMINDER_LEAD_MINUTES,
   addDays,
   dayLabel,
   minutesToLabel,
   labelToMinutes,
+  unreachableReminderStarts,
   weekLabel,
   weekStart,
 } from "@/lib/reception";
@@ -92,6 +95,12 @@ function GenerateWeekForm({
       ? Math.ceil((endMin - startMin) / slotMin)
       : 0;
 
+  // The reminder cron is a fixed schedule in vercel.json but these times are
+  // free-form, so a grid can be built that no tick lines up with. Better to say
+  // so here than to let the nudges quietly stop arriving.
+  const unreachable =
+    startMin != null && endMin != null ? unreachableReminderStarts(startMin, endMin, slotMin) : [];
+
   return (
     <form action={action} className="space-y-4">
       <input type="hidden" name="weekStart" value={monday} />
@@ -124,6 +133,19 @@ function GenerateWeekForm({
           />
         </Field>
       </div>
+
+      {unreachable.length > 0 && (
+        <p className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <strong>No reminder for {unreachable.length} of these slots.</strong> The
+            &ldquo;you&rsquo;re on the desk in {REMINDER_LEAD_MINUTES} minutes&rdquo; email is
+            scheduled for {REMINDER_CRON_MINUTES.map((m) => `:${m}`).join(" and ")} past the hour,
+            which only lines up with shifts starting on the hour or half hour. These would go
+            unannounced: {unreachable.map(minutesToLabel).join(", ")}.
+          </span>
+        </p>
+      )}
 
       <Field label="Days">
         <div className="flex flex-wrap gap-1.5">

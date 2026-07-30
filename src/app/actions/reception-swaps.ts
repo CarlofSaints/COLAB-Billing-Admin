@@ -212,11 +212,13 @@ export async function respondToSwap(_prev: SwapState, formData: FormData): Promi
 
     await db
       .update(receptionSlots)
-      .set({ staffId: request.targetStaffId })
+      // Both slots change hands, so both nudges have to be re-armed for their
+      // new owner — otherwise the swap silently costs someone their reminder.
+      .set({ staffId: request.targetStaffId, reminderSentAt: null })
       .where(eq(receptionSlots.id, request.fromSlotId));
     await db
       .update(receptionSlots)
-      .set({ staffId: request.requesterStaffId })
+      .set({ staffId: request.requesterStaffId, reminderSentAt: null })
       .where(eq(receptionSlots.id, request.toSlotId));
   }
 

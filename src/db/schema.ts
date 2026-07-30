@@ -360,6 +360,12 @@ export const receptionSlots = pgTable(
     endMinute: integer("end_minute").notNull(),
     // Who's on the desk this slot (null = unassigned). Survives staff removal.
     staffId: integer("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    /**
+     * When the "you're on the desk shortly" nudge went out. Gates the send, so
+     * a re-run of the cron can't nudge twice. Cleared when the slot is
+     * reassigned — the new person still needs telling.
+     */
+    reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("reception_slots_date_idx").on(t.date)],

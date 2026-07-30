@@ -302,6 +302,74 @@ export function taskCreatedEmail(input: {
 }
 
 /* ------------------------------------------------------------------ */
+/* Reception rota — "you're on the desk shortly"                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The nudge that goes out shortly before someone's turn on the front desk.
+ *
+ * `minutesUntil` is the real gap at send time rather than a fixed "in 10
+ * minutes", because a cron tick can land a little late and telling someone the
+ * wrong time is worse than telling them no time at all. A run of back-to-back
+ * slots is one shift to the person standing there, so the range covers the
+ * whole stretch and only one email goes out for it.
+ */
+export function receptionDutyReminderEmail(input: {
+  name: string;
+  dateLabel: string;
+  timeLabel: string;
+  minutesUntil: number;
+  /** True when this covers several back-to-back slots merged into one shift. */
+  merged: boolean;
+  rotaUrl: string;
+}) {
+  const when =
+    input.minutesUntil <= 0
+      ? "now"
+      : `in ${input.minutesUntil} minute${input.minutesUntil === 1 ? "" : "s"}`;
+
+  const subject =
+    input.minutesUntil <= 0
+      ? `You're on the front desk now — ${input.timeLabel}`
+      : `You're on the front desk in ${input.minutesUntil} minutes — ${input.timeLabel}`;
+
+  const html = emailShell({
+    preheader: `Your reception shift starts ${when} (${input.timeLabel}).`,
+    eyebrow: "Reception rota",
+    heading: `Hi ${escapeHtml(input.name)},`,
+    content: [
+      p(`Your turn on the front desk starts <strong>${escapeHtml(when)}</strong>.`),
+      detailTable([
+        ["When", escapeHtml(`${input.dateLabel}, ${input.timeLabel}`)],
+        ["Where", "The front desk"],
+      ]),
+      p("Please head over and take over from whoever is there."),
+      button(input.rotaUrl, "See the rota"),
+      note(
+        input.merged
+          ? "This covers your whole stretch at the desk, so you won't get another reminder until your next shift. If you can't make it, ask someone to swap on the rota."
+          : "If you can't make it, ask someone to swap on the rota.",
+      ),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.name},`,
+    "",
+    `Your turn on the front desk starts ${when}.`,
+    "",
+    `When: ${input.dateLabel}, ${input.timeLabel}`,
+    "Where: the front desk",
+    "",
+    "Please head over and take over from whoever is there.",
+    "",
+    `Rota: ${input.rotaUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/* ------------------------------------------------------------------ */
 /* Reception rota — shift swaps                                        */
 /* ------------------------------------------------------------------ */
 

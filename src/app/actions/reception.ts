@@ -238,7 +238,12 @@ export async function generateRota(_prev: RotaState, formData: FormData): Promis
 
 export async function setSlotAssignee(slotId: number, staffId: number | null) {
   await requirePermission("reception.manage");
-  await db.update(receptionSlots).set({ staffId }).where(eq(receptionSlots.id, slotId));
+  // Clearing the reminder matters: whoever takes the slot over still needs
+  // telling, even if the person they replaced was nudged already.
+  await db
+    .update(receptionSlots)
+    .set({ staffId, reminderSentAt: null })
+    .where(eq(receptionSlots.id, slotId));
   revalidatePath("/reception");
 }
 
@@ -253,7 +258,11 @@ export async function setSlotTimes(slotId: number, startMinute: number, endMinut
   ) {
     return;
   }
-  await db.update(receptionSlots).set({ startMinute, endMinute }).where(eq(receptionSlots.id, slotId));
+  // Moving the shift invalidates any nudge already sent for the old time.
+  await db
+    .update(receptionSlots)
+    .set({ startMinute, endMinute, reminderSentAt: null })
+    .where(eq(receptionSlots.id, slotId));
   revalidatePath("/reception");
 }
 
