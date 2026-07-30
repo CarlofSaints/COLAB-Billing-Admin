@@ -1,9 +1,7 @@
 "use server";
 
-import { inArray, eq, and, isNotNull } from "drizzle-orm";
-import { db } from "@/db";
-import { emailGroupMembers, staff } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
+import { resolveGroupRecipients } from "@/lib/group-members";
 import { logEvent } from "@/lib/log";
 import { emailShell, plainBodyHtml } from "@/lib/email-layout";
 import { mailConfigured, sendBcc } from "@/lib/mailer";
@@ -29,22 +27,10 @@ export async function sendAnnouncement(_prev: MailState, formData: FormData): Pr
   if (!subject) return { error: "Add a subject." };
   if (!body) return { error: "Write a message." };
 
-  // Distinct recipient emails from the chosen groups.
-  const rows = await db
-    .selectDistinct({ email: staff.email, name: staff.name })
-    .from(emailGroupMembers)
-    .innerJoin(staff, eq(emailGroupMembers.staffId, staff.id))
-    .where(
-      and(
-        inArray(emailGroupMembers.groupId, groupIds),
-        eq(staff.active, true),
-        isNotNull(staff.email),
-      ),
-    );
-
-  const emails = Array.from(
-    new Set(rows.map((r) => (r.email ?? "").trim()).filter((e) => e.includes("@"))),
-  );
+  // Distinct recipient emails from the chosen groups. Resolved rather than
+  // joined, so an announcement to a rule group reaches whoever matches now.
+  const recipients = await resolveGroupRecipients(groupIds);
+  const emails = recipients.map((r) => r.email!);
 
   if (emails.length === 0) {
     return { error: "The selected group(s) have no team members with email addresses." };

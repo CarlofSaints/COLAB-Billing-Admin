@@ -12,6 +12,7 @@ export default async function StaffPage() {
   const user = await getCurrentUser();
   const canManage = user ? hasPermission(user, "staff.manage") : false;
   const canInvite = user ? hasPermission(user, "team.invite") : false;
+  const canManageGroups = user ? hasPermission(user, "groups.manage") : false;
 
   const companyRows = await db
     .select({ id: companies.id, name: companies.name, type: companies.type })
@@ -92,6 +93,7 @@ export default async function StaffPage() {
         allTags={allTags}
         canManage={canManage}
         canInvite={canInvite}
+        canManageGroups={canManageGroups}
       />
     </div>
   );

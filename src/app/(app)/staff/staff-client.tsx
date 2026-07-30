@@ -14,6 +14,7 @@ import {
   UserPlus,
   CheckCircle2,
   TriangleAlert,
+  Wand2,
 } from "lucide-react";
 import {
   createStaff,
@@ -24,12 +25,18 @@ import {
   type ImportState,
 } from "@/app/actions/staff";
 import { inviteTeamMember, type InviteState } from "@/app/actions/team";
+import {
+  createGroupFromFilter,
+  type ActionState as GroupActionState,
+} from "@/app/actions/groups";
+import { GroupRuleBuilder, type RuleCompany } from "@/components/group-rule-builder";
+import type { GroupRule } from "@/lib/group-rules";
 import { TagChip } from "@/components/tag-chip";
 import { cn, formatCurrency } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input, Select, Field } from "@/components/ui/field";
+import { Input, Select, Field, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/page";
 import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
@@ -61,6 +68,70 @@ export type StaffRow = {
   dateOfBirthAdmin: string | null;
   tags: TagOption[];
 };
+
+/**
+ * Turns the filter currently on the team list into a live email group.
+ *
+ * The filter is carried across pre-filled rather than just the resulting
+ * people, because the group is the filter — tag someone Reception next month
+ * and they join it without anyone revisiting this screen. The full rule
+ * builder is shown so the filter can be widened here (gender, for instance,
+ * which the list itself only reaches through free-text search).
+ */
+function SaveFilterAsGroup({
+  seed,
+  staff,
+  tags,
+  companies,
+  genders,
+  onDone,
+}: {
+  seed: GroupRule;
+  staff: StaffRow[];
+  tags: TagOption[];
+  companies: RuleCompany[];
+  genders: string[];
+  onDone: () => void;
+}) {
+  const [state, formAction] = useActionState<GroupActionState, FormData>(
+    createGroupFromFilter,
+    {},
+  );
+  const [rule, setRule] = useState<GroupRule>(seed);
+  useEffect(() => {
+    if (state.ok) onDone();
+  }, [state.ok, onDone]);
+
+  return (
+    <form action={formAction} className="space-y-4">
+      <Field label="Group name">
+        <Input name="name" placeholder="e.g. Reception team" required autoFocus />
+      </Field>
+      <Field label="Description (optional)">
+        <Textarea name="description" placeholder="What this group is for" />
+      </Field>
+
+      <GroupRuleBuilder
+        rule={rule}
+        onChange={setRule}
+        staff={staff}
+        tags={tags}
+        companies={companies}
+        genders={genders}
+      />
+
+      {state.error && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
+      )}
+      <div className="flex justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button type="submit">Create live group</Button>
+      </div>
+    </form>
+  );
+}
 
 function SaveButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
@@ -357,12 +428,15 @@ export function StaffManager({
   allTags,
   canManage,
   canInvite,
+  canManageGroups,
 }: {
   staff: StaffRow[];
   companies: CompanyOpt[];
   allTags: TagOption[];
   canManage: boolean;
   canInvite: boolean;
+  /** `groups.manage` — gates turning the current filter into an email group. */
+  canManageGroups: boolean;
 }) {
   const showActions = canManage || canInvite;
   const [adding, setAdding] = useState(false);
@@ -375,6 +449,20 @@ export function StaffManager({
   // "anyone with either" is what the unfiltered list already shows.
   const [tagFilter, setTagFilter] = useState<number[]>([]);
   const [untaggedOnly, setUntaggedOnly] = useState(false);
+  const [savingGroup, setSavingGroup] = useState(false);
+
+  // The filter on screen, in the shape a live group stores.
+  const filterAsRule: GroupRule = useMemo(
+    () => ({
+      companyId: companyFilter === "all" ? null : companyFilter,
+      tagIds: tagFilter,
+      untaggedOnly,
+      gender: null,
+      includeInBilling: null,
+      search: query.trim() || null,
+    }),
+    [companyFilter, tagFilter, untaggedOnly, query],
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -430,6 +518,13 @@ export function StaffManager({
     { key: "name", dir: "asc" },
   );
 
+  // Genders actually recorded — a free-text column, so a fixed list would
+  // quietly exclude whatever else has been typed in.
+  const genderOptions = useMemo(
+    () => Array.from(new Set(staff.map((s) => (s.gender ?? "").trim()).filter(Boolean))).sort(),
+    [staff],
+  );
+
   // Only offer companies that actually have someone in the list.
   const companyOptions = useMemo(() => {
     const withStaff = new Set(staff.map((s) => s.companyId));
@@ -480,6 +575,11 @@ export function StaffManager({
           </span>
         </div>
         <div className="flex flex-wrap gap-2">
+          {canManageGroups && (
+            <Button variant="outline" onClick={() => setSavingGroup(true)}>
+              <Wand2 className="h-4 w-4" /> Save filter as group
+            </Button>
+          )}
           {/* Exporting is a read, so anyone who can see the list can take it. */}
           <a
             href="/api/staff/export"
@@ -678,6 +778,24 @@ export function StaffManager({
       {importing && (
         <Modal title="Import team members from Excel" open onOpenChange={setImporting}>
           <ImportForm onDone={() => setImporting(false)} />
+        </Modal>
+      )}
+      {savingGroup && (
+        <Modal
+          title="Save this filter as an email group"
+          description="The group stays in step with the filter — anyone who starts matching later is included automatically."
+          open
+          onOpenChange={(o) => !o && setSavingGroup(false)}
+          wide
+        >
+          <SaveFilterAsGroup
+            seed={filterAsRule}
+            staff={staff}
+            tags={allTags}
+            companies={companyOptions}
+            genders={genderOptions}
+            onDone={() => setSavingGroup(false)}
+          />
         </Modal>
       )}
     </div>

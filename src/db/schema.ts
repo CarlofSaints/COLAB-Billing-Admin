@@ -543,9 +543,26 @@ export const emailGroups = pgTable("email_groups", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description"),
+  /**
+   * A saved filter instead of a saved member list. When set, the group is
+   * LIVE: `email_group_members` is ignored and membership is worked out at the
+   * moment it's asked for, so tagging someone new includes them immediately.
+   * Null = an ordinary hand-picked group. See `src/lib/group-rules.ts`.
+   */
+  rule: jsonb("rule").$type<GroupRuleJson>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Mirrors `GroupRule` in lib/group-rules.ts — kept structural to avoid a cycle. */
+type GroupRuleJson = {
+  companyId: number | null;
+  tagIds: number[];
+  untaggedOnly: boolean;
+  gender: string | null;
+  includeInBilling: boolean | null;
+  search: string | null;
+};
 
 export const emailGroupMembers = pgTable(
   "email_group_members",

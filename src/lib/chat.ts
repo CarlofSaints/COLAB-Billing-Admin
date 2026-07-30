@@ -7,11 +7,10 @@ import {
   chatAttachments,
   chatParticipants,
   chatReads,
-  emailGroups,
-  emailGroupMembers,
   staff,
   users,
 } from "@/db/schema";
+import { groupsForStaff } from "@/lib/group-members";
 import type {
   ChatMessageView,
   ChatAttachmentView,
@@ -34,15 +33,24 @@ function directKey(a: number, b: number): string {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
 }
 
-/** Email groups the user belongs to (via their email → staff → group). */
+/**
+ * Email groups the user belongs to (via their email → staff → group).
+ *
+ * Resolved through the shared resolver rather than joining the member table,
+ * so a rule group ("everyone tagged Reception") shows up as a chat channel for
+ * whoever currently matches. Membership was always computed at read time here,
+ * so this changes where the answer comes from, not how it behaves.
+ */
 async function myGroups(email: string): Promise<{ id: number; name: string }[]> {
-  return db
-    .selectDistinct({ id: emailGroups.id, name: emailGroups.name })
-    .from(emailGroups)
-    .innerJoin(emailGroupMembers, eq(emailGroupMembers.groupId, emailGroups.id))
-    .innerJoin(staff, eq(staff.id, emailGroupMembers.staffId))
+  const [person] = await db
+    .select({ id: staff.id })
+    .from(staff)
     .where(sql`lower(${staff.email}) = ${email.toLowerCase()}`)
-    .orderBy(emailGroups.name);
+    .limit(1);
+  if (!person) return [];
+
+  const groups = await groupsForStaff(person.id);
+  return groups.map((g) => ({ id: g.id, name: g.name }));
 }
 
 async function ensureAll(): Promise<number> {

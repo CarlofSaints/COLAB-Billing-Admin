@@ -1,7 +1,9 @@
 import { asc, sql, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { emailGroups, emailGroupMembers, mailSchedules, staff } from "@/db/schema";
+import { emailGroups, mailSchedules } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
+import { resolveGroupMembers } from "@/lib/group-members";
+import { parseRule } from "@/lib/group-rules";
 import { mailConfigured } from "@/lib/mailer";
 import { PageHeader } from "@/components/ui/page";
 import { MailTabs } from "./mail-tabs";
@@ -14,20 +16,16 @@ export default async function MailPage() {
 
   const groups = await db.select().from(emailGroups).orderBy(asc(emailGroups.name));
 
-  // Count reachable recipients (active staff with an email) per group.
-  const counts = await db
-    .select({ groupId: emailGroupMembers.groupId, count: sql<number>`count(*)::int` })
-    .from(emailGroupMembers)
-    .innerJoin(staff, eq(emailGroupMembers.staffId, staff.id))
-    .where(eq(staff.active, true))
-    .groupBy(emailGroupMembers.groupId);
-  const countMap = new Map(counts.map((c) => [c.groupId, c.count]));
+  // Reachable recipients per group, through the shared resolver so a rule
+  // group's count is what it would actually send to right now.
+  const byGroup = await resolveGroupMembers(groups.map((g) => g.id));
 
   const groupData = groups.map((g) => ({
     id: g.id,
     name: g.name,
     description: g.description ?? "",
-    recipientCount: countMap.get(g.id) ?? 0,
+    recipientCount: (byGroup.get(g.id) ?? []).filter((m) => (m.email ?? "").includes("@")).length,
+    rule: parseRule(g.rule),
   }));
 
   const configured = mailConfigured();

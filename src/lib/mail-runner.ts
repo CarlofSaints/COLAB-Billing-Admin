@@ -1,7 +1,8 @@
 import "server-only";
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
-import { companies, emailGroupMembers, mailSchedules, staff } from "@/db/schema";
+import { companies, mailSchedules, staff } from "@/db/schema";
+import { resolveGroupRecipients } from "./group-members";
 import { appBaseUrl, sendBatch, type OutgoingMessage } from "./mailer";
 import { emailShell, plainBodyHtml } from "./email-layout";
 import { applyTokens, monthLabel } from "./schedules";
@@ -73,27 +74,20 @@ export async function buildMessages(
     return messages;
   }
 
-  // Group audience: every active group member with an email, de-duplicated.
+  // Group audience: resolved through the shared resolver so a rule group is
+  // re-evaluated on every run — which is the whole point of one. A reminder to
+  // "everyone tagged Reception" picks up this morning's new starter.
   const groupIds = schedule.groupIds ?? [];
   if (groupIds.length === 0) return [];
 
-  const rows = await db
-    .selectDistinct({ email: staff.email, name: staff.name, companyName: companies.name })
-    .from(emailGroupMembers)
-    .innerJoin(staff, eq(emailGroupMembers.staffId, staff.id))
-    .innerJoin(companies, eq(staff.companyId, companies.id))
-    .where(and(inArray(emailGroupMembers.groupId, groupIds), eq(staff.active, true), isNotNull(staff.email)));
+  const recipients = await resolveGroupRecipients(groupIds);
 
-  const seen = new Set<string>();
   const messages: OutgoingMessage[] = [];
-  for (const r of rows) {
-    const email = (r.email ?? "").trim();
-    if (!email.includes("@") || seen.has(email.toLowerCase())) continue;
-    seen.add(email.toLowerCase());
+  for (const r of recipients) {
     const values = { company: r.companyName, contact: r.name, month, link };
     const body = applyTokens(schedule.body, values);
     const subject = applyTokens(schedule.subject, values);
-    messages.push({ to: email, subject, html: bodyHtml(subject, body), text: body });
+    messages.push({ to: r.email!, subject, html: bodyHtml(subject, body), text: body });
   }
   return messages;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useState } from "react";
-import { Mails, Plus, Pencil, Trash2, Users2, Search } from "lucide-react";
+import { Mails, Plus, Pencil, Trash2, Users2, Search, Wand2 } from "lucide-react";
 import {
   createGroup,
   updateGroup,
@@ -15,19 +15,45 @@ import { Badge } from "@/components/ui/badge";
 import { Input, Textarea, Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/page";
+import {
+  GroupRuleBuilder,
+  type RuleCompany,
+  type RuleStaff,
+  type RuleTag,
+} from "@/components/group-rule-builder";
+import { EMPTY_RULE, describeRule, type GroupRule } from "@/lib/group-rules";
+import { cn } from "@/lib/utils";
 
-type StaffOpt = { id: number; name: string; email: string; companyName: string };
+type StaffOpt = RuleStaff & { email: string };
 type GroupRow = {
   id: number;
   name: string;
   description: string;
   memberIds: number[];
   memberCount: number;
+  /** Set = the group is a saved filter, re-evaluated every time it's used. */
+  rule: GroupRule | null;
 };
 
-function GroupForm({ group, onDone }: { group?: GroupRow; onDone: () => void }) {
+function GroupForm({
+  group,
+  staff,
+  tags,
+  companies,
+  genders,
+  onDone,
+}: {
+  group?: GroupRow;
+  staff: StaffOpt[];
+  tags: RuleTag[];
+  companies: RuleCompany[];
+  genders: string[];
+  onDone: () => void;
+}) {
   const action = group ? updateGroup : createGroup;
   const [state, formAction] = useActionState<ActionState, FormData>(action, {});
+  const [live, setLive] = useState(group ? group.rule != null : false);
+  const [rule, setRule] = useState<GroupRule>(group?.rule ?? EMPTY_RULE);
   useEffect(() => {
     if (state.ok) onDone();
   }, [state.ok, onDone]);
@@ -35,12 +61,65 @@ function GroupForm({ group, onDone }: { group?: GroupRow; onDone: () => void }) 
   return (
     <form action={formAction} className="space-y-4">
       {group && <input type="hidden" name="id" value={group.id} />}
+      {!live && <input type="hidden" name="membership" value="list" />}
       <Field label="Group name">
         <Input name="name" defaultValue={group?.name} placeholder="e.g. Everyone" required autoFocus />
       </Field>
       <Field label="Description (optional)">
         <Textarea name="description" defaultValue={group?.description} />
       </Field>
+
+      <Field label="Who's in it">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => setLive(false)}
+            className={cn(
+              "rounded-lg border px-3 py-2.5 text-left transition-colors",
+              !live ? "border-brand-600 bg-brand-50" : "border-line hover:bg-slate-50",
+            )}
+          >
+            <span className="block text-sm font-medium text-slate-800">Pick people</span>
+            <span className="block text-xs text-muted">
+              A fixed list you tick. It stays as you left it.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setLive(true)}
+            className={cn(
+              "rounded-lg border px-3 py-2.5 text-left transition-colors",
+              live ? "border-brand-600 bg-brand-50" : "border-line hover:bg-slate-50",
+            )}
+          >
+            <span className="block text-sm font-medium text-slate-800">
+              Live rule <Badge tone="brand">auto</Badge>
+            </span>
+            <span className="block text-xs text-muted">
+              A saved filter. Anyone who starts matching is added automatically.
+            </span>
+          </button>
+        </div>
+      </Field>
+
+      {live && (
+        <GroupRuleBuilder
+          rule={rule}
+          onChange={setRule}
+          staff={staff}
+          tags={tags}
+          companies={companies}
+          genders={genders}
+        />
+      )}
+
+      {group && group.rule != null && !live && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Switching to a picked list turns off the rule. Whoever was ticked before the group became
+          live comes back — nobody is deleted — but new people will no longer be added for you.
+        </p>
+      )}
+
       {state.error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
       )}
@@ -82,8 +161,9 @@ function MembersForm({
   const byCompany = useMemo(() => {
     const map = new Map<string, StaffOpt[]>();
     for (const s of matches) {
-      if (!map.has(s.companyName)) map.set(s.companyName, []);
-      map.get(s.companyName)!.push(s);
+      const company = s.companyName ?? "No company";
+      if (!map.has(company)) map.set(company, []);
+      map.get(company)!.push(s);
     }
     return Array.from(map.entries());
   }, [matches]);
@@ -182,15 +262,26 @@ function MembersForm({
 export function GroupsManager({
   groups,
   allStaff,
+  allTags,
+  companies,
+  genders,
   canManage,
 }: {
   groups: GroupRow[];
   allStaff: StaffOpt[];
+  allTags: RuleTag[];
+  companies: RuleCompany[];
+  genders: string[];
   canManage: boolean;
 }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<GroupRow | null>(null);
   const [members, setMembers] = useState<GroupRow | null>(null);
+
+  const lookup = {
+    companyName: (id: number) => companies.find((c) => c.id === id)?.name,
+    tagName: (id: number) => allTags.find((t) => t.id === id)?.name,
+  };
 
   return (
     <div className="space-y-4">
@@ -221,11 +312,23 @@ export function GroupsManager({
                   </Badge>
                 </div>
                 {g.description && <p className="text-sm text-muted">{g.description}</p>}
+                {g.rule && (
+                  <p className="flex items-start gap-1.5 rounded-md bg-brand-50 px-2 py-1.5 text-xs text-brand-800">
+                    <Wand2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      <strong>Live rule.</strong> {describeRule(g.rule, lookup)}
+                    </span>
+                  </p>
+                )}
                 {canManage && (
                   <div className="flex flex-wrap gap-2 pt-1">
-                    <Button variant="outline" size="sm" onClick={() => setMembers(g)}>
-                      Members
-                    </Button>
+                    {/* A rule decides the membership, so picking people would
+                        be a control that quietly does nothing. */}
+                    {!g.rule && (
+                      <Button variant="outline" size="sm" onClick={() => setMembers(g)}>
+                        Members
+                      </Button>
+                    )}
                     <Button variant="ghost" size="sm" onClick={() => setEditing(g)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
@@ -247,13 +350,31 @@ export function GroupsManager({
       )}
 
       {adding && (
-        <Modal title="New email group" open onOpenChange={setAdding}>
-          <GroupForm onDone={() => setAdding(false)} />
+        <Modal title="New email group" open onOpenChange={setAdding} wide>
+          <GroupForm
+            staff={allStaff}
+            tags={allTags}
+            companies={companies}
+            genders={genders}
+            onDone={() => setAdding(false)}
+          />
         </Modal>
       )}
       {editing && (
-        <Modal title={`Edit ${editing.name}`} open onOpenChange={(o) => !o && setEditing(null)}>
-          <GroupForm group={editing} onDone={() => setEditing(null)} />
+        <Modal
+          title={`Edit ${editing.name}`}
+          open
+          onOpenChange={(o) => !o && setEditing(null)}
+          wide
+        >
+          <GroupForm
+            group={editing}
+            staff={allStaff}
+            tags={allTags}
+            companies={companies}
+            genders={genders}
+            onDone={() => setEditing(null)}
+          />
         </Modal>
       )}
       {members && (
