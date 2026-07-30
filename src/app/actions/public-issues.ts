@@ -14,7 +14,8 @@ import {
   issueReportedEmail,
   type MailProvider,
 } from "@/lib/mailer";
-import { isIssueCategory } from "@/lib/issues";
+import { storeIssuePhoto } from "@/lib/issue-photo";
+import { resolveCategory, resolvePlace } from "@/lib/issue-lists";
 
 /**
  * "See something, say something" from a QR-code sticker — no login.
@@ -82,14 +83,17 @@ export async function reportIssuePublic(
   // success so a bot has nothing to tune against.
   if (String(formData.get("website") ?? "").trim()) return { ok: true };
 
-  const category = String(formData.get("category") ?? "").trim();
   const detail = String(formData.get("detail") ?? "").trim();
   const isTeamMember = formData.get("isTeamMember") === "on";
   const staffId = Number(formData.get("staffId"));
 
-  if (!isIssueCategory(category)) return { error: "Choose the type of issue." };
+  const chosen = await resolveCategory(Number(formData.get("categoryId")));
+  if (!chosen) return { error: "Choose the type of issue." };
   if (detail.length < 5) return { error: "Please describe the issue." };
   if (detail.length > 3000) return { error: "That's a bit long — keep it under 3000 characters." };
+
+  const place = await resolvePlace(Number(formData.get("placeId")));
+  const category = chosen.name;
 
   const ipHash = hashIp(await reporterIp());
   const since = new Date(Date.now() - RATE_WINDOW_MINUTES * 60_000);
@@ -122,11 +126,20 @@ export async function reportIssuePublic(
     }
   }
 
+  // After the rate-limit check, so a flood can't push files into the store.
+  const photo = await storeIssuePhoto(formData.get("photo"));
+  if (!photo.ok) return { error: photo.error };
+
   const [row] = await db
     .insert(issues)
     .values({
       category,
+      categoryId: chosen.id,
       detail,
+      placeId: place?.id ?? null,
+      place: place?.name ?? null,
+      photoPath: photo.pathname,
+      photoContentType: photo.contentType,
       reportedByName,
       reportedByStaffId,
       source: "public",
@@ -157,6 +170,8 @@ export async function reportIssuePublic(
         category,
         detail,
         reporterName: reportedByName,
+        place: place?.name ?? null,
+        hasPhoto: Boolean(photo.pathname),
         issuesUrl: `${await appBaseUrl()}/issues`,
         unverified: true,
       });

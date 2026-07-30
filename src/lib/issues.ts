@@ -1,22 +1,12 @@
 // Shared vocabulary for office issue tickets. Plain constants — client + server.
-
-export const ISSUE_CATEGORIES = [
-  "Security",
-  "Plumbing",
-  "Electrical",
-  "WiFi",
-  "Internet",
-  "Aircon",
-  "Admin",
-  "Signage",
-  "Other",
-] as const;
-
-export type IssueCategory = (typeof ISSUE_CATEGORIES)[number];
-
-export function isIssueCategory(v: string): v is IssueCategory {
-  return (ISSUE_CATEGORIES as readonly string[]).includes(v);
-}
+//
+// The issue TYPES used to live here as a hard-coded list. They're now rows in
+// `issue_categories`, managed from "Manage types & places" on /issues, so that
+// adding one like "Something is finished" doesn't need a deploy — see
+// `src/lib/issue-lists.ts`. Places live alongside them in `issue_places`.
+//
+// Statuses stay here on purpose: each one has behaviour attached (resolving
+// stamps `resolvedByName`/`resolvedAt`), so a new one is a code change anyway.
 
 export const ISSUE_STATUSES = [
   { value: "open", label: "Open", tone: "amber" as const },

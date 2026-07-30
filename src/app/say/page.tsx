@@ -1,4 +1,5 @@
 import { ColabWordmark } from "@/components/logo";
+import { activeCategories, activePlaces } from "@/lib/issue-lists";
 import { SayForm } from "./say-form";
 
 export const metadata = {
@@ -18,7 +19,10 @@ export const metadata = {
  */
 export const dynamic = "force-dynamic";
 
-export default function SayPage() {
+export default async function SayPage() {
+  // The two managed lists are the only thing fetched — no staff, no tickets.
+  const [categories, places] = await Promise.all([activeCategories(), activePlaces()]);
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-900 px-4 py-10">
       <div className="w-full max-w-md">
@@ -32,7 +36,7 @@ export default function SayPage() {
         </div>
 
         <div className="rounded-xl border border-slate-800 bg-white p-6 shadow-xl">
-          <SayForm />
+          <SayForm categories={categories} places={places} />
         </div>
 
         <p className="mt-6 text-center text-xs text-slate-500">

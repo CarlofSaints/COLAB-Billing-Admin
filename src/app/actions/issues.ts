@@ -14,22 +14,44 @@ import {
   issueReportedEmail,
   type MailProvider,
 } from "@/lib/mailer";
-import { isIssueCategory } from "@/lib/issues";
+import { storeIssuePhoto } from "@/lib/issue-photo";
+import { resolveCategory, resolvePlace } from "@/lib/issue-lists";
 
 export type ReportState = { error?: string; ok?: boolean; note?: string };
 
+
 export async function reportIssue(_prev: ReportState, formData: FormData): Promise<ReportState> {
   const user = await requirePermission("hub.view");
-  const category = String(formData.get("category") ?? "").trim();
+  const categoryId = Number(formData.get("categoryId"));
+  const placeId = Number(formData.get("placeId"));
   const detail = String(formData.get("detail") ?? "").trim();
 
-  if (!isIssueCategory(category)) return { error: "Choose the type of issue." };
+  const chosen = await resolveCategory(categoryId);
+  if (!chosen) return { error: "Choose the type of issue." };
   if (!detail) return { error: "Please describe the issue." };
   if (detail.length > 3000) return { error: "That's a bit long — keep it under 3000 characters." };
 
+  const place = await resolvePlace(placeId);
+
+  // Uploaded before the insert so a rejected photo doesn't leave a ticket
+  // behind that the reporter thinks failed.
+  const photo = await storeIssuePhoto(formData.get("photo"));
+  if (!photo.ok) return { error: photo.error };
+
+  const category = chosen.name;
   const [row] = await db
     .insert(issues)
-    .values({ category, detail, reportedByUserId: user.id, reportedByName: user.name })
+    .values({
+      category,
+      categoryId: chosen.id,
+      detail,
+      placeId: place?.id ?? null,
+      place: place?.name ?? null,
+      photoPath: photo.pathname,
+      photoContentType: photo.contentType,
+      reportedByUserId: user.id,
+      reportedByName: user.name,
+    })
     .returning();
 
   await logEvent({
@@ -58,6 +80,8 @@ export async function reportIssue(_prev: ReportState, formData: FormData): Promi
         category,
         detail,
         reporterName: user.name,
+        place: place?.name ?? null,
+        hasPhoto: Boolean(photo.pathname),
         issuesUrl: `${await appBaseUrl()}/issues`,
       });
       const results = await Promise.all(

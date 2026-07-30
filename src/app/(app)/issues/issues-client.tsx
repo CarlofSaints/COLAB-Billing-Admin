@@ -10,6 +10,8 @@ import {
   Inbox,
   Search,
   QrCode,
+  MapPin,
+  Settings2,
 } from "lucide-react";
 import { reportIssue, setIssueStatus, deleteIssue, type ReportState } from "@/app/actions/issues";
 import { Button } from "@/components/ui/button";
@@ -20,8 +22,9 @@ import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/page";
 import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
 import { useTableSort } from "@/lib/use-table-sort";
-import { formatDateTime } from "@/lib/utils";
-import { ISSUE_CATEGORIES, ISSUE_STATUSES, statusLabel, statusTone } from "@/lib/issues";
+import { cn, formatDateTime } from "@/lib/utils";
+import { ISSUE_STATUSES, statusLabel, statusTone } from "@/lib/issues";
+import { IssueListsManager, type ListItem } from "./issue-lists-manager";
 
 type IssueRow = {
   id: number;
@@ -31,6 +34,8 @@ type IssueRow = {
   reportedByName: string;
   /** "hub" = signed in, so the name is proven. "public" = QR page, unverified. */
   source: string;
+  place: string | null;
+  hasPhoto: boolean;
   resolvedByName: string | null;
   createdAt: string;
 };
@@ -44,7 +49,15 @@ function SubmitButton() {
   );
 }
 
-function ReportForm({ onDone }: { onDone: () => void }) {
+function ReportForm({
+  categories,
+  places,
+  onDone,
+}: {
+  categories: ListItem[];
+  places: ListItem[];
+  onDone: () => void;
+}) {
   const [state, action] = useActionState<ReportState, FormData>(reportIssue, {});
 
   if (state.ok) {
@@ -63,19 +76,41 @@ function ReportForm({ onDone }: { onDone: () => void }) {
   return (
     <form action={action} className="space-y-4">
       <Field label="Type of issue">
-        <Select name="category" defaultValue="" required>
+        <Select name="categoryId" defaultValue="" required>
           <option value="" disabled>
             Select type…
           </option>
-          {ISSUE_CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+              {c.description ? ` — ${c.description}` : ""}
             </option>
           ))}
         </Select>
       </Field>
+      {places.length > 0 && (
+        <Field label="Where is it?" hint="Optional, but it saves someone hunting for it.">
+          <Select name="placeId" defaultValue="">
+            <option value="">Not sure / not listed</option>
+            {places.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
       <Field label="Details" hint="What's wrong, and where? The more detail, the faster it's sorted.">
         <Textarea name="detail" rows={4} required autoFocus />
+      </Field>
+      <Field label="Photo (optional)" hint="A picture usually explains it faster than words.">
+        <input
+          type="file"
+          name="photo"
+          accept="image/*"
+          capture="environment"
+          className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border file:border-line file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50"
+        />
       </Field>
       {state.error && (
         <p className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -238,11 +273,33 @@ function IssuesGrid({ issues }: { issues: IssueRow[] }) {
                   </TD>
                   <TD>
                     <Badge tone="indigo">{i.category}</Badge>
+                    {i.place && (
+                      <div className="mt-1 flex items-center gap-1 text-[11px] text-muted">
+                        <MapPin className="h-3 w-3" /> {i.place}
+                      </div>
+                    )}
                   </TD>
                   <TD>
                     <div className="max-w-sm whitespace-pre-wrap text-sm text-slate-700">
                       {i.detail}
                     </div>
+                    {i.hasPhoto && (
+                      // Served through an authed route, so it only loads for a
+                      // signed-in viewer — the blob URL is never exposed.
+                      <a
+                        href={`/api/issue-photo/${i.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-block"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`/api/issue-photo/${i.id}`}
+                          alt="Photo of the reported issue"
+                          className="max-h-28 rounded-lg border border-line object-cover"
+                        />
+                      </a>
+                    )}
                     {i.status === "resolved" && i.resolvedByName && (
                       <div className="mt-0.5 text-[10px] text-muted">
                         resolved by {i.resolvedByName}
@@ -294,16 +351,35 @@ function MyReports({ issues }: { issues: IssueRow[] }) {
 
 export function IssuesClient({
   issues,
+  categories,
+  places,
+  allCategories,
+  allPlaces,
   canManage,
+  publicUrl,
 }: {
   issues: IssueRow[];
+  /** Active only — what the report form offers. */
+  categories: ListItem[];
+  places: ListItem[];
+  /** Everything including hidden, for the management panel. */
+  allCategories: ListItem[];
+  allPlaces: ListItem[];
   canManage: boolean;
+  publicUrl: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [setup, setSetup] = useState(false);
+  const [tab, setTab] = useState<"category" | "place">("category");
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        {canManage && (
+          <Button variant="outline" onClick={() => setSetup(true)}>
+            <Settings2 className="h-4 w-4" /> Manage types &amp; places
+          </Button>
+        )}
         <Modal
           title="Report an issue"
           open={open}
@@ -314,9 +390,48 @@ export function IssuesClient({
             </Button>
           }
         >
-          <ReportForm onDone={() => setOpen(false)} />
+          <ReportForm categories={categories} places={places} onDone={() => setOpen(false)} />
         </Modal>
       </div>
+
+      {setup && (
+        <Modal
+          title="Issue types & places"
+          description="These are what people choose from when reporting — here and on the QR-code page."
+          open
+          onOpenChange={(o) => !o && setSetup(false)}
+          wide
+        >
+          <div className="space-y-4">
+            <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
+              {(["category", "place"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setTab(k)}
+                  className={cn(
+                    "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    tab === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-600",
+                  )}
+                >
+                  {k === "category" ? "Issue types" : "Places"}
+                </button>
+              ))}
+            </div>
+
+            {tab === "category" ? (
+              <IssueListsManager kind="category" items={allCategories} />
+            ) : (
+              <IssueListsManager kind="place" items={allPlaces} />
+            )}
+
+            <p className="rounded-lg border border-line bg-slate-50 px-3 py-2 text-xs text-muted">
+              The public sticker page uses the same lists:{" "}
+              <span className="font-medium text-slate-700">{publicUrl}</span>
+            </p>
+          </div>
+        </Modal>
+      )}
 
       <h2 className="text-sm font-semibold text-slate-700">
         {canManage ? "All submissions" : "Your reports"}

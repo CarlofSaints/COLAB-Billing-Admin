@@ -243,16 +243,25 @@ export function issueReportedEmail(input: {
    * on "reported by Sue" must not assume it was Sue.
    */
   unverified?: boolean;
+  /** Optional location picked from the managed Places list. */
+  place?: string | null;
+  hasPhoto?: boolean;
 }) {
-  const { category, detail, reporterName, issuesUrl, unverified } = input;
-  const subject = `Office issue reported: ${category}`;
+  const { category, detail, reporterName, issuesUrl, unverified, place, hasPhoto } = input;
+  const subject = place
+    ? `Office issue reported: ${category} — ${place}`
+    : `Office issue reported: ${category}`;
 
   const html = emailShell({
-    preheader: `${reporterName} reported a ${category} issue.`,
+    preheader: `${reporterName} reported a ${category} issue${place ? ` at ${place}` : ""}.`,
     eyebrow: unverified ? "Issue reported (via QR code)" : "Issue reported",
     heading: `${category} â€” reported by ${reporterName}`,
     content: [
+      place ? detailTable([["Where", escapeHtml(place)]]) : "",
       quote(detail),
+      // The photo itself is private and needs a login, so the email says one
+      // exists rather than trying to show it.
+      hasPhoto ? p("<strong>A photo was attached</strong> — open the issue to see it.") : "",
       unverified
         ? note(
             "Reported from the public sticker page, so nobody was signed in — treat the name as unconfirmed.",
@@ -264,9 +273,11 @@ export function issueReportedEmail(input: {
 
   const text = [
     `${reporterName} reported a ${category} issue:`,
+    ...(place ? ["", `Where: ${place}`] : []),
     "",
     detail,
     "",
+    ...(hasPhoto ? ["A photo was attached — open the issue to see it.", ""] : []),
     ...(unverified
       ? ["(Reported from the public sticker page — the name is unconfirmed.)", ""]
       : []),

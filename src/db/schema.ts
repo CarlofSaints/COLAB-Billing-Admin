@@ -355,12 +355,62 @@ export const issues = pgTable(
      * sticker — and hashed because the raw address is more than we need.
      */
     reporterIpHash: text("reporter_ip_hash"),
+    /**
+     * The managed list entry this came from. Nullable and `set null` on delete:
+     * `category` above holds the name as text, so a ticket keeps saying what it
+     * said even after its type is removed from the list.
+     */
+    categoryId: integer("category_id").references(() => issueCategories.id, {
+      onDelete: "set null",
+    }),
+    /** Where it is — optional, and the same snapshot-plus-link arrangement. */
+    placeId: integer("place_id").references(() => issuePlaces.id, { onDelete: "set null" }),
+    place: text("place"),
+    /** Pathname in the PRIVATE Blob store; served only via /api/issue-photo. */
+    photoPath: text("photo_path"),
+    photoContentType: text("photo_content_type"),
     resolvedByName: text("resolved_by_name"),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("issues_status_idx").on(t.status)],
+);
+
+/**
+ * The issue types offered when reporting — editable in the UI rather than
+ * hard-coded, so "Something is finished" can be added without a deploy.
+ *
+ * Entries are DEACTIVATED rather than deleted once tickets reference them
+ * (same as rooms being retired and costed tags being switched off): removing
+ * one outright would strip the type off historical tickets with no warning.
+ */
+export const issueCategories = pgTable(
+  "issue_categories",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    /** Optional hint shown under the name, e.g. "toilet paper, coffee, milk". */
+    description: text("description"),
+    active: boolean("active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("issue_categories_name_unique").on(sql`lower(${t.name})`)],
+);
+
+/** Where an issue is — kitchen, third-floor bathroom, parking. Optional. */
+export const issuePlaces = pgTable(
+  "issue_places",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    active: boolean("active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("issue_places_name_unique").on(sql`lower(${t.name})`)],
 );
 
 /* ------------------------------------------------------------------ */

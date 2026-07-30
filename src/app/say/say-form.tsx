@@ -10,7 +10,7 @@ import {
 } from "@/app/actions/public-issues";
 import { Button } from "@/components/ui/button";
 import { Input, Field, Select, Textarea } from "@/components/ui/field";
-import { ISSUE_CATEGORIES } from "@/lib/issues";
+import type { IssueListItem } from "@/lib/issue-lists";
 
 type Match = { id: number; name: string; companyName: string };
 
@@ -124,10 +124,17 @@ function WhoAreYou({
   );
 }
 
-export function SayForm() {
+export function SayForm({
+  categories,
+  places,
+}: {
+  categories: IssueListItem[];
+  places: IssueListItem[];
+}) {
   const [state, formAction] = useActionState<PublicReportState, FormData>(reportIssuePublic, {});
   const [isTeamMember, setIsTeamMember] = useState(false);
   const [picked, setPicked] = useState<Match | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
 
   if (state.ok) {
     return (
@@ -184,17 +191,31 @@ export function SayForm() {
       )}
 
       <Field label="What sort of issue is it?">
-        <Select name="category" defaultValue="" required>
+        <Select name="categoryId" defaultValue="" required>
           <option value="" disabled>
             Choose one…
           </option>
-          {ISSUE_CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+              {c.description ? ` — ${c.description}` : ""}
             </option>
           ))}
         </Select>
       </Field>
+
+      {places.length > 0 && (
+        <Field label="Where is it?">
+          <Select name="placeId" defaultValue="">
+            <option value="">Not sure / not listed</option>
+            {places.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
 
       <Field label="What's wrong?">
         <Textarea
@@ -204,6 +225,30 @@ export function SayForm() {
           maxLength={3000}
           placeholder="Where is it, and what's the problem? e.g. “The tap in the upstairs kitchen won't turn off.”"
         />
+      </Field>
+
+      <Field label="Add a photo (optional)">
+        {/* `capture` opens the camera straight away on a phone, which is what
+            most people scanning a sticker are holding. */}
+        <input
+          type="file"
+          name="photo"
+          accept="image/*"
+          capture="environment"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            setPreview(f ? URL.createObjectURL(f) : null);
+          }}
+          className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border file:border-line file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700"
+        />
+        {preview && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={preview}
+            alt="The photo you're about to send"
+            className="mt-2 max-h-40 rounded-lg border border-line object-cover"
+          />
+        )}
       </Field>
 
       {state.error && (
