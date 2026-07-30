@@ -322,22 +322,42 @@ export function receptionDutyReminderEmail(input: {
   /** True when this covers several back-to-back slots merged into one shift. */
   merged: boolean;
   rotaUrl: string;
+  /**
+   * Set while the feature is being tested: the message is going to a test
+   * address instead of the person on the rota, and says so in the clearest
+   * terms available so a forwarded copy can't be mistaken for the real thing.
+   */
+  testFor?: { name: string; email: string | null } | null;
 }) {
   const when =
     input.minutesUntil <= 0
       ? "now"
       : `in ${input.minutesUntil} minute${input.minutesUntil === 1 ? "" : "s"}`;
 
-  const subject =
+  const baseSubject =
     input.minutesUntil <= 0
       ? `You're on the front desk now — ${input.timeLabel}`
       : `You're on the front desk in ${input.minutesUntil} minutes — ${input.timeLabel}`;
 
+  const subject = input.testFor ? `[TEST → ${input.testFor.name}] ${baseSubject}` : baseSubject;
+
+  const testBanner = input.testFor
+    ? quote(
+        `TEST COPY — nobody on the rota received this.\n` +
+          `In normal running it would have gone to ${input.testFor.name} ` +
+          `<${input.testFor.email ?? "no email address on file"}>.\n` +
+          `Unset RECEPTION_REMINDER_TEST_TO in Vercel to send for real.`,
+      )
+    : "";
+
   const html = emailShell({
-    preheader: `Your reception shift starts ${when} (${input.timeLabel}).`,
-    eyebrow: "Reception rota",
+    preheader: input.testFor
+      ? `TEST COPY of the nudge for ${input.testFor.name} — ${input.timeLabel}.`
+      : `Your reception shift starts ${when} (${input.timeLabel}).`,
+    eyebrow: input.testFor ? "Reception rota (test)" : "Reception rota",
     heading: `Hi ${escapeHtml(input.name)},`,
     content: [
+      testBanner,
       p(`Your turn on the front desk starts <strong>${escapeHtml(when)}</strong>.`),
       detailTable([
         ["When", escapeHtml(`${input.dateLabel}, ${input.timeLabel}`)],
@@ -354,6 +374,15 @@ export function receptionDutyReminderEmail(input: {
   });
 
   const text = [
+    ...(input.testFor
+      ? [
+          "TEST COPY — nobody on the rota received this.",
+          `In normal running it would have gone to ${input.testFor.name} <${
+            input.testFor.email ?? "no email address on file"
+          }>.`,
+          "",
+        ]
+      : []),
     `Hi ${input.name},`,
     "",
     `Your turn on the front desk starts ${when}.`,

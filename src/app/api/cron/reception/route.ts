@@ -35,7 +35,9 @@ export async function GET(req: Request) {
   if (result.sent > 0) {
     await logEvent({
       action: "reception.reminders_sent",
-      summary: `Sent ${result.sent} reception shift reminder(s)`,
+      summary: result.testTo
+        ? `Sent ${result.sent} reception shift reminder(s) — TEST MODE, all diverted to ${result.testTo}`
+        : `Sent ${result.sent} reception shift reminder(s)`,
       entityType: "reception_slot",
       actorType: "system",
     });

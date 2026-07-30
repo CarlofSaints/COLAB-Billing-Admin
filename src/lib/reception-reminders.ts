@@ -52,8 +52,9 @@ export async function loadDay(dateKey: string) {
 
 export async function runReceptionReminders(
   now: Date = new Date(),
-): Promise<{ checked: number; sent: number }> {
-  if (!mailConfigured()) return { checked: 0, sent: 0 };
+): Promise<{ checked: number; sent: number; testTo: string | null }> {
+  const testTo = process.env.RECEPTION_REMINDER_TEST_TO?.trim() || null;
+  if (!mailConfigured()) return { checked: 0, sent: 0, testTo };
 
   const { dateKey, minuteOfDay } = nowInSast(now);
 
@@ -61,10 +62,10 @@ export async function runReceptionReminders(
   // already at the desk needs the slot before, and merging a back-to-back run
   // needs the ones after.
   const day = await loadDay(dateKey);
-  if (day.length === 0) return { checked: 0, sent: 0 };
+  if (day.length === 0) return { checked: 0, sent: 0, testTo };
 
   const due = selectDueShifts(day, minuteOfDay);
-  if (due.length === 0) return { checked: 0, sent: 0 };
+  if (due.length === 0) return { checked: 0, sent: 0, testTo };
 
   const base = await appBaseUrl();
   const rotaUrl = `${base}/reception`;
@@ -77,7 +78,14 @@ export async function runReceptionReminders(
     // Already standing there — the previous slot ran straight into this one and
     // it's the same person, so there is nothing to take over. Marked so it
     // isn't reconsidered at every tick inside the window.
-    if (shift.alreadyOnDesk || !person.email) {
+    if (shift.alreadyOnDesk) {
+      await markReminded(ids, now);
+      continue;
+    }
+
+    // No address to send to. In test mode it still goes out, because "this
+    // person has no email" is exactly the sort of thing the test should reveal.
+    if (!person.email && !testTo) {
       await markReminded(ids, now);
       continue;
     }
@@ -89,10 +97,11 @@ export async function runReceptionReminders(
       minutesUntil: shift.minutesUntil,
       merged: shift.slots.length > 1,
       rotaUrl,
+      testFor: testTo ? { name: person.name, email: person.email } : null,
     });
 
     const res = await sendMail({
-      to: person.email,
+      to: testTo ?? person.email!,
       subject: mail.subject,
       html: mail.html,
       text: mail.text,
@@ -106,7 +115,7 @@ export async function runReceptionReminders(
     // away and still inside the window, so it gets one more chance.
   }
 
-  return { checked: due.length, sent };
+  return { checked: due.length, sent, testTo };
 }
 
 async function markReminded(ids: number[], at: Date) {
