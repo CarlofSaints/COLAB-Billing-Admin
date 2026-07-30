@@ -42,7 +42,13 @@ type NavItem = {
 type NavSection = { heading?: string; items: NavItem[] };
 
 const SECTIONS: NavSection[] = [
-  { items: [{ href: "/", label: "Dashboard", icon: LayoutDashboard }] },
+  // Mirrors the redirect on the page itself: anyone without `companies.view`
+  // is bounced from / to /hub, so offering them the link was pointing at a
+  // page they can never actually see. Left without a `perm` it showed to
+  // everyone, because `can()` treats "no permission required" as "always".
+  {
+    items: [{ href: "/", label: "Dashboard", icon: LayoutDashboard, perm: "companies.view" }],
+  },
   {
     heading: "Team Hub",
     items: [
