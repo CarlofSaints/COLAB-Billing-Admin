@@ -1,5 +1,5 @@
 import { and, asc, eq, gte, sql } from "drizzle-orm";
-import { Cake, Sparkles, CalendarDays } from "lucide-react";
+import { Cake, Sparkles, CalendarDays, Lightbulb } from "lucide-react";
 import { db } from "@/db";
 import { staff, companies, hubEvents } from "@/db/schema";
 import { requirePermission, hasPermission } from "@/lib/auth";
@@ -45,6 +45,50 @@ const JOKES: { q: string; a: string }[] = [
   { q: "Why did the team photo take so long?", a: "Everyone wanted their best side." },
 ];
 
+/**
+ * "Fact of the day" — same rules as the joke: one for everyone, changes at
+ * midnight, no external service to be rate-limited or go down.
+ *
+ * A different list length to JOKES on purpose, so the two cycle out of step
+ * and the same joke/fact pairing doesn't come round together every year.
+ *
+ * Deliberately excludes the popular ones that turn out to be false — goldfish
+ * memory, the 10% of the brain, the Great Wall from space — because a "fact"
+ * card that's wrong is worse than no card.
+ */
+const FACTS: string[] = [
+  "South Africa has three capital cities: Pretoria (executive), Cape Town (legislative) and Bloemfontein (judicial).",
+  "The world's first successful human heart transplant was performed in Cape Town by Christiaan Barnard in 1967.",
+  "South Africa has 12 official languages — South African Sign Language became the twelfth in 2023.",
+  "Table Mountain is one of the oldest mountains on Earth, older than the Himalayas, the Alps and the Andes.",
+  "The rand takes its name from the Witwatersrand, the ridge where Johannesburg's gold was found.",
+  "Kruger National Park is nearly the size of Wales.",
+  "The Cape Floral Kingdom is the smallest of the world's six floral kingdoms, and one of the richest.",
+  "Johannesburg is often described as the world's largest man-made forest, with millions of planted trees.",
+  "Cleopatra lived closer in time to the Moon landing than to the building of the Great Pyramid.",
+  "Sharks are older than trees. Sharks have been around roughly 450 million years, trees about 390 million.",
+  "Oxford University was already teaching before the Aztec Empire was founded.",
+  "A day on Venus is longer than a year on Venus — it turns more slowly than it orbits.",
+  "Venus also spins backwards compared with almost every other planet.",
+  "Antarctica is the largest desert on Earth. A desert is defined by rainfall, not heat.",
+  "There are more trees on Earth than there are stars in the Milky Way.",
+  "Octopuses have three hearts, and their blood is blue.",
+  "Wombats produce cube-shaped droppings.",
+  "A group of flamingos is called a flamboyance.",
+  "Ostriches have eyes bigger than their brains.",
+  "Honeybees can be trained to recognise individual human faces.",
+  "Bananas are berries. Strawberries, botanically, are not.",
+  "Sound travels about four times faster through water than through air.",
+  "The Eiffel Tower can stand around 15 cm taller in summer, as the iron expands in the heat.",
+  "Honey found sealed in ancient Egyptian tombs was still edible thousands of years later.",
+  "Bubble wrap was invented as wallpaper before anyone thought to pack anything in it.",
+  "Nintendo was founded in 1889, making playing cards.",
+  "Scotland's national animal is the unicorn.",
+  "The shortest war on record lasted under an hour.",
+  "The dot above a lower-case i or j has a name: it's a tittle.",
+  "The man who designed the Pringles can had his ashes buried in one.",
+];
+
 function dayOfYear(d: Date) {
   const start = Date.UTC(d.getUTCFullYear(), 0, 0);
   return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - start) / 86400000);
@@ -58,6 +102,7 @@ export default async function HubPage() {
   const month = now.getMonth() + 1;
   const today = now.toISOString().slice(0, 10);
   const joke = JOKES[dayOfYear(now) % JOKES.length];
+  const fact = FACTS[dayOfYear(now) % FACTS.length];
 
   // Birthdays this month, sorted by day. Falls back to the date an admin
   // entered where the person hasn't given their own — the whole reason the
@@ -155,18 +200,34 @@ export default async function HubPage() {
           </CardContent>
         </Card>
 
-        {/* Joke of the day */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-brand-700" /> Joke of the day
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm font-medium text-slate-800">{joke.q}</p>
-            <p className="mt-2 text-sm text-brand-700">{joke.a}</p>
-          </CardContent>
-        </Card>
+        {/* The two daily titbits stack, so the birthday list keeps a full
+            column to itself rather than being squashed to a third. */}
+        <div className="space-y-4">
+          {/* Joke of the day */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-brand-700" /> Joke of the day
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm font-medium text-slate-800">{joke.q}</p>
+              <p className="mt-2 text-sm text-brand-700">{joke.a}</p>
+            </CardContent>
+          </Card>
+
+          {/* Fact of the day */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Lightbulb className="h-4 w-4 text-brand-700" /> Fact of the day
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-slate-800">{fact}</p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* Upcoming events */}
