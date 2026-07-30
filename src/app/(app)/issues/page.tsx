@@ -19,6 +19,7 @@ export default async function IssuesPage() {
       detail: issues.detail,
       status: issues.status,
       reportedByName: issues.reportedByName,
+      source: issues.source,
       resolvedByName: issues.resolvedByName,
       createdAt: issues.createdAt,
     })

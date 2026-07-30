@@ -337,6 +337,24 @@ export const issues = pgTable(
     // Who reported it. No FK so the ticket survives if the user is removed.
     reportedByUserId: integer("reported_by_user_id"),
     reportedByName: text("reported_by_name").notNull(),
+    /**
+     * Where the report came in from. `hub` = a signed-in user, so the name is
+     * proven. `public` = the QR-code page, where the reporter typed or picked
+     * their own name and NOBODY verified it.
+     *
+     * This exists so the name on a public ticket is never read as identity.
+     * Without it an admin sees "Reported by Sue Pillay" and has no way to know
+     * the difference.
+     */
+    source: text("source").notNull().default("hub"),
+    /** Set when a public reporter picked themselves off the team list. */
+    reportedByStaffId: integer("reported_by_staff_id"),
+    /**
+     * Salted hash of the reporter's IP, public submissions only. Used to rate
+     * limit a form that is, by design, reachable by anyone who can see a
+     * sticker — and hashed because the raw address is more than we need.
+     */
+    reporterIpHash: text("reporter_ip_hash"),
     resolvedByName: text("resolved_by_name"),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

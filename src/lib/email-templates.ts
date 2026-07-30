@@ -237,15 +237,29 @@ export function issueReportedEmail(input: {
   detail: string;
   reporterName: string;
   issuesUrl: string;
+  /**
+   * Came in from the public QR-code page, where nobody signed in. The name is
+   * whatever the reporter chose, so the email has to say so — an admin acting
+   * on "reported by Sue" must not assume it was Sue.
+   */
+  unverified?: boolean;
 }) {
-  const { category, detail, reporterName, issuesUrl } = input;
+  const { category, detail, reporterName, issuesUrl, unverified } = input;
   const subject = `Office issue reported: ${category}`;
 
   const html = emailShell({
     preheader: `${reporterName} reported a ${category} issue.`,
-    eyebrow: "Issue reported",
+    eyebrow: unverified ? "Issue reported (via QR code)" : "Issue reported",
     heading: `${category} â€” reported by ${reporterName}`,
-    content: [quote(detail), button(issuesUrl, "View & manage issues")].join(""),
+    content: [
+      quote(detail),
+      unverified
+        ? note(
+            "Reported from the public sticker page, so nobody was signed in — treat the name as unconfirmed.",
+          )
+        : "",
+      button(issuesUrl, "View & manage issues"),
+    ].join(""),
   });
 
   const text = [
@@ -253,6 +267,9 @@ export function issueReportedEmail(input: {
     "",
     detail,
     "",
+    ...(unverified
+      ? ["(Reported from the public sticker page — the name is unconfirmed.)", ""]
+      : []),
     `View & manage: ${issuesUrl}`,
   ].join("\n");
 

@@ -9,6 +9,7 @@ import {
   Trash2,
   Inbox,
   Search,
+  QrCode,
 } from "lucide-react";
 import { reportIssue, setIssueStatus, deleteIssue, type ReportState } from "@/app/actions/issues";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,8 @@ type IssueRow = {
   detail: string;
   status: string;
   reportedByName: string;
+  /** "hub" = signed in, so the name is proven. "public" = QR page, unverified. */
+  source: string;
   resolvedByName: string | null;
   createdAt: string;
 };
@@ -220,7 +223,19 @@ function IssuesGrid({ issues }: { issues: IssueRow[] }) {
                   <TD className="whitespace-nowrap text-xs text-muted">
                     {formatDateTime(i.createdAt)}
                   </TD>
-                  <TD className="whitespace-nowrap">{i.reportedByName}</TD>
+                  <TD className="whitespace-nowrap">
+                    {i.reportedByName}
+                    {/* Nobody signed in, so the name is a claim. Say so here
+                        rather than letting it read like a verified identity. */}
+                    {i.source === "public" && (
+                      <span
+                        className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600"
+                        title="Reported from the public QR-code page — nobody was signed in, so this name is unconfirmed."
+                      >
+                        <QrCode className="h-3 w-3" /> unverified
+                      </span>
+                    )}
+                  </TD>
                   <TD>
                     <Badge tone="indigo">{i.category}</Badge>
                   </TD>
