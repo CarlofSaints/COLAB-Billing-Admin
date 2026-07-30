@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import * as XLSX from "xlsx";
 import { db } from "@/db";
@@ -111,17 +111,109 @@ export async function updateStaff(_prev: ActionState, formData: FormData): Promi
   return { ok: true };
 }
 
-export async function deleteStaff(id: number) {
+export type DeleteStaffState = {
+  error?: string;
+  ok?: boolean;
+  /** Which tag the error is about, so the form can point at the right row. */
+  tagId?: number;
+};
+
+/**
+ * Removes a team member, handing on their tags first.
+ *
+ * Tags aren't decoration — a costed one bills per tagged head, and Reception
+ * drives the desk rota. Deleting the only person carrying one silently drops
+ * the charge or empties the rota, and nothing anywhere says so. Hence the
+ * hand-over: each tag is either passed to someone else or explicitly let go.
+ *
+ * `handover` maps tagId → the staff id inheriting it, or null for "no thanks".
+ * Every tag the person holds must appear, so letting one go is a decision
+ * rather than an omission.
+ */
+export async function deleteStaffWithHandover(
+  id: number,
+  handover: { tagId: number; toStaffId: number | null }[],
+): Promise<DeleteStaffState> {
   const user = await requirePermission("staff.manage");
+
+  const held = await db
+    .select({ tagId: staffTags.tagId, name: tags.name })
+    .from(staffTags)
+    .innerJoin(tags, eq(tags.id, staffTags.tagId))
+    .where(eq(staffTags.staffId, id));
+
+  const decided = new Map(handover.map((h) => [h.tagId, h.toStaffId]));
+  const undecided = held.find((t) => !decided.has(t.tagId));
+  if (undecided) {
+    return {
+      error: `Decide what happens to “${undecided.name}” before deleting.`,
+      tagId: undecided.tagId,
+    };
+  }
+
+  const passedOn: string[] = [];
+
+  for (const t of held) {
+    const toStaffId = decided.get(t.tagId) ?? null;
+    if (toStaffId == null) continue;
+    if (toStaffId === id) {
+      return { error: "That's the person being deleted — choose someone else.", tagId: t.tagId };
+    }
+
+    const [recipient] = await db
+      .select({ id: staff.id, name: staff.name })
+      .from(staff)
+      .where(eq(staff.id, toStaffId))
+      .limit(1);
+    if (!recipient) {
+      return { error: "That team member no longer exists.", tagId: t.tagId };
+    }
+
+    // Re-checked here, not just in the browser: the list the form was built
+    // from could be minutes old, and a duplicate would be swallowed by the
+    // primary key rather than reported.
+    const [already] = await db
+      .select({ staffId: staffTags.staffId })
+      .from(staffTags)
+      .where(and(eq(staffTags.staffId, toStaffId), eq(staffTags.tagId, t.tagId)))
+      .limit(1);
+    if (already) {
+      return {
+        error: `${recipient.name} already has the “${t.name}” tag — pick someone else, or choose “No thanks”.`,
+        tagId: t.tagId,
+      };
+    }
+
+    await db.insert(staffTags).values({ staffId: toStaffId, tagId: t.tagId }).onConflictDoNothing();
+    passedOn.push(`${t.name} → ${recipient.name}`);
+  }
+
+  const [person] = await db
+    .select({ name: staff.name })
+    .from(staff)
+    .where(eq(staff.id, id))
+    .limit(1);
+
   await db.delete(staff).where(eq(staff.id, id));
+
+  const dropped = held.filter((t) => (decided.get(t.tagId) ?? null) == null).map((t) => t.name);
+  const parts = [`Removed team member ${person?.name ?? ""}`.trim()];
+  if (passedOn.length) parts.push(`passed on ${passedOn.join(", ")}`);
+  if (dropped.length) parts.push(`let go of ${dropped.join(", ")}`);
+
   await logEvent({
     action: "staff.delete",
-    summary: `Removed a team member`,
+    summary: parts.join(" — "),
     actor: user,
     entityType: "staff",
     entityId: id,
+    metadata: { passedOn, dropped },
   });
+
   revalidatePath("/staff");
+  revalidatePath("/tags");
+  revalidatePath("/reception");
+  return { ok: true };
 }
 
 export type ImportState = {

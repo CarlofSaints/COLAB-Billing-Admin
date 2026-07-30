@@ -19,9 +19,10 @@ import {
 import {
   createStaff,
   updateStaff,
-  deleteStaff,
+  deleteStaffWithHandover,
   importStaff,
   type ActionState,
+  type DeleteStaffState,
   type ImportState,
 } from "@/app/actions/staff";
 import { inviteTeamMember, type InviteState } from "@/app/actions/team";
@@ -130,6 +131,213 @@ function SaveFilterAsGroup({
         <Button type="submit">Create live group</Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Deleting a team member, one tag at a time.
+ *
+ * A tag isn't a label on a person, it's a job the office still needs doing —
+ * Reception fills the desk rota, a costed tag bills per head. Letting the last
+ * holder be deleted with a plain "are you sure?" drops that silently, and the
+ * only symptom is a rota that won't populate or an invoice quietly R400 short.
+ *
+ * So each tag is decided separately: pass it on, or say "no thanks" out loud.
+ * Nothing is deleted until every tag has an answer.
+ */
+function DeleteStaffDialog({
+  person,
+  staff,
+  onDone,
+}: {
+  person: StaffRow;
+  staff: StaffRow[];
+  onDone: () => void;
+}) {
+  // tagId → recipient staff id, or null once "No thanks" is chosen.
+  const [choice, setChoice] = useState<Map<number, number | null>>(new Map());
+  const [queries, setQueries] = useState<Map<number, string>>(new Map());
+  const [state, setState] = useState<DeleteStaffState>({});
+  const [busy, setBusy] = useState(false);
+
+  const others = useMemo(
+    () => staff.filter((s) => s.id !== person.id && s.active),
+    [staff, person.id],
+  );
+
+  const decided = person.tags.every((t) => choice.has(t.id));
+
+  const pick = (tagId: number, staffId: number | null) =>
+    setChoice((prev) => new Map(prev).set(tagId, staffId));
+
+  const submit = async () => {
+    setBusy(true);
+    setState({});
+    const res = await deleteStaffWithHandover(
+      person.id,
+      person.tags.map((t) => ({ tagId: t.id, toStaffId: choice.get(t.id) ?? null })),
+    );
+    setBusy(false);
+    if (res.ok) onDone();
+    else {
+      setState(res);
+      // Send them back to choosing for the tag that failed, rather than
+      // leaving a rejected name sitting there looking accepted.
+      if (res.tagId != null) {
+        setChoice((prev) => {
+          const next = new Map(prev);
+          next.delete(res.tagId!);
+          return next;
+        });
+      }
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-700">
+        Remove <strong>{person.name}</strong> from the team list? This can’t be undone.
+      </p>
+
+      {person.tags.length === 0 ? (
+        <p className="text-sm text-muted">They carry no tags, so nothing needs handing over.</p>
+      ) : (
+        <>
+          <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              They hold <strong>{person.tags.length}</strong> tag
+              {person.tags.length === 1 ? "" : "s"}. Decide what happens to each before they go —
+              a tag nobody carries stops working silently.
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {person.tags.map((t) => {
+              const chosen = choice.get(t.id);
+              const answered = choice.has(t.id);
+              const query = queries.get(t.id) ?? "";
+              const q = query.trim().toLowerCase();
+              // Anyone who already has it is shown but not selectable, so the
+              // reason a name is missing is visible rather than mysterious.
+              const candidates = others
+                .filter((s) => !q || s.name.toLowerCase().includes(q) || s.companyName.toLowerCase().includes(q))
+                .slice(0, 40);
+
+              return (
+                <div
+                  key={t.id}
+                  className={cn(
+                    "rounded-lg border p-3",
+                    answered ? "border-line bg-slate-50" : "border-amber-300 bg-white",
+                  )}
+                >
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <TagChip name={t.name} color={t.color} />
+                    {t.costPerPerson != null && (
+                      <span className="text-xs text-muted">
+                        {formatCurrency(t.costPerPerson)} per month — moves with the tag
+                      </span>
+                    )}
+                  </div>
+
+                  {answered ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm text-slate-700">
+                        {chosen == null ? (
+                          <span className="text-muted">Letting this tag go.</span>
+                        ) : (
+                          <>
+                            Passing to <strong>{others.find((s) => s.id === chosen)?.name}</strong>
+                          </>
+                        )}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          setChoice((prev) => {
+                            const next = new Map(prev);
+                            next.delete(t.id);
+                            return next;
+                          })
+                        }
+                      >
+                        Change
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        <Input
+                          placeholder="Search for who takes it over…"
+                          value={query}
+                          onChange={(e) =>
+                            setQueries((prev) => new Map(prev).set(t.id, e.target.value))
+                          }
+                          className="pl-9"
+                        />
+                      </div>
+                      <div className="max-h-36 overflow-y-auto rounded-md border border-line">
+                        {candidates.length === 0 && (
+                          <p className="px-3 py-2 text-xs text-muted">Nobody matches that search.</p>
+                        )}
+                        {candidates.map((s) => {
+                          const has = s.tags.some((x) => x.id === t.id);
+                          return (
+                            <button
+                              key={s.id}
+                              type="button"
+                              disabled={has}
+                              onClick={() => pick(t.id, s.id)}
+                              className={cn(
+                                "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm",
+                                has
+                                  ? "cursor-not-allowed text-slate-400"
+                                  : "text-slate-700 hover:bg-slate-50",
+                              )}
+                            >
+                              <span>{s.name}</span>
+                              <span className="text-xs text-muted">
+                                {has ? "already has this tag" : s.companyName}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={false}
+                          onChange={() => pick(t.id, null)}
+                          className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                        />
+                        No thanks — nobody takes this one on
+                      </label>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {state.error && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
+      )}
+
+      <div className="flex justify-end gap-2 pt-1">
+        <Button type="button" variant="ghost" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button type="button" onClick={submit} disabled={!decided || busy}>
+          {busy ? "Removing…" : decided ? `Remove ${person.name}` : "Decide each tag first"}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -450,6 +658,7 @@ export function StaffManager({
   const [tagFilter, setTagFilter] = useState<number[]>([]);
   const [untaggedOnly, setUntaggedOnly] = useState(false);
   const [savingGroup, setSavingGroup] = useState(false);
+  const [deleting, setDeleting] = useState<StaffRow | null>(null);
 
   // The filter on screen, in the shape a live group stores.
   const filterAsRule: GroupRule = useMemo(
@@ -735,13 +944,7 @@ export function StaffManager({
                             <Button variant="ghost" size="sm" onClick={() => setEditing(s)}>
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                if (confirm(`Remove ${s.name}?`)) deleteStaff(s.id);
-                              }}
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => setDeleting(s)}>
                               <Trash2 className="h-3.5 w-3.5 text-red-500" />
                             </Button>
                           </>
@@ -778,6 +981,19 @@ export function StaffManager({
       {importing && (
         <Modal title="Import team members from Excel" open onOpenChange={setImporting}>
           <ImportForm onDone={() => setImporting(false)} />
+        </Modal>
+      )}
+      {deleting && (
+        <Modal
+          title={`Remove ${deleting.name}`}
+          open
+          onOpenChange={(o) => !o && setDeleting(null)}
+        >
+          <DeleteStaffDialog
+            person={deleting}
+            staff={staff}
+            onDone={() => setDeleting(null)}
+          />
         </Modal>
       )}
       {savingGroup && (
