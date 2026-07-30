@@ -86,7 +86,10 @@ export function IssueListsManager({
         </p>
       )}
 
-      <div className="divide-y divide-line rounded-lg border border-line">
+      {/* Scrolls on its own so the Add button and the edit form stay put as
+          the list grows — otherwise every entry added pushes them further
+          down the dialog. */}
+      <div className="max-h-64 divide-y divide-line overflow-y-auto rounded-lg border border-line">
         {items.length === 0 && (
           <p className="px-3 py-4 text-sm text-muted">Nothing on the list yet.</p>
         )}

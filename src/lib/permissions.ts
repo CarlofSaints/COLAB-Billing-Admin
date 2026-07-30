@@ -22,13 +22,21 @@ export const PERMISSIONS: PermissionDef[] = [
 
   // Team Members (formerly "Staff" — keys kept as staff.* to avoid a data migration)
   { key: "staff.view", label: "View team members", category: "Team Members", sort: 50 },
-  { key: "staff.manage", label: "Add / edit / import team members", category: "Team Members", sort: 60 },
+  {
+    key: "staff.manage",
+    // Says "anyone else's" because the pair only makes sense read together:
+    // this one is the right to edit OTHER people, profile.edit is the right to
+    // edit YOURSELF. "Add / edit team members" gave no clue which.
+    label: "Add / edit / import ANY team member (incl. company, tags, billing)",
+    category: "Team Members",
+    sort: 60,
+  },
 
   // Team Hub (the social hub: dashboard + personal profiles)
   { key: "hub.view", label: "View team dashboard", category: "Team Hub", sort: 62 },
   {
     key: "profile.edit",
-    label: "Create & edit own team member profile",
+    label: "Create & edit OWN team member profile only",
     category: "Team Hub",
     sort: 64,
   },

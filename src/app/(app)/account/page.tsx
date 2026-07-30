@@ -35,6 +35,8 @@ export default async function AccountPage() {
         .select({
           id: staff.id,
           name: staff.name,
+          cellNumber: staff.cellNumber,
+          gender: staff.gender,
           position: staff.position,
           photoUrl: staff.photoUrl,
           bio: staff.bio,
@@ -73,10 +75,10 @@ export default async function AccountPage() {
         <Card>
           <CardHeader>
             <div>
-              <CardTitle>Team profile</CardTitle>
+              <CardTitle>Your team member profile</CardTitle>
               <CardDescription>
                 {teamMember
-                  ? "What the rest of COLAB sees on the team hub — your photo, a bit about you, and your birthday."
+                  ? "Your own entry on the team list — your details, your photo and what the rest of COLAB sees on the hub. Only you can edit this."
                   : "Shown on the team hub, once you're on the team list."}
               </CardDescription>
             </div>
@@ -91,6 +93,11 @@ export default async function AccountPage() {
                   favouriteColour={teamMember.favouriteColour}
                 />
                 <HubProfileForm
+                  name={teamMember.name}
+                  cellNumber={teamMember.cellNumber}
+                  gender={teamMember.gender}
+                  position={teamMember.position}
+                  companyName={teamMember.companyName}
                   bio={teamMember.bio}
                   dateOfBirth={teamMember.dateOfBirth}
                   favouriteColour={teamMember.favouriteColour}

@@ -24,7 +24,24 @@ const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5 MB
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
+/**
+ * What someone may change on their OWN team-member record.
+ *
+ * The line is drawn at "facts about me" versus "decisions about me". Your cell
+ * number and job title are yours to correct; which sub-company you belong to,
+ * which tags you carry, whether you're billed for and whether you're still
+ * active are all decisions someone else makes — and two of them move money
+ * (costed tags, include-in-billing), so they stay with `staff.manage`.
+ *
+ * Email is admin-only for a different reason: it is the key linking a login to
+ * a team-member row. Letting someone edit it here would let them point their
+ * profile at a different person's record, or orphan their own.
+ */
 const profileSchema = z.object({
+  name: z.string().trim().min(1, "Your name can't be blank").max(120),
+  cellNumber: z.string().trim().max(40).optional(),
+  gender: z.string().trim().max(40).optional(),
+  position: z.string().trim().max(120).optional(),
   bio: z.string().trim().max(2000).optional(),
   // An empty date field posts "" — treat that as "cleared".
   dateOfBirth: z
@@ -67,6 +84,10 @@ export async function updateMyProfile(
   }
 
   const parsed = profileSchema.safeParse({
+    name: formData.get("name") ?? "",
+    cellNumber: formData.get("cellNumber") || undefined,
+    gender: formData.get("gender") || undefined,
+    position: formData.get("position") || undefined,
     bio: formData.get("bio") || undefined,
     dateOfBirth: formData.get("dateOfBirth") || undefined,
     favouriteColour: formData.get("favouriteColour") || undefined,
@@ -79,9 +100,17 @@ export async function updateMyProfile(
     .map((h) => h.trim())
     .filter(Boolean);
 
+  // Only the fields above are written. `companyId`, tags, `includeInBilling`,
+  // `active` and `email` are absent on purpose — not merely omitted from the
+  // form, but unreachable from this action, so adding a hidden input to the
+  // page can't reach them either.
   await db
     .update(staff)
     .set({
+      name: parsed.data.name,
+      cellNumber: parsed.data.cellNumber || null,
+      gender: parsed.data.gender || null,
+      position: parsed.data.position || null,
       bio: parsed.data.bio || null,
       dateOfBirth: parsed.data.dateOfBirth || null,
       favouriteColour: parsed.data.favouriteColour || null,

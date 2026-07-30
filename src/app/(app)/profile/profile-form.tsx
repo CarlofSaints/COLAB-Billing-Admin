@@ -22,11 +22,21 @@ function Submit() {
  * and email — both now render on /account and the collision was confusing.
  */
 export function HubProfileForm({
+  name,
+  cellNumber,
+  gender,
+  position,
+  companyName,
   bio,
   dateOfBirth,
   favouriteColour,
   hobbies,
 }: {
+  name: string;
+  cellNumber: string | null;
+  gender: string | null;
+  position: string | null;
+  companyName: string | null;
   bio: string | null;
   dateOfBirth: string | null;
   favouriteColour: string | null;
@@ -37,6 +47,31 @@ export function HubProfileForm({
 
   return (
     <form action={action} className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Your name" hint="As it appears on the team list.">
+          <Input name="name" defaultValue={name} required maxLength={120} />
+        </Field>
+        <Field label="Job title" hint="What you do here.">
+          <Input name="position" defaultValue={position ?? ""} maxLength={120} />
+        </Field>
+        <Field label="Cell number">
+          <Input name="cellNumber" type="tel" defaultValue={cellNumber ?? ""} maxLength={40} />
+        </Field>
+        <Field label="Gender">
+          {/* Free text, not a fixed list — the column always has been, and a
+              closed list here would quietly exclude whatever people use. */}
+          <Input name="gender" defaultValue={gender ?? ""} maxLength={40} />
+        </Field>
+      </div>
+
+      {/* Shown, not editable: which company you belong to is a decision made
+          for you, and it feeds the billing split. Same for tags. */}
+      <p className="rounded-lg border border-line bg-slate-50 px-3 py-2 text-xs text-muted">
+        You&apos;re listed under <strong className="text-slate-700">{companyName ?? "no company"}</strong>.
+        Your sub-company, tags and billing settings are set by an admin — ask if any of them look
+        wrong. Your sign-in email is changed under <strong className="text-slate-700">Sign-in details</strong> above.
+      </p>
+
       <Field
         label="What I do at COLAB"
         hint="A sentence or two about your role and what you get up to."
