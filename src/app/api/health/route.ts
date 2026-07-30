@@ -20,6 +20,10 @@ export async function GET() {
       emailPrimary: mail.primary ?? null,
       emailFallback: mail.fallback ?? null,
       emailFrom: mail.from ?? null,
+      // True while reception nudges are being diverted to a test address. A
+      // boolean, not the address — this endpoint is public. "No reminder
+      // arrived" is otherwise indistinguishable from "test mode is on".
+      receptionReminderTestMode: Boolean(process.env.RECEPTION_REMINDER_TEST_TO?.trim()),
     },
   });
 }
