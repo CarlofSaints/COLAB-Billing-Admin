@@ -29,6 +29,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { Logo } from "./logo";
+import { ChatUnreadBadge } from "./chat-unread-badge";
 import { logout } from "@/app/actions/auth";
 import { cn, initials } from "@/lib/utils";
 
@@ -40,6 +41,9 @@ type NavItem = {
 };
 
 type NavSection = { heading?: string; items: NavItem[] };
+
+// Imported here rather than inlined so the polling lives in its own client
+// component and doesn't re-render the whole sidebar every 20 seconds.
 
 const SECTIONS: NavSection[] = [
   // Mirrors the redirect on the page itself: anyone without `companies.view`
@@ -155,7 +159,8 @@ export function Sidebar({
                         )}
                       >
                         <Icon className="h-[18px] w-[18px]" />
-                        {it.label}
+                        <span className="flex-1">{it.label}</span>
+                        {it.href === "/chat" && <ChatUnreadBadge />}
                       </Link>
                     </li>
                   );

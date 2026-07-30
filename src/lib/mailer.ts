@@ -24,11 +24,11 @@ export {
 
 /**
  * The app's outbound mail layer. Every send in the codebase goes through
- * `sendMail`, `sendBatch` or `sendBcc` â€” nothing talks to a provider directly.
+ * `sendMail`, `sendBatch` or `sendBcc` — nothing talks to a provider directly.
  *
  * Two transports are supported:
- *   graph  â€” Microsoft Graph, sending as a real Exchange Online mailbox
- *   resend â€” the original Resend API, from billing.colab2.co.za
+ *   graph  — Microsoft Graph, sending as a real Exchange Online mailbox
+ *   resend — the original Resend API, from billing.colab2.co.za
  *
  * Graph is preferred whenever it's configured, because COLAB's recipients are
  * overwhelmingly on Microsoft 365 and mail from a genuine @colab2.co.za mailbox
@@ -125,7 +125,7 @@ async function send(input: {
 
     if (result.ok) {
       if (errors.length) {
-        // Surfaced in Vercel logs â€” a fallback that goes unnoticed is a
+        // Surfaced in Vercel logs — a fallback that goes unnoticed is a
         // transport quietly rotting until both providers are broken.
         console.warn(`[mail] fell back to ${provider} after: ${errors.join(" | ")}`);
       }
@@ -143,7 +143,7 @@ export async function sendMail(input: OutgoingMessage): Promise<SendResult> {
 }
 
 /**
- * Sends one announcement to many people at once â€” a single message addressed to
+ * Sends one announcement to many people at once — a single message addressed to
  * COLAB itself with everyone bcc'd, so recipients never see each other. One
  * request rather than N also keeps well clear of Exchange's per-mailbox rate
  * limits when a group is large.
@@ -166,7 +166,7 @@ export async function sendBcc(input: {
  * sees anyone else's address.
  *
  * Resend takes 100 per API call. Graph has no batch send, so those go one at a
- * time with a short gap between them â€” Exchange Online throttles a mailbox that
+ * time with a short gap between them — Exchange Online throttles a mailbox that
  * submits in a tight loop, and a throttled reminder run is worse than a slow one.
  */
 export async function sendBatch(
@@ -229,7 +229,7 @@ export async function sendBatch(
   return { sent, failed, error: firstError, byProvider };
 }
 
-/** "2 via graph, 1 via resend" â€” for activity-log summaries. */
+/** "2 via graph, 1 via resend" — for activity-log summaries. */
 export function describeProviders(byProvider: Partial<Record<MailProvider, number>>): string {
   const parts = (Object.entries(byProvider) as [MailProvider, number][])
     .filter(([, count]) => count > 0)
@@ -240,7 +240,7 @@ export function describeProviders(byProvider: Partial<Record<MailProvider, numbe
 /**
  * The app's public base URL for links in emails and shared invites.
  *
- * APP_BASE_URL wins when set â€” it pins every link (including background/cron
+ * APP_BASE_URL wins when set — it pins every link (including background/cron
  * sends that have no request to read a host from) to the canonical domain.
  * Without it we fall back to the incoming request's host, then Vercel's.
  */
@@ -254,7 +254,7 @@ export async function appBaseUrl(): Promise<string> {
     const host = h.get("x-forwarded-host") ?? h.get("host");
     if (host) return `${proto}://${host}`;
   } catch {
-    // No request scope (e.g. a background invocation) â€” fall through.
+    // No request scope (e.g. a background invocation) — fall through.
   }
   const fallback = process.env.VERCEL_PROJECT_PRODUCTION_URL;
   return fallback ? `https://${fallback}` : "https://hub.colab2.co.za";

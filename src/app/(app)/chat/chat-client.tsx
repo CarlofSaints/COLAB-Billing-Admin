@@ -513,12 +513,24 @@ function Message({ m, showName }: { m: ChatMessageView; showName: boolean }) {
   return (
     <div className={cn("flex items-end gap-2", m.mine ? "flex-row-reverse" : "flex-row")}>
       <Avatar m={m} />
-      <div className={cn("flex min-w-0 flex-col", m.mine ? "items-end" : "items-start")}>
+      {/*
+        The 75% cap belongs here, on the flex item whose width comes from the
+        row, not on the bubble. On the bubble it resolved against this
+        shrink-to-fit column instead — so every bubble was squeezed to 75% of
+        the text's own natural width, wrapping perfectly short messages onto
+        several lines.
+      */}
+      <div
+        className={cn(
+          "flex min-w-0 max-w-[75%] flex-col",
+          m.mine ? "items-end" : "items-start",
+        )}
+      >
         {showName && <span className="mb-0.5 px-1 text-xs text-muted">{m.senderName}</span>}
         {m.body && (
           <div
             className={cn(
-              "max-w-[75%] rounded-2xl px-3 py-2 text-sm",
+              "rounded-2xl px-3 py-2 text-sm",
               m.mine ? "bg-brand-700 text-white" : "bg-slate-100 text-slate-800",
             )}
           >

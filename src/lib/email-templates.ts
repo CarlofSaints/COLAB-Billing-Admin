@@ -19,7 +19,7 @@ import {
 } from "./email-layout";
 
 /**
- * The credential handover email â€” sent when an admin creates a user (or resets
+ * The credential handover email — sent when an admin creates a user (or resets
  * a password) and asks for the details to be emailed.
  */
 export function credentialsEmail(input: {
@@ -80,7 +80,7 @@ export function credentialsEmail(input: {
 }
 
 /**
- * Welcome email when a team member is turned into a hub user â€” carries their
+ * Welcome email when a team member is turned into a hub user — carries their
  * sign-in details and points them straight at their profile to fill in.
  */
 export function hubInviteEmail(input: {
@@ -91,7 +91,7 @@ export function hubInviteEmail(input: {
   profileUrl: string;
 }) {
   const { name, email, password, loginUrl, profileUrl } = input;
-  const subject = "You're on the COLAB Team Hub â€” set up your profile";
+  const subject = "You're on the COLAB Team Hub — set up your profile";
 
   const html = emailShell({
     preheader: "Your sign-in details, and a profile waiting to be filled in.",
@@ -99,7 +99,7 @@ export function hubInviteEmail(input: {
     heading: `Hi ${name}, welcome to the Team Hub`,
     content: [
       p(
-        "You've been added to the COLAB Team Hub. Sign in with the details below, then tell everyone a bit about yourself â€” what you do, your birthday, hobbies and more.",
+        "You've been added to the COLAB Team Hub. Sign in with the details below, then tell everyone a bit about yourself — what you do, your birthday, hobbies and more.",
       ),
       detailTable([
         ["Sign in at", link(loginUrl)],
@@ -147,7 +147,7 @@ export function signupNotifyEmail(input: {
     eyebrow: "Sign-up request",
     heading: "Someone has asked to join the Team Hub",
     content: [
-      p("Nothing has been created yet â€” it's waiting for your approval."),
+      p("Nothing has been created yet — it's waiting for your approval."),
       detailTable([
         ["Name", escapeHtml(applicantName)],
         ["Email", escapeHtml(applicantEmail)],
@@ -208,7 +208,7 @@ export function taskAssignedEmail(input: {
   rows.push(["Repeats", escapeHtml(recurrenceLabel)]);
 
   const html = emailShell({
-    preheader: dueDate ? `${taskName} â€” due ${dueDate}.` : taskName,
+    preheader: dueDate ? `${taskName} — due ${dueDate}.` : taskName,
     eyebrow: isReminder ? "Reminder" : "New task",
     heading: `Hi ${assigneeName},`,
     content: [p(lead), detailTable(rows), button(tasksUrl, "View my tasks")].join(""),
@@ -217,7 +217,7 @@ export function taskAssignedEmail(input: {
   const text = [
     `Hi ${assigneeName},`,
     "",
-    isReminder ? `Reminder â€” task: ${taskName}` : `${assignedByName} assigned you a task: ${taskName}`,
+    isReminder ? `Reminder — task: ${taskName}` : `${assignedByName} assigned you a task: ${taskName}`,
     description ? `Details: ${description}` : "",
     dueDate ? `Due: ${dueDate}` : "",
     `Priority: ${priorityLabel}`,
@@ -255,7 +255,7 @@ export function issueReportedEmail(input: {
   const html = emailShell({
     preheader: `${reporterName} reported a ${category} issue${place ? ` at ${place}` : ""}.`,
     eyebrow: unverified ? "Issue reported (via QR code)" : "Issue reported",
-    heading: `${category} â€” reported by ${reporterName}`,
+    heading: `${category} — reported by ${reporterName}`,
     content: [
       place ? detailTable([["Where", escapeHtml(place)]]) : "",
       quote(detail),
