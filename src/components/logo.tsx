@@ -53,12 +53,18 @@ export function ColabWordmark({
   );
 }
 
-/** Sidebar logo: wordmark + subtitle (for dark backgrounds). */
-export function Logo({ subtitle = "Billing & Admin" }: { subtitle?: string }) {
+/**
+ * Sidebar logo: wordmark + subtitle (for dark backgrounds).
+ *
+ * "Hub", not "Billing & Admin" — it started as a billing tool and hasn't been
+ * only that for a while. Set larger and bolder than the old caption because
+ * it now names the product rather than footnoting it.
+ */
+export function Logo({ subtitle = "Hub" }: { subtitle?: string }) {
   return (
     <div className="flex flex-col gap-1.5">
       <ColabWordmark size="sm" tone="light" />
-      <span className="text-[11px] font-medium tracking-wide text-slate-400">{subtitle}</span>
+      <span className="text-base font-bold tracking-wide text-slate-200">{subtitle}</span>
     </div>
   );
 }
