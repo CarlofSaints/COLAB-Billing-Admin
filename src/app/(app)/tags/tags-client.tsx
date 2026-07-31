@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
-import { Plus, Pencil, Trash2, Tag as TagIcon, TriangleAlert } from "lucide-react";
+import { Plus, Pencil, Trash2, Tag as TagIcon, TriangleAlert, Eye } from "lucide-react";
 import { createTag, updateTag, deleteTag, type TagState } from "@/app/actions/tags";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -19,6 +19,8 @@ type TagRow = {
   count: number;
   /** null = a label-only tag; a number = billed per tagged person per month. */
   costPerPerson: number | null;
+  /** Whether the tag appears on the Meet Your Team directory. */
+  showInHub: boolean;
   /** Per sub-company counts of the people this tag would actually bill. */
   billable: { companyName: string; count: number }[];
   billableCount: number;
@@ -41,6 +43,7 @@ function TagForm({ tag, onDone }: { tag?: TagRow; onDone: () => void }) {
   const [name, setName] = useState(tag?.name ?? "");
   const [color, setColor] = useState(tag?.color ?? DEFAULT_COLOR);
   const [cost, setCost] = useState(tag?.costPerPerson?.toString() ?? "");
+  const [showInHub, setShowInHub] = useState(tag?.showInHub ?? false);
 
   useEffect(() => {
     if (state.ok) onDone();
@@ -71,6 +74,22 @@ function TagForm({ tag, onDone }: { tag?: TagRow; onDone: () => void }) {
           <TagChip name={name || "Preview"} color={color} />
         </div>
       </Field>
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-line px-3 py-2.5 hover:bg-slate-50">
+        <input
+          type="checkbox"
+          name="showInHub"
+          checked={showInHub}
+          onChange={(e) => setShowInHub(e.target.checked)}
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+        />
+        <span>
+          <span className="block text-sm font-medium text-slate-700">Show in Hub</span>
+          <span className="mt-0.5 block text-xs text-muted">
+            Anyone tagged with this shows it on Meet Your Team, where the whole office can see
+            it. Leave off for internal or billing-only tags.
+          </span>
+        </span>
+      </label>
       <Field
         label="Cost per person, per month"
         hint="Leave blank for a label-only tag like Reception. Enter an amount and the tag bills: each sub-company is charged for the people it has tagged, on the recurring run."
@@ -196,6 +215,14 @@ export function TagsClient({ tags }: { tags: TagRow[] }) {
                   <span className="text-xs text-muted">
                     {t.count} {t.count === 1 ? "person" : "people"}
                   </span>
+                  {t.showInHub && (
+                    <span
+                      className="inline-flex items-center gap-1 text-xs text-slate-500"
+                      title="Shown on Meet Your Team"
+                    >
+                      <Eye className="h-3.5 w-3.5" /> In Hub
+                    </span>
+                  )}
                   {t.costPerPerson !== null && (
                     <span className="text-xs font-medium text-brand-700">
                       {formatCurrency(t.costPerPerson)} each ={" "}

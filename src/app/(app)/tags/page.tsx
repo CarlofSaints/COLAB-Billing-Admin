@@ -16,6 +16,7 @@ export default async function TagsPage() {
       name: tags.name,
       color: tags.color,
       costPerPerson: tags.costPerPerson,
+      showInHub: tags.showInHub,
       count: sql<number>`count(${staffTags.staffId})::int`,
     })
     .from(tags)
@@ -47,6 +48,7 @@ export default async function TagsPage() {
       color: r.color,
       count: r.count,
       costPerPerson: r.costPerPerson === null ? null : Number(r.costPerPerson),
+      showInHub: r.showInHub,
       billable: mine.map((b) => ({ companyName: b.companyName, count: b.count })),
       billableCount: mine.reduce((s, b) => s + b.count, 0),
     };

@@ -41,6 +41,14 @@ async function main() {
   console.log("Seeding COLAB Billing & Admin…\n");
 
   /* 1. Permissions -------------------------------------------------- */
+  // Note which keys are brand new BEFORE the upsert. A permission that has
+  // never existed in this database cannot have been switched off by anyone on
+  // the Roles grid, so step 3b can safely hand it out — see the note there.
+  const knownKeys = new Set(
+    (await db.select({ key: schema.permissions.key }).from(schema.permissions)).map((p) => p.key),
+  );
+  const brandNewKeys = PERMISSIONS.map((p) => p.key).filter((k) => !knownKeys.has(k));
+
   for (const p of PERMISSIONS) {
     await db
       .insert(schema.permissions)
@@ -94,6 +102,37 @@ async function main() {
     }
   }
   console.log("✓ default permission grid");
+
+  /* 3b. Backfill brand-new permissions ------------------------------ */
+  // Step 3 deliberately skips any role that already has grants, so that a
+  // re-seed never clobbers hand-edits on the Roles grid. The side effect is
+  // that on an established database a NEW permission would land switched off
+  // for everyone, and every role would have to be ticked by hand.
+  //
+  // This closes that gap without reopening the first one: only keys that
+  // didn't exist in the permissions table before this run are touched, and
+  // only where DEFAULT_ROLE_PERMISSIONS says the role should have it. Nobody
+  // can have turned off a permission that didn't exist yet, and a second run
+  // does nothing because the key is no longer new.
+  if (brandNewKeys.length > 0) {
+    let granted = 0;
+    for (const key of brandNewKeys) {
+      const pid = permIdByKey.get(key);
+      if (!pid) continue;
+      for (const role of allRoles) {
+        if (!(DEFAULT_ROLE_PERMISSIONS[role.key] ?? []).includes(key)) continue;
+        await db
+          .insert(schema.rolePermissions)
+          .values({ roleId: role.id, permissionId: pid })
+          .onConflictDoNothing();
+        granted++;
+      }
+    }
+    console.log(
+      `✓ ${brandNewKeys.length} new permission(s) granted to their default roles ` +
+        `(${granted} grants): ${brandNewKeys.join(", ")}`,
+    );
+  }
 
   /* 4. Companies ---------------------------------------------------- */
   async function ensureCompany(name: string, type: "colab" | "sub") {

@@ -35,6 +35,15 @@ export const PERMISSIONS: PermissionDef[] = [
   // Team Hub (the social hub: dashboard + personal profiles)
   { key: "hub.view", label: "View team dashboard", category: "Team Hub", sort: 62 },
   {
+    // Deliberately separate from staff.view. That one is the admin list —
+    // billing flags, cell numbers, who's inactive. This is the read-only
+    // social directory everybody gets.
+    key: "hub.directory",
+    label: "View Meet Your Team (the social directory)",
+    category: "Team Hub",
+    sort: 63,
+  },
+  {
     key: "profile.edit",
     label: "Create & edit OWN team member profile only",
     category: "Team Hub",
@@ -169,6 +178,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "users.view",
     "logs.view",
     "hub.view",
+    "hub.directory",
     "profile.edit",
     "events.manage",
     "team.invite",
@@ -197,6 +207,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "billing.run",
     "logs.view",
     "hub.view",
+    "hub.directory",
     "profile.edit",
     "events.manage",
     "team.invite",
@@ -216,13 +227,14 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "staff.view",
     "logs.view",
     "hub.view",
+    "hub.directory",
     "profile.edit",
     "reception.view",
   ],
 
-  // Team Member: just the social hub — see the team dashboard and maintain
-  // their own profile. No billing, admin or settings access.
-  team_member: ["hub.view", "profile.edit", "reception.view"],
+  // Team Member: just the social hub — see the team dashboard, meet the rest
+  // of the team and maintain their own profile. No billing, admin or settings.
+  team_member: ["hub.view", "hub.directory", "profile.edit", "reception.view"],
 };
 
 // The Super Admin role can never have permissions removed via the grid,

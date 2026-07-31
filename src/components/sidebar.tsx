@@ -11,6 +11,7 @@ import {
   Link2,
   FileText,
   Users,
+  UsersRound,
   Mails,
   Send,
   ShieldCheck,
@@ -57,6 +58,7 @@ const SECTIONS: NavSection[] = [
     heading: "Team Hub",
     items: [
       { href: "/hub", label: "Team Dashboard", icon: Sparkles, perm: "hub.view" },
+      { href: "/meet-the-team", label: "Meet Your Team", icon: UsersRound, perm: "hub.directory" },
       { href: "/bookings", label: "Room Bookings", icon: CalendarDays, perm: "hub.view" },
       { href: "/chat", label: "Chat", icon: MessagesSquare, perm: "hub.view" },
       { href: "/issues", label: "Say Something!", icon: Megaphone, perm: "hub.view" },

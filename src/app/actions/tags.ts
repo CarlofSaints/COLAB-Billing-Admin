@@ -22,6 +22,8 @@ function revalidateTagPaths() {
   revalidatePath("/staff");
   revalidatePath("/controls");
   revalidatePath("/invoices");
+  // "Show in Hub" decides what the whole office sees on Meet Your Team.
+  revalidatePath("/meet-the-team");
   revalidatePath("/");
 }
 
@@ -44,6 +46,11 @@ const tagSchema = z.object({
       (v) => v === null || (Number.isFinite(v) && v >= 0 && v <= 1_000_000),
       "Enter a cost like 850, or leave it blank for a label-only tag",
     ),
+  // An unticked checkbox isn't submitted at all, so absence means "off".
+  showInHub: z
+    .string()
+    .optional()
+    .transform((v) => v === "on"),
 });
 
 function parse(formData: FormData) {
@@ -51,6 +58,7 @@ function parse(formData: FormData) {
     name: formData.get("name"),
     color: formData.get("color") || undefined,
     costPerPerson: String(formData.get("costPerPerson") ?? ""),
+    showInHub: formData.get("showInHub") ?? undefined,
   });
 }
 
@@ -59,7 +67,7 @@ export async function createTag(_prev: TagState, formData: FormData): Promise<Ta
   const parsed = parse(formData);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const { name, color, costPerPerson } = parsed.data;
+  const { name, color, costPerPerson, showInHub } = parsed.data;
   try {
     const [row] = await db
       .insert(tags)
@@ -67,6 +75,7 @@ export async function createTag(_prev: TagState, formData: FormData): Promise<Ta
         name,
         color: color || null,
         costPerPerson: costPerPerson === null ? null : costPerPerson.toFixed(2),
+        showInHub,
       })
       .returning();
     await syncTagLineItem(row.id, row.name, costPerPerson);
@@ -95,7 +104,7 @@ export async function updateTag(_prev: TagState, formData: FormData): Promise<Ta
   const parsed = parse(formData);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const { name, color, costPerPerson } = parsed.data;
+  const { name, color, costPerPerson, showInHub } = parsed.data;
   const [before] = await db.select().from(tags).where(eq(tags.id, id)).limit(1);
   if (!before) return { error: "That tag no longer exists." };
   const previousCost = before.costPerPerson === null ? null : Number(before.costPerPerson);
@@ -107,6 +116,7 @@ export async function updateTag(_prev: TagState, formData: FormData): Promise<Ta
         name,
         color: color || null,
         costPerPerson: costPerPerson === null ? null : costPerPerson.toFixed(2),
+        showInHub,
       })
       .where(eq(tags.id, id));
   } catch {
@@ -125,6 +135,12 @@ export async function updateTag(_prev: TagState, formData: FormData): Promise<Ta
     } else {
       summary = `Changed tag "${name}" from ${formatCurrency(previousCost)} to ${formatCurrency(costPerPerson)} per person`;
     }
+  } else if (before.showInHub !== showInHub) {
+    // Worth its own line: this is the one field that changes what all 77
+    // people see on Meet Your Team.
+    summary = showInHub
+      ? `Tag "${name}" is now shown on Meet Your Team`
+      : `Tag "${name}" is no longer shown on Meet Your Team`;
   }
   await logEvent({ action: "tag.update", summary, actor, entityType: "tag", entityId: id });
 

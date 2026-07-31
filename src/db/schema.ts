@@ -489,6 +489,14 @@ export const tags = pgTable(
      * The tag is the source of truth for the price — the item mirrors it.
      */
     costPerPerson: numeric("cost_per_person", { precision: 12, scale: 2 }),
+    /**
+     * Whether this tag is shown on Meet Your Team, the social directory the
+     * whole office can see. Off by default and opt-in per tag, because plenty
+     * of tags are internal admin (billing groupings, costed tags like Parking)
+     * and publishing the lot to 77 people is not the same as labelling someone
+     * on the Team Members page.
+     */
+    showInHub: boolean("show_in_hub").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("tags_name_unique").on(sql`lower(${t.name})`)],
