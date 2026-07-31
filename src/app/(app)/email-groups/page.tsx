@@ -83,14 +83,26 @@ export default async function EmailGroupsPage() {
   // now, not how many rows happen to sit in the member table.
   const byGroup = await resolveGroupMembers(groups.map((g) => g.id));
 
-  const groupData = groups.map((g) => ({
-    id: g.id,
-    name: g.name,
-    description: g.description ?? "",
-    memberIds: membersByGroup.get(g.id) ?? [],
-    memberCount: (byGroup.get(g.id) ?? []).length,
-    rule: parseRule(g.rule),
-  }));
+  const groupData = groups.map((g) => {
+    // The resolver already hands back the whole person, and the page used to
+    // throw all of it away and keep .length — which is why a card could say
+    // "4" with no way to find out who the 4 were. Carried through instead.
+    const members = [...(byGroup.get(g.id) ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+    return {
+      id: g.id,
+      name: g.name,
+      description: g.description ?? "",
+      memberIds: membersByGroup.get(g.id) ?? [],
+      memberCount: members.length,
+      members: members.map((m) => ({
+        staffId: m.staffId,
+        name: m.name,
+        email: m.email ?? "",
+        companyName: m.companyName,
+      })),
+      rule: parseRule(g.rule),
+    };
+  });
 
   // Genders actually in use — a free-text column, so offering a fixed list
   // would silently exclude whatever else has been typed in.

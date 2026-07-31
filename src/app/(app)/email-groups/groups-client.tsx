@@ -31,8 +31,17 @@ type GroupRow = {
   description: string;
   memberIds: number[];
   memberCount: number;
+  /** Who's actually in it right now — resolved server-side, already sorted. */
+  members: GroupMemberRow[];
   /** Set = the group is a saved filter, re-evaluated every time it's used. */
   rule: GroupRule | null;
+};
+
+type GroupMemberRow = {
+  staffId: number;
+  name: string;
+  email: string;
+  companyName: string;
 };
 
 function GroupForm({
@@ -259,6 +268,103 @@ function MembersForm({
   );
 }
 
+/**
+ * Who is in this group, read-only.
+ *
+ * Separate from MembersForm on purpose. That one is the picker — it only
+ * exists for hand-picked groups and only for people who can manage groups, so
+ * a live-rule group had no way to show its membership at all and a viewer had
+ * none for either kind. Seeing who's in a group isn't an admin act.
+ */
+function MembersView({ group }: { group: GroupRow }) {
+  const [query, setQuery] = useState("");
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return group.members;
+    return group.members.filter((m) =>
+      [m.name, m.email, m.companyName].join(" ").toLowerCase().includes(q),
+    );
+  }, [group.members, query]);
+
+  // This is an EMAIL group, so somebody in it with no address is a real gap —
+  // they're a member who silently receives nothing. Counted, not buried.
+  const noEmail = group.members.filter((m) => !m.email.includes("@")).length;
+
+  if (group.members.length === 0) {
+    return (
+      <EmptyState
+        icon={<Users2 className="h-8 w-8" />}
+        title="Nobody is in this group"
+        description={
+          group.rule
+            ? "No active team member matches the rule right now."
+            : "No active team members have been added to it yet."
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted">
+          <strong className="text-slate-700">{group.members.length}</strong>{" "}
+          {group.members.length === 1 ? "person" : "people"}
+          {noEmail > 0 && (
+            <span className="text-amber-700">
+              {" "}
+              · {noEmail} with no email address
+            </span>
+          )}
+        </p>
+        {group.members.length > 8 && (
+          <div className="relative w-full max-w-56">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              className="pl-9"
+              placeholder="Search this group…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Search this group"
+            />
+          </div>
+        )}
+      </div>
+
+      {group.rule && (
+        <p className="flex items-start gap-1.5 rounded-md bg-brand-50 px-2.5 py-2 text-xs text-brand-800">
+          <Wand2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            <strong>Live rule.</strong> This list is worked out every time the group is used, so
+            it changes as people are added, tagged or moved.
+          </span>
+        </p>
+      )}
+
+      <div className="max-h-96 divide-y divide-line overflow-y-auto rounded-lg border border-line">
+        {shown.length === 0 ? (
+          <p className="px-3 py-6 text-center text-sm text-muted">Nobody here matches that.</p>
+        ) : (
+          shown.map((m) => (
+            <div key={m.staffId} className="flex items-center gap-3 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-slate-800">{m.name}</p>
+                <p className="truncate text-xs text-muted">{m.companyName}</p>
+              </div>
+              {m.email.includes("@") ? (
+                <span className="shrink-0 truncate text-xs text-muted">{m.email}</span>
+              ) : (
+                <span className="shrink-0 text-xs font-medium text-amber-700">No email address</span>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function GroupsManager({
   groups,
   allStaff,
@@ -277,6 +383,7 @@ export function GroupsManager({
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<GroupRow | null>(null);
   const [members, setMembers] = useState<GroupRow | null>(null);
+  const [viewing, setViewing] = useState<GroupRow | null>(null);
 
   const lookup = {
     companyName: (id: number) => companies.find((c) => c.id === id)?.name,
@@ -305,11 +412,20 @@ export function GroupsManager({
           {groups.map((g) => (
             <Card key={g.id}>
               <CardContent className="space-y-3">
-                <div className="flex items-start justify-between">
+                <div className="flex items-start justify-between gap-2">
                   <h3 className="font-semibold text-slate-900">{g.name}</h3>
-                  <Badge tone="brand">
-                    <Users2 className="mr-1 h-3 w-3" /> {g.memberCount}
-                  </Badge>
+                  {/* The count was the one thing telling you a group had 4
+                      people in it, and it wasn't clickable. Now it is. */}
+                  <button
+                    type="button"
+                    onClick={() => setViewing(g)}
+                    title="See who's in this group"
+                    className="shrink-0 rounded-full transition-opacity hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  >
+                    <Badge tone="brand">
+                      <Users2 className="mr-1 h-3 w-3" /> {g.memberCount}
+                    </Badge>
+                  </button>
                 </div>
                 {g.description && <p className="text-sm text-muted">{g.description}</p>}
                 {g.rule && (
@@ -320,29 +436,37 @@ export function GroupsManager({
                     </span>
                   </p>
                 )}
-                {canManage && (
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    {/* A rule decides the membership, so picking people would
-                        be a control that quietly does nothing. */}
-                    {!g.rule && (
-                      <Button variant="outline" size="sm" onClick={() => setMembers(g)}>
-                        Members
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {/* Available to everyone who can see the page, and for both
+                      kinds of group — reading a membership isn't an admin act,
+                      and a live-rule group had no way to show one at all. */}
+                  <Button variant="outline" size="sm" onClick={() => setViewing(g)}>
+                    <Users2 className="h-3.5 w-3.5" /> Who&apos;s in it
+                  </Button>
+                  {canManage && (
+                    <>
+                      {/* A rule decides the membership, so picking people would
+                          be a control that quietly does nothing. */}
+                      {!g.rule && (
+                        <Button variant="ghost" size="sm" onClick={() => setMembers(g)}>
+                          Edit members
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="sm" onClick={() => setEditing(g)}>
+                        <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                    )}
-                    <Button variant="ghost" size="sm" onClick={() => setEditing(g)}>
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        if (confirm(`Delete group “${g.name}”?`)) deleteGroup(g.id);
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                    </Button>
-                  </div>
-                )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (confirm(`Delete group “${g.name}”?`)) deleteGroup(g.id);
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                      </Button>
+                    </>
+                  )}
+                </div>
               </CardContent>
             </Card>
           ))}
@@ -375,6 +499,20 @@ export function GroupsManager({
             genders={genders}
             onDone={() => setEditing(null)}
           />
+        </Modal>
+      )}
+      {viewing && (
+        <Modal
+          title={`Who's in ${viewing.name}`}
+          description={
+            viewing.rule
+              ? "Worked out from the group's rule, as it stands right now."
+              : "The team members added to this group."
+          }
+          open
+          onOpenChange={(o) => !o && setViewing(null)}
+        >
+          <MembersView group={viewing} />
         </Modal>
       )}
       {members && (
