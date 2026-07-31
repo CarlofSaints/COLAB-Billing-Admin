@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { users, roles, companies } from "@/db/schema";
+import { users, roles, companies, staff } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page";
 import { UsersManager } from "./users-client";
@@ -38,17 +38,41 @@ export default async function UsersPage() {
     .innerJoin(roles, eq(users.roleId, roles.id))
     .orderBy(asc(users.name));
 
-  const data = userRows.map((u) => ({
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    active: u.active,
-    lastLogin: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
-    mustChangePassword: u.mustChangePassword,
-    roleId: u.roleId,
-    roleName: u.roleName,
-    roleKey: u.roleKey,
-  }));
+  // Who is also on the team list. Matched the same two ways the rest of the
+  // app does — the userId FK, else the email address — so this column tells
+  // the truth rather than a third version of it.
+  const staffRows = await db
+    .select({
+      id: staff.id,
+      email: staff.email,
+      userId: staff.userId,
+      active: staff.active,
+      companyName: companies.name,
+    })
+    .from(staff)
+    .innerJoin(companies, eq(staff.companyId, companies.id));
+
+  const staffByUserId = new Map(staffRows.filter((s) => s.userId != null).map((s) => [s.userId!, s]));
+  const staffByEmail = new Map(
+    staffRows.filter((s) => s.email).map((s) => [s.email!.toLowerCase(), s]),
+  );
+
+  const data = userRows.map((u) => {
+    const member = staffByUserId.get(u.id) ?? staffByEmail.get(u.email.toLowerCase()) ?? null;
+    return {
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      active: u.active,
+      lastLogin: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
+      mustChangePassword: u.mustChangePassword,
+      roleId: u.roleId,
+      roleName: u.roleName,
+      roleKey: u.roleKey,
+      teamCompany: member ? member.companyName : null,
+      teamActive: member ? member.active : false,
+    };
+  });
 
   return (
     <div>

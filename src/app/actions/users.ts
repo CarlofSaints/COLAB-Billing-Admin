@@ -181,6 +181,187 @@ async function mailCredentials(input: {
     : { emailed: false, emailError: res.error, emailTo: input.email };
 }
 
+const editSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  name: z.string().trim().min(1, "Name is required"),
+  email: z.string().trim().email("Enter a valid email"),
+});
+
+/**
+ * Edit a user's name and email.
+ *
+ * The catch worth knowing about: **the user↔team-member link is made by EMAIL**
+ * in five places — My Account, the three profile actions and chat — not by the
+ * `staff.userId` foreign key. So changing a login's address without moving the
+ * team-member record with it would silently detach that person from their own
+ * profile: My Account would offer to create a second one, their photo would
+ * drop out of chat, and their birthday would go missing. The two are therefore
+ * renamed together, in one go, or not at all.
+ */
+export async function updateUser(
+  _prev: UserActionState,
+  formData: FormData,
+): Promise<UserActionState> {
+  const actor = await requirePermission("users.manage");
+  const parsed = editSchema.safeParse({
+    id: formData.get("id"),
+    name: formData.get("name"),
+    email: formData.get("email"),
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const { id, name } = parsed.data;
+  const email = parsed.data.email.toLowerCase();
+
+  const [before] = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  if (!before) return { error: "That user no longer exists." };
+
+  const clash = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+  if (clash[0] && clash[0].id !== id) {
+    return { error: "Another user already has that email address." };
+  }
+
+  const emailChanged = before.email.toLowerCase() !== email;
+
+  // Find their team-member record the same two ways the rest of the app does:
+  // the FK if it's set, otherwise the OLD address.
+  const [linked] = await db
+    .select({ id: staff.id, name: staff.name, email: staff.email })
+    .from(staff)
+    .where(
+      sql`${staff.userId} = ${id} or lower(${staff.email}) = ${before.email.toLowerCase()}`,
+    )
+    .limit(1);
+
+  // staff.email is uniquely indexed, so a collision here has to be reported
+  // rather than thrown — someone else is already using the new address.
+  if (linked && emailChanged) {
+    const [taken] = await db
+      .select({ id: staff.id, name: staff.name })
+      .from(staff)
+      .where(sql`lower(${staff.email}) = ${email} and ${staff.id} <> ${linked.id}`)
+      .limit(1);
+    if (taken) {
+      return {
+        error: `The team member ${taken.name} already uses that email address. Sort that out on the Team Members page first.`,
+      };
+    }
+  }
+
+  await db.update(users).set({ name, email, updatedAt: new Date() }).where(eq(users.id, id));
+
+  let teamNote: string | null = null;
+  if (linked) {
+    await db
+      .update(staff)
+      .set({
+        email,
+        // The team list is the record of the person, so their name follows the
+        // login. Nothing else on their profile is touched.
+        name,
+        userId: id,
+        updatedAt: new Date(),
+      })
+      .where(eq(staff.id, linked.id));
+    if (emailChanged) {
+      teamNote = `Their team-member record was moved to the new address too, so their profile, photo and birthday stay attached.`;
+    }
+  }
+
+  await logEvent({
+    action: "user.update",
+    summary:
+      `Updated user ${name}` +
+      (emailChanged ? ` — email changed from ${before.email} to ${email}` : "") +
+      (linked && emailChanged ? " (team-member record moved with it)" : ""),
+    actor,
+    entityType: "user",
+    entityId: id,
+    metadata: { emailChanged, linkedStaffId: linked?.id ?? null },
+  });
+
+  revalidatePath("/users");
+  revalidatePath("/staff");
+  revalidatePath("/meet-the-team");
+  return { ok: true, ...(teamNote ? { teamNote } : {}) };
+}
+
+/**
+ * Put an existing user on the team list.
+ *
+ * Until now this was only possible at the moment a login was created, so
+ * somebody like Mark — a user, never a team member — could not be added to an
+ * email group, tagged, put on the reception rota or shown on Meet Your Team,
+ * and there was no screen anywhere that would fix it. Changing their ROLE to
+ * "Team Member" doesn't do it either: a role says what someone may do, the
+ * team list is who works here.
+ */
+export async function addUserToTeamList(
+  userId: number,
+  companyId: number,
+): Promise<UserActionState> {
+  const actor = await requirePermission("users.manage");
+
+  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!user) return { error: "That user no longer exists." };
+  if (!Number.isInteger(companyId) || companyId <= 0) return { error: "Choose a company." };
+
+  const email = user.email.toLowerCase();
+  const [existing] = await db
+    .select({ id: staff.id, name: staff.name, userId: staff.userId })
+    .from(staff)
+    .where(sql`${staff.userId} = ${userId} or lower(${staff.email}) = ${email}`)
+    .limit(1);
+
+  if (existing) {
+    // Already on the list under this address — link the login rather than
+    // create a duplicate person.
+    await db
+      .update(staff)
+      .set({ userId, updatedAt: new Date() })
+      .where(eq(staff.id, existing.id));
+    await logEvent({
+      action: "user.linked_to_team",
+      summary: `Linked user ${user.name} to the existing team member ${existing.name}`,
+      actor,
+      entityType: "user",
+      entityId: userId,
+    });
+    revalidatePath("/users");
+    revalidatePath("/staff");
+    return { ok: true, teamNote: `Linked to the existing team member ${existing.name}.` };
+  }
+
+  await db.insert(staff).values({
+    name: user.name,
+    email: user.email,
+    companyId,
+    userId,
+    // Same call as at user creation: putting someone on the team list says
+    // nothing about whether their company should be billed for them.
+    includeInBilling: false,
+  });
+
+  await logEvent({
+    action: "user.added_to_team",
+    summary: `Added user ${user.name} to the team list`,
+    actor,
+    entityType: "user",
+    entityId: userId,
+    metadata: { companyId },
+  });
+
+  revalidatePath("/users");
+  revalidatePath("/staff");
+  revalidatePath("/meet-the-team");
+  revalidatePath("/email-groups");
+  return {
+    ok: true,
+    teamNote:
+      "Added to the team list, excluded from the billing headcount until you say otherwise.",
+  };
+}
+
 export async function updateUserRole(userId: number, roleId: number) {
   const actor = await requirePermission("users.manage");
   await db.update(users).set({ roleId, updatedAt: new Date() }).where(eq(users.id, userId));
