@@ -10,7 +10,7 @@ export default async function PasswordPage({
 }: {
   searchParams: Promise<{ first?: string }>;
 }) {
-  await requireUser();
+  const user = await requireUser();
   const { first } = await searchParams;
 
   return (
@@ -25,7 +25,7 @@ export default async function PasswordPage({
       />
       <Card>
         <CardContent>
-          <PasswordForm firstTime={Boolean(first)} />
+          <PasswordForm firstTime={Boolean(first)} name={user.name} email={user.email} />
         </CardContent>
       </Card>
     </div>

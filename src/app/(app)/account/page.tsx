@@ -119,12 +119,12 @@ export default async function AccountPage() {
           <div>
             <CardTitle>Password</CardTitle>
             <CardDescription>
-              At least 8 characters. You&apos;ll need your current one to change it.
+              At least 12 characters. You&apos;ll need your current one to change it.
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent>
-          <PasswordForm firstTime={false} stayOnPage />
+          <PasswordForm firstTime={false} stayOnPage name={user.name} email={user.email} />
         </CardContent>
       </Card>
 

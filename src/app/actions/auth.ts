@@ -2,9 +2,9 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import { users, activityLog } from "@/db/schema";
 import {
   createSession,
   destroySession,
@@ -14,8 +14,13 @@ import {
   getCurrentUser,
 } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
+import { passwordProblem } from "@/lib/password-policy";
 
 export type LoginState = { error?: string };
+
+/** Sign-in throttle: this many failures for one address inside the window. */
+const MAX_FAILED_LOGINS = 8;
+const LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
 
 export async function login(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
@@ -25,11 +30,47 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
     return { error: "Enter your email and password." };
   }
 
+  // Throttle before touching the password. Failed attempts are already
+  // recorded in the activity log, so the counter is just a read of it — no new
+  // table, and the lockout survives a redeploy because it isn't in memory.
+  // Keyed on the email typed, so one account being hammered can't lock out
+  // anybody else.
+  const [{ fails }] = await db
+    .select({ fails: sql<number>`count(*)::int` })
+    .from(activityLog)
+    .where(
+      and(
+        eq(activityLog.action, "auth.login_failed"),
+        eq(activityLog.actorLabel, email),
+        gt(activityLog.createdAt, new Date(Date.now() - LOCKOUT_WINDOW_MS)),
+      ),
+    );
+
+  if (fails >= MAX_FAILED_LOGINS) {
+    await logEvent({
+      action: "auth.login_blocked",
+      summary: `Blocked a sign-in attempt for ${email} — ${fails} failures in the last ${LOCKOUT_WINDOW_MS / 60000} minutes`,
+      actorType: "system",
+      actorLabel: email,
+    });
+    return {
+      error: `Too many failed attempts. Try again in ${LOCKOUT_WINDOW_MS / 60000} minutes, or ask an admin to reset your password.`,
+    };
+  }
+
   const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
   const user = rows[0];
 
   // Constant-ish failure message to avoid leaking which part was wrong.
   if (!user || !user.active) {
+    // Logged under the same action as a wrong password so that guessing at
+    // addresses is throttled too, and can't be used to enumerate accounts.
+    await logEvent({
+      action: "auth.login_failed",
+      summary: `Failed login attempt for ${email}`,
+      actorType: "system",
+      actorLabel: email,
+    });
     return { error: "Invalid email or password." };
   }
 
@@ -139,12 +180,18 @@ export async function changePassword(
   const next = String(formData.get("next") ?? "");
   const confirm = String(formData.get("confirm") ?? "");
 
-  if (next.length < 8) return { error: "New password must be at least 8 characters." };
   if (next !== confirm) return { error: "New passwords do not match." };
 
   const rows = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
   const record = rows[0];
   if (!record) return { error: "User not found." };
+
+  // Checked against who they are, so "Carl2026Colab" doesn't sail through a
+  // pure length test. Runs server-side because the form's copy of this rule is
+  // a convenience, not a control.
+  const problem = passwordProblem(next, { name: record.name, email: record.email });
+  if (problem) return { error: problem };
+  if (next === current) return { error: "That's your current password. Choose a new one." };
 
   const ok = await verifyPassword(current, record.passwordHash);
   if (!ok) return { error: "Your current password is incorrect." };

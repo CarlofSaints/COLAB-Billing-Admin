@@ -23,8 +23,11 @@ export type UserActionState = {
 };
 
 function tempPassword(): string {
-  // Readable-ish temporary password.
-  return "COLAB-" + randomBytes(4).toString("hex");
+  // Readable-ish, but this goes out by email and sits in an inbox until it's
+  // used, so it carries real entropy: 9 bytes = 72 bits, up from 4 bytes/32.
+  // Grouped for anyone who has to read it off a screen and type it.
+  const hex = randomBytes(9).toString("hex").toUpperCase();
+  return `COLAB-${hex.slice(0, 6)}-${hex.slice(6, 12)}-${hex.slice(12)}`;
 }
 
 const createSchema = z.object({
@@ -362,16 +365,40 @@ export async function addUserToTeamList(
   };
 }
 
+/**
+ * Change a user's role.
+ *
+ * The log line names the person and both roles. It used to read just
+ * "Changed a user's role", which is useless at the only moment you ever read
+ * it: after someone has seen something they shouldn't have, when the question
+ * is precisely WHO was given WHAT and WHEN.
+ */
 export async function updateUserRole(userId: number, roleId: number) {
   const actor = await requirePermission("users.manage");
+
+  const [target] = await db
+    .select({ name: users.name, email: users.email, roleName: roles.name })
+    .from(users)
+    .innerJoin(roles, eq(users.roleId, roles.id))
+    .where(eq(users.id, userId))
+    .limit(1);
+  const [next] = await db
+    .select({ name: roles.name })
+    .from(roles)
+    .where(eq(roles.id, roleId))
+    .limit(1);
+
   await db.update(users).set({ roleId, updatedAt: new Date() }).where(eq(users.id, userId));
+
   await logEvent({
     action: "user.role_change",
-    summary: `Changed a user's role`,
+    summary: target
+      ? `Changed ${target.name} (${target.email}) from ${target.roleName} to ${next?.name ?? `role ${roleId}`}`
+      : `Changed a user's role to ${next?.name ?? roleId}`,
     actor,
     entityType: "user",
     entityId: userId,
-    metadata: { roleId },
+    metadata: { roleId, from: target?.roleName ?? null, to: next?.name ?? null },
   });
   revalidatePath("/users");
 }
@@ -380,10 +407,15 @@ export async function setUserActive(userId: number, active: boolean) {
   const actor = await requirePermission("users.manage");
   // Never let someone deactivate themselves and lock the door behind them.
   if (actor.id === userId && !active) return;
+  const [target] = await db
+    .select({ name: users.name, email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
   await db.update(users).set({ active, updatedAt: new Date() }).where(eq(users.id, userId));
   await logEvent({
     action: "user.set_active",
-    summary: `${active ? "Activated" : "Deactivated"} a user`,
+    summary: `${active ? "Activated" : "Deactivated"} ${target ? `${target.name} (${target.email})` : "a user"}`,
     actor,
     entityType: "user",
     entityId: userId,
@@ -438,6 +470,11 @@ export async function deleteUser(userId: number): Promise<{ error?: string; ok?:
 
 export async function resetUserPassword(userId: number): Promise<UserActionState> {
   const actor = await requirePermission("users.manage");
+  const [target] = await db
+    .select({ name: users.name, email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
   const pw = tempPassword();
   const passwordHash = await hashPassword(pw);
   await db
@@ -446,7 +483,7 @@ export async function resetUserPassword(userId: number): Promise<UserActionState
     .where(eq(users.id, userId));
   await logEvent({
     action: "user.password_reset",
-    summary: `Reset a user's password`,
+    summary: `Reset the password for ${target ? `${target.name} (${target.email})` : "a user"}`,
     actor,
     entityType: "user",
     entityId: userId,

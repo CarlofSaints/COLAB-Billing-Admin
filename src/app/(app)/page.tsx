@@ -28,11 +28,24 @@ export default async function Dashboard({
 }) {
   const user = await requireUser();
 
-  // Team members (hub access but no billing/company visibility) land on the
-  // team hub, not the billing dashboard. Only redirect people who can actually
-  // see the hub, so no one ends up in a redirect loop.
-  if (hasPermission(user, "hub.view") && !hasPermission(user, "companies.view")) {
-    redirect("/hub");
+  /*
+   * This page IS the billing dashboard — sub-company cards, rent shares,
+   * monthly expenses and the invoice preview — so `companies.view` is what
+   * decides whether you see it. Nothing else.
+   *
+   * It used to read:
+   *   if (hasPermission(user, "hub.view") && !hasPermission(user, "companies.view"))
+   * which made the redirect conditional on HAVING hub.view, so protection
+   * failed OPEN: anyone holding neither permission was never redirected and
+   * got the full billing figures. Roles are edited live on the Roles grid, so
+   * that state is one untick away at any time and nothing here would have
+   * caught it. The test is now on the absence of `companies.view` alone.
+   *
+   * Where they go instead is a courtesy, not the guard — hence the fallback,
+   * which also keeps a hub-less user out of a redirect loop.
+   */
+  if (!hasPermission(user, "companies.view")) {
+    redirect(hasPermission(user, "hub.view") ? "/hub" : "/account");
   }
 
   const { denied, period: requestedPeriod } = await searchParams;
