@@ -8,6 +8,7 @@ import { emailGroups, emailGroupMembers } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import type { GroupRule } from "@/lib/group-rules";
+import { normaliseGender } from "@/lib/staff-profile";
 
 export type ActionState = { error?: string; ok?: boolean };
 
@@ -34,7 +35,9 @@ function ruleFromFormData(formData: FormData): GroupRule | null {
 
   const companyId = Number(formData.get("ruleCompanyId"));
   const billing = String(formData.get("ruleBilling") ?? "");
-  const gender = String(formData.get("ruleGender") ?? "").trim();
+  // Standardised like the column it matches, so a saved rule reads
+  // "who is FEMALE" rather than echoing whatever casing was picked.
+  const gender = normaliseGender(String(formData.get("ruleGender") ?? "")) ?? "";
   const search = String(formData.get("ruleSearch") ?? "").trim();
 
   return {

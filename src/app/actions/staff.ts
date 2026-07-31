@@ -9,6 +9,7 @@ import { staff, companies, staffTags, tags } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { parseYesNo } from "@/lib/utils";
+import { normaliseGender } from "@/lib/staff-profile";
 
 /** Replace a team member's tags with the ones selected in the form. */
 async function syncTags(staffId: number, formData: FormData) {
@@ -31,7 +32,12 @@ const staffSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   cellNumber: z.string().trim().optional(),
   email: z.string().trim().optional(),
-  gender: z.string().trim().optional(),
+  // Standardised on the way in, so the dropdown, My Profile and the Excel
+  // import can never disagree about the casing again.
+  gender: z
+    .string()
+    .optional()
+    .transform((v) => normaliseGender(v)),
   position: z.string().trim().optional(),
   companyId: z.coerce.number().int().positive("Choose a company"),
   includeInBilling: z.boolean(),
@@ -316,7 +322,7 @@ export async function importStaff(_prev: ImportState, formData: FormData): Promi
       name,
       cellNumber: cellNumber || null,
       email: email || null,
-      gender: gender || null,
+      gender: normaliseGender(gender),
       position: position || null,
       companyId,
       includeInBilling,

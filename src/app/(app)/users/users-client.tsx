@@ -1,7 +1,16 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { UserCog, Plus, KeyRound, Copy, MailCheck, AlertTriangle, Trash2 } from "lucide-react";
+import { useActionState, useMemo, useState } from "react";
+import {
+  UserCog,
+  Plus,
+  KeyRound,
+  Copy,
+  MailCheck,
+  AlertTriangle,
+  Trash2,
+  Search,
+} from "lucide-react";
 import {
   createUser,
   updateUserRole,
@@ -230,19 +239,53 @@ export function UsersManager({
 }) {
   const [adding, setAdding] = useState(false);
   const [resetPw, setResetPw] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  // Same behaviour as the search on Team Members: plain substring match over
+  // the fields actually shown in the row, so what you type is what you see.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) =>
+      [u.name, u.email, u.roleName].join(" ").toLowerCase().includes(q),
+    );
+  }, [users, query]);
 
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-1 flex-wrap items-center gap-3">
+          <div className="relative w-full max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              className="pl-9"
+              placeholder="Search users…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Search users"
+            />
+          </div>
+          {query.trim() !== "" && (
+            <span className="text-sm text-muted">
+              {filtered.length} of {users.length}
+            </span>
+          )}
+        </div>
+        {canManage && (
           <Button onClick={() => setAdding(true)}>
             <Plus className="h-4 w-4" /> Add user
           </Button>
-        </div>
-      )}
+        )}
+      </div>
 
       {users.length === 0 ? (
         <EmptyState icon={<UserCog className="h-8 w-8" />} title="No users yet" />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<UserCog className="h-8 w-8" />}
+          title="No users match that"
+          description="Try a different name, email address or role."
+        />
       ) : (
         <Card>
           <Table>
@@ -256,7 +299,7 @@ export function UsersManager({
               </tr>
             </THead>
             <tbody>
-              {users.map((u) => {
+              {filtered.map((u) => {
                 const isSelf = u.id === currentUserId;
                 return (
                   <TR key={u.id}>

@@ -409,11 +409,14 @@ function StaffForm({
       </Field>
       <div className="grid grid-cols-2 gap-4">
         <Field label="Gender">
-          <Select name="gender" defaultValue={person?.gender ?? ""}>
+          {/* UPPERCASE to match what's stored — see normaliseGender. When
+              these read "Male" they couldn't match an imported "MALE", so the
+              dropdown fell back to "—" and saving wiped the person's gender. */}
+          <Select name="gender" defaultValue={(person?.gender ?? "").toUpperCase()}>
             <option value="">—</option>
-            <option value="Male">Male</option>
-            <option value="Female">Female</option>
-            <option value="Other">Other</option>
+            <option value="MALE">MALE</option>
+            <option value="FEMALE">FEMALE</option>
+            <option value="OTHER">OTHER</option>
           </Select>
         </Field>
         <Field label="Cell number">

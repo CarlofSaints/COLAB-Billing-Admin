@@ -9,6 +9,7 @@ import { db } from "@/db";
 import { staff } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
+import { normaliseGender } from "@/lib/staff-profile";
 
 export type ProfileState = { error?: string; ok?: boolean };
 export type PhotoState = { error?: string; ok?: boolean };
@@ -109,7 +110,7 @@ export async function updateMyProfile(
     .set({
       name: parsed.data.name,
       cellNumber: parsed.data.cellNumber || null,
-      gender: parsed.data.gender || null,
+      gender: normaliseGender(parsed.data.gender),
       position: parsed.data.position || null,
       bio: parsed.data.bio || null,
       dateOfBirth: parsed.data.dateOfBirth || null,

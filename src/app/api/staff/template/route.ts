@@ -13,8 +13,8 @@ export async function GET() {
 
   const rows = [
     ["Sub Company", "Name", "Gender", "Email", "Cell Number", "Include in Billing"],
-    ["OuterJoin", "Jane Doe", "Female", "jane@outerjoin.co.za", "082 123 4567", "Yes"],
-    ["COLAB", "John Smith", "Male", "john@colab2.co.za", "083 987 6543", "No"],
+    ["OuterJoin", "Jane Doe", "FEMALE", "jane@outerjoin.co.za", "082 123 4567", "Yes"],
+    ["COLAB", "John Smith", "MALE", "john@colab2.co.za", "083 987 6543", "No"],
   ];
 
   const ws = XLSX.utils.aoa_to_sheet(rows);

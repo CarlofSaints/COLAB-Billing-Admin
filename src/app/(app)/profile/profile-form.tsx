@@ -57,9 +57,11 @@ export function HubProfileForm({
         <Field label="Cell number">
           <Input name="cellNumber" type="tel" defaultValue={cellNumber ?? ""} maxLength={40} />
         </Field>
-        <Field label="Gender">
-          {/* Free text, not a fixed list — the column always has been, and a
-              closed list here would quietly exclude whatever people use. */}
+        <Field label="Gender" hint="Saved in capitals, to match the rest of the team list.">
+          {/* Still free text, not a fixed list — the column always has been,
+              and a closed list here would quietly exclude whatever people use.
+              normaliseGender only standardises the casing on save, so this can
+              stay open without letting MALE/Male back in alongside each other. */}
           <Input name="gender" defaultValue={gender ?? ""} maxLength={40} />
         </Field>
       </div>
