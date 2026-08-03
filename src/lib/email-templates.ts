@@ -720,6 +720,27 @@ export function bookingHandedOverEmail(
 }
 
 /**
+ * Where the person stands after losing the booking, which depends entirely on
+ * whether they also booked it. The booker stays a holder no matter who the room
+ * is for, so the two cases are the opposite of each other and can't share a
+ * line of copy.
+ */
+function standingNote(newHolder: string, stillHolderAsBooker?: boolean): string {
+  if (stillHolderAsBooker) {
+    return (
+      "You booked this room, so you're still on it — you'll get the reminder the day " +
+      "before as usual, and any request for the room still comes to you as well as to " +
+      `${newHolder}. It's simply no longer being held in your name.`
+    );
+  }
+  return (
+    "The booking itself still stands, as shown above — it's just no longer in your name. " +
+    `You won't get the reminder for it, and requests for the room will go to ${newHolder} ` +
+    "instead. If you still need the room, you can ask for it back from the calendar."
+  );
+}
+
+/**
  * The other half of the handover — to the person the room is no longer for, so
  * a booking never disappears from under someone without a word.
  */
@@ -730,6 +751,13 @@ export function bookingTakenOverEmail(
     /** Who it's for now. */
     newHolderName: string;
     changedByName: string;
+    /**
+     * True when this person also MADE the booking, which keeps them a holder:
+     * they still get the reminder and still field requests for the room. Telling
+     * them otherwise would be plainly wrong, and they'd find out when the
+     * reminder they were promised wouldn't come turns up anyway.
+     */
+    stillHolderAsBooker?: boolean;
     bookingsUrl: string;
   },
 ) {
@@ -747,11 +775,7 @@ export function bookingTakenOverEmail(
       ),
       detailTable(bookingRows(input)),
       button(input.bookingsUrl, "View the room calendar"),
-      note(
-        "The booking itself still stands, as shown above — it's just no longer in your name. " +
-          "You won't get the reminder for it, and requests for the room will go to " +
-          `${escapeHtml(input.newHolderName)} instead.`,
-      ),
+      note(standingNote(escapeHtml(input.newHolderName), input.stillHolderAsBooker)),
     ].join(""),
   });
 
@@ -762,6 +786,8 @@ export function bookingTakenOverEmail(
     `It was for you — it's now for ${input.newHolderName}.`,
     "",
     ...bookingTextLines(input),
+    "",
+    standingNote(input.newHolderName, input.stillHolderAsBooker),
     "",
     `Room calendar: ${input.bookingsUrl}`,
   ].join("\n");

@@ -235,6 +235,26 @@ const samples: { label: string; mail: { subject: string; html: string } }[] = [
     }),
   },
   {
+    label: "Room no longer booked for you (handover, but they booked it themselves)",
+    mail: bookingTakenOverEmail({
+      previousHolderName: "Grant Marais",
+      newHolderName: "Sky Roos",
+      changedByName: "Carl Dos Santos",
+      stillHolderAsBooker: true,
+      roomName: "The Boardroom",
+      title: "Q3 planning",
+      dateLabel: "Wed 5 Aug 2026",
+      timeLabel: "09:00 – 10:00 (60 min)",
+      attendeeCount: 6,
+      clientName: null,
+      attendees: [],
+      recurrenceLabel: null,
+      bookedForName: "Sky Roos",
+      bookedByName: "Grant Marais",
+      bookingsUrl: `${BASE}/bookings`,
+    }),
+  },
+  {
     label: "Someone wants your room",
     mail: roomStealRequestEmail({
       holderName: "Carl Dos Santos",

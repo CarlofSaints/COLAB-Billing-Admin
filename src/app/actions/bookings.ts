@@ -490,6 +490,11 @@ export async function updateBooking(
   const previousHolder = {
     name: booking.bookedForName ?? booking.bookedByName,
     email: booking.bookedForEmail ?? booking.bookedByEmail,
+    // The booker is a holder whoever the room is for, and the booker is never
+    // changed by an edit. So someone who booked the room for themselves keeps
+    // the reminder and keeps fielding requests for it — the opposite of what
+    // happens to a person another had booked it for.
+    stillHolderAsBooker: booking.bookedForEmail === null,
   };
   const newHolder = {
     name: bookedFor?.name ?? booking.bookedByName,
@@ -560,7 +565,7 @@ async function sendHandoverEmails(input: {
     bookedByName: string;
   };
   changedByName: string;
-  previousHolder: { name: string; email: string };
+  previousHolder: { name: string; email: string; stillHolderAsBooker: boolean };
   newHolder: { name: string; email: string };
   skipEmail: string;
 }): Promise<boolean> {
@@ -595,6 +600,7 @@ async function sendHandoverEmails(input: {
       previousHolderName: input.previousHolder.name,
       newHolderName: input.newHolder.name,
       changedByName: input.changedByName,
+      stillHolderAsBooker: input.previousHolder.stillHolderAsBooker,
       bookingsUrl,
     });
     const res = await sendMail({
