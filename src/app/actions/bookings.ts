@@ -2,11 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
-import { and, eq, gte, inArray, lte, ne } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, ne } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
+  companies,
   roomBookingAttendees,
+  roomBookingCompanies,
   roomBookings,
   rooms,
   roomStealRequests,
@@ -62,6 +64,8 @@ const bookingSchema = z.object({
   attendeeStaffIds: z.array(z.number().int().positive()),
   /** Booking for someone else. 0 / absent means it's for the booker. */
   bookedForUserId: z.number().int().nonnegative(),
+  /** Which sub-companies the meeting is for. Empty is fine — it's descriptive. */
+  companyIds: z.array(z.number().int().positive()),
   recurrence: recurrenceSchema,
 });
 
@@ -87,8 +91,41 @@ function readBookingForm(formData: FormData) {
       .map((v) => Number(v))
       .filter((n) => Number.isInteger(n) && n > 0),
     bookedForUserId: Number(formData.get("bookedForUserId") || 0),
+    companyIds: formData
+      .getAll("companyId")
+      .map((v) => Number(v))
+      .filter((n) => Number.isInteger(n) && n > 0),
     recurrence,
   });
+}
+
+/**
+ * Keep only ids that are really sub-companies, in register order.
+ *
+ * The picker is built from the same list, so anything else arriving here was
+ * hand-crafted — and a stale id from a deleted company would fail the foreign
+ * key and take the whole booking down with it. Dropping the unknown ones keeps
+ * a descriptive field from being able to block a booking.
+ */
+async function validSubCompanyIds(ids: number[]): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({ id: companies.id })
+    .from(companies)
+    .where(and(eq(companies.type, "sub"), inArray(companies.id, ids)))
+    .orderBy(asc(companies.name));
+  return rows.map((r) => r.id);
+}
+
+/** The sub-companies on a booking, by name, for emails and the activity log. */
+async function companyNamesFor(bookingId: number): Promise<string[]> {
+  const rows = await db
+    .select({ name: companies.name })
+    .from(roomBookingCompanies)
+    .innerJoin(companies, eq(roomBookingCompanies.companyId, companies.id))
+    .where(eq(roomBookingCompanies.bookingId, bookingId))
+    .orderBy(asc(companies.name));
+  return rows.map((r) => r.name);
 }
 
 function revalidateBookingPaths() {
@@ -257,6 +294,13 @@ export async function createBooking(
     );
   }
 
+  const companyIds = await validSubCompanyIds(input.companyIds);
+  if (companyIds.length > 0) {
+    await db.insert(roomBookingCompanies).values(
+      inserted.flatMap((b) => companyIds.map((companyId) => ({ bookingId: b.id, companyId }))),
+    );
+  }
+
   await logEvent({
     action: "booking.create",
     summary:
@@ -270,6 +314,7 @@ export async function createBooking(
   });
 
   const attendeeNames = await namesFor(input.attendeeStaffIds);
+  const companyNames = inserted[0] ? await companyNamesFor(inserted[0].id) : [];
   const details = {
     roomName: room.name,
     title: input.title,
@@ -279,6 +324,7 @@ export async function createBooking(
     attendeeCount: input.attendeeCount,
     clientName: input.clientName ?? null,
     attendees: attendeeNames,
+    companies: companyNames,
     recurrenceLabel,
     occurrences: dates.length,
     bookedForName: bookedFor?.name ?? null,
@@ -323,6 +369,7 @@ async function sendBookingConfirmation(input: {
   attendeeCount: number;
   clientName: string | null;
   attendees: string[];
+  companies: string[];
   recurrenceLabel: string | null;
   occurrences: number;
   bookedForName?: string | null;
@@ -339,6 +386,7 @@ async function sendBookingConfirmation(input: {
     attendeeCount: input.attendeeCount,
     clientName: input.clientName,
     attendees: input.attendees,
+    companies: input.companies,
     recurrenceLabel: input.recurrenceLabel,
     occurrences: input.occurrences,
     bookedForName: input.bookedForName,
@@ -485,6 +533,14 @@ export async function updateBooking(
       .values(input.attendeeStaffIds.map((staffId) => ({ bookingId: id, staffId })));
   }
 
+  const companyIds = await validSubCompanyIds(input.companyIds);
+  await db.delete(roomBookingCompanies).where(eq(roomBookingCompanies.bookingId, id));
+  if (companyIds.length > 0) {
+    await db
+      .insert(roomBookingCompanies)
+      .values(companyIds.map((companyId) => ({ bookingId: id, companyId })));
+  }
+
   // Who held it before, and who holds it now. A booking with no `bookedFor` is
   // held by whoever made it, so both sides always resolve to a real person.
   const previousHolder = {
@@ -516,6 +572,7 @@ export async function updateBooking(
 
   if (holderChanged) {
     const attendeeNames = await namesFor(input.attendeeStaffIds);
+    const companyNames = await companyNamesFor(id);
     const details = {
       roomName: room.name,
       title: input.title,
@@ -524,6 +581,7 @@ export async function updateBooking(
       attendeeCount: input.attendeeCount,
       clientName: input.clientName ?? null,
       attendees: attendeeNames,
+      companies: companyNames,
       recurrenceLabel: booking.recurrenceLabel,
       bookedForName: bookedFor?.name ?? null,
       bookedByName: booking.bookedByName,
@@ -560,6 +618,7 @@ async function sendHandoverEmails(input: {
     attendeeCount: number;
     clientName: string | null;
     attendees: string[];
+    companies: string[];
     recurrenceLabel: string | null;
     bookedForName: string | null;
     bookedByName: string;
@@ -845,8 +904,11 @@ export async function respondToSteal(
       })
       .where(eq(roomBookings.id, booking.id));
 
-    // The previous holder's guest list doesn't belong to the new meeting.
+    // The previous holder's guest list doesn't belong to the new meeting, and
+    // neither do the sub-companies it was for — this is a different meeting in
+    // the same slot, and the requester's form doesn't ask for either.
     await db.delete(roomBookingAttendees).where(eq(roomBookingAttendees.bookingId, booking.id));
+    await db.delete(roomBookingCompanies).where(eq(roomBookingCompanies.bookingId, booking.id));
 
     await db
       .update(roomStealRequests)

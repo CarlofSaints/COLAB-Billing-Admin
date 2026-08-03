@@ -3,6 +3,7 @@ import { db } from "@/db";
 import {
   companies,
   roomBookingAttendees,
+  roomBookingCompanies,
   roomBookings,
   rooms,
   roomStealRequests,
@@ -98,6 +99,19 @@ export default async function BookingsPage({
         .where(inArray(roomBookingAttendees.bookingId, ids))
     : [];
 
+  const companyRows = ids.length
+    ? await db
+        .select({
+          bookingId: roomBookingCompanies.bookingId,
+          id: companies.id,
+          name: companies.name,
+        })
+        .from(roomBookingCompanies)
+        .innerJoin(companies, eq(roomBookingCompanies.companyId, companies.id))
+        .where(inArray(roomBookingCompanies.bookingId, ids))
+        .orderBy(asc(companies.name))
+    : [];
+
   const pendingRows = ids.length
     ? await db
         .select({
@@ -125,6 +139,9 @@ export default async function BookingsPage({
       attendees: attendeeRows.filter((a) => a.bookingId === b.id).map((a) => a.name),
       // Ids too, so the edit form can pre-tick the current guest list.
       attendeeIds: attendeeRows.filter((a) => a.bookingId === b.id).map((a) => a.staffId),
+      // Names for the calendar block and detail, ids for the edit form.
+      companies: companyRows.filter((c) => c.bookingId === b.id).map((c) => c.name),
+      companyIds: companyRows.filter((c) => c.bookingId === b.id).map((c) => c.id),
       pendingRequests: pendingRows.filter((p) => p.bookingId === b.id).length,
       iAsked: pendingRows.some((p) => p.bookingId === b.id && p.requesterUserId === user?.id),
       isMine,
@@ -143,11 +160,21 @@ export default async function BookingsPage({
 
   // "Booked for" still has to be a login, because that person becomes a holder
   // — they get the emails and can approve or decline a request for the room.
+  // Email comes along so the picker can tell two people with the same first
+  // name apart — 28 accounts is past the point of recognising every name.
   const bookableUsers = await db
-    .select({ id: users.id, name: users.name })
+    .select({ id: users.id, name: users.name, email: users.email })
     .from(users)
     .where(eq(users.active, true))
     .orderBy(asc(users.name));
+
+  // The businesses a meeting can be for. COLAB itself is deliberately not here
+  // — this answers "which of the sub-companies is this meeting for".
+  const subCompanies = await db
+    .select({ id: companies.id, name: companies.name })
+    .from(companies)
+    .where(eq(companies.type, "sub"))
+    .orderBy(asc(companies.name));
 
   return (
     <div>
@@ -170,6 +197,7 @@ export default async function BookingsPage({
         bookings={bookings}
         teamMembers={teamMembers}
         allUsers={bookableUsers}
+        subCompanies={subCompanies}
         currentUserId={user?.id ?? 0}
         canManageAny={canManageAny}
       />

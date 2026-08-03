@@ -1116,6 +1116,27 @@ export const roomBookingAttendees = pgTable(
   (t) => [primaryKey({ columns: [t.bookingId, t.staffId] })],
 );
 
+/**
+ * Which sub-companies a meeting is for. A meeting often involves more than one
+ * of the businesses in the building, so this is a list rather than a column.
+ *
+ * Purely descriptive — it costs nothing and bills nothing. It exists so the
+ * week's calendar can be read at a glance ("who is using the boardroom, and for
+ * which business"), which the meeting title alone never answers.
+ */
+export const roomBookingCompanies = pgTable(
+  "room_booking_companies",
+  {
+    bookingId: integer("booking_id")
+      .notNull()
+      .references(() => roomBookings.id, { onDelete: "cascade" }),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.bookingId, t.companyId] })],
+);
+
 export const stealStatusEnum = pgEnum("steal_status", [
   "pending",
   "approved",

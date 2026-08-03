@@ -174,6 +174,7 @@ const samples: { label: string; mail: { subject: string; html: string } }[] = [
       attendeeCount: 6,
       clientName: "Snomaster",
       attendees: ["Sky Roos", "Dudu Nkosi"],
+      companies: ["Atomic Marketing", "OuterJoin"],
       recurrenceLabel: "Every week on Wed",
       occurrences: 8,
       bookingsUrl: `${BASE}/bookings`,

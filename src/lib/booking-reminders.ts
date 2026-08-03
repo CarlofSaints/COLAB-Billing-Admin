@@ -1,7 +1,14 @@
 import "server-only";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { roomBookingAttendees, roomBookings, rooms, staff } from "@/db/schema";
+import {
+  companies,
+  roomBookingAttendees,
+  roomBookingCompanies,
+  roomBookings,
+  rooms,
+  staff,
+} from "@/db/schema";
 import { appBaseUrl, bookingReminderEmail, mailConfigured, sendMail } from "@/lib/mailer";
 import { longDateLabel, slotLabel } from "@/lib/bookings";
 import { sastDateKey } from "@/lib/schedules";
@@ -59,6 +66,13 @@ export async function runBookingReminders(): Promise<{ checked: number; sent: nu
       .innerJoin(staff, eq(roomBookingAttendees.staffId, staff.id))
       .where(eq(roomBookingAttendees.bookingId, b.id));
 
+    const subCompanies = await db
+      .select({ name: companies.name })
+      .from(roomBookingCompanies)
+      .innerJoin(companies, eq(roomBookingCompanies.companyId, companies.id))
+      .where(eq(roomBookingCompanies.bookingId, b.id))
+      .orderBy(asc(companies.name));
+
     // Whoever booked it and, when it was booked on someone's behalf, whoever
     // it's for — both need the nudge, not just the one who clicked.
     const recipients = [{ email: b.bookedByEmail, name: b.bookedByName }];
@@ -77,6 +91,7 @@ export async function runBookingReminders(): Promise<{ checked: number; sent: nu
         attendeeCount: b.attendeeCount,
         clientName: b.clientName,
         attendees: attendees.map((a) => a.name),
+        companies: subCompanies.map((c) => c.name),
         recurrenceLabel: b.recurrenceLabel,
         bookedForName: b.bookedForName,
         bookedByName: b.bookedByName,

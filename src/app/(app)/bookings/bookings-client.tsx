@@ -26,6 +26,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input, Select, Field, Textarea } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import { brandFor } from "@/lib/brands";
 import { cn } from "@/lib/utils";
 import {
   DAY_END_MINUTE,
@@ -54,6 +55,10 @@ type RoomOption = {
   notes: string;
 };
 
+type BookableUser = { id: number; name: string; email: string };
+
+type SubCompany = { id: number; name: string };
+
 type BookingBlock = {
   id: number;
   title: string;
@@ -71,6 +76,9 @@ type BookingBlock = {
   recurrenceLabel: string | null;
   attendees: string[];
   attendeeIds: number[];
+  /** Sub-companies this meeting is for — names to show, ids to re-pick. */
+  companies: string[];
+  companyIds: number[];
   pendingRequests: number;
   iAsked: boolean;
   isMine: boolean;
@@ -231,6 +239,7 @@ function BookingForm({
   startMinute,
   teamMembers,
   allUsers,
+  subCompanies,
   currentUserId,
   existing,
   onDone,
@@ -239,7 +248,8 @@ function BookingForm({
   date: string;
   startMinute: number;
   teamMembers: TeamMember[];
-  allUsers: { id: number; name: string }[];
+  allUsers: BookableUser[];
+  subCompanies: SubCompany[];
   currentUserId: number;
   /** Set when editing rather than creating. */
   existing?: BookingBlock;
@@ -259,7 +269,9 @@ function BookingForm({
   const [attendeeIds, setAttendeeIds] = useState<number[]>(existing?.attendeeIds ?? []);
   const [attendeeCount, setAttendeeCount] = useState(existing?.attendeeCount ?? 1);
   const [bookedForUserId, setBookedForUserId] = useState(existing?.bookedForUserId ?? 0);
+  const [companyIds, setCompanyIds] = useState<number[]>(existing?.companyIds ?? []);
   const [search, setSearch] = useState("");
+  const [holderSearch, setHolderSearch] = useState("");
 
   useEffect(() => {
     if (state.ok) onDone();
@@ -308,6 +320,9 @@ function BookingForm({
       </div>
 
       <input type="hidden" name="bookedForUserId" value={bookedForUserId} />
+      {companyIds.map((id) => (
+        <input key={id} type="hidden" name="companyId" value={id} />
+      ))}
 
       <Field label="Meeting name">
         <Input
@@ -337,27 +352,66 @@ function BookingForm({
             : "Booking for someone else? They're shown as the holder, and you both get the reminder and any request for the room."
         }
       >
-        <Select
-          value={bookedForUserId}
-          onChange={(e) => setBookedForUserId(Number(e.target.value))}
-        >
-          {/* Option 0 is "nobody in particular — it belongs to whoever booked
-              it". That's the current user on a new booking, but on an edit it's
-              the original booker, who may well be someone else. Labelling it
-              "Me" there would offer to hand an admin someone else's room. */}
-          <option value={0}>
-            {editing && existing.bookedByUserId !== currentUserId
+        {/* "Nobody in particular" means it belongs to whoever booked it —
+            the current user on a new booking, but on an edit the original
+            booker, who may well be someone else. Labelling that "Me" would
+            offer to hand an admin someone else's room. */}
+        <HolderPicker
+          users={allUsers}
+          excludeUserId={editing ? existing.bookedByUserId : currentUserId}
+          defaultLabel={
+            editing && existing.bookedByUserId !== currentUserId
               ? `${existing.bookedByName} (booked it)`
-              : "Me"}
-          </option>
-          {allUsers
-            .filter((u) => u.id !== (editing ? existing.bookedByUserId : currentUserId))
-            .map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-        </Select>
+              : "Me"
+          }
+          value={bookedForUserId}
+          onChange={setBookedForUserId}
+          search={holderSearch}
+          onSearch={setHolderSearch}
+        />
+      </Field>
+
+      <Field
+        label={`Sub-company${companyIds.length === 1 ? "" : "s"}${
+          companyIds.length ? ` (${companyIds.length})` : ""
+        }`}
+        hint="Which of the businesses this meeting is for. Pick as many as apply — it shows on the calendar."
+      >
+        <div className="flex flex-wrap gap-1.5">
+          {subCompanies.map((c) => {
+            const on = companyIds.includes(c.id);
+            const brand = brandFor(c.name);
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() =>
+                  setCompanyIds((prev) =>
+                    prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id],
+                  )
+                }
+                // Each carries its own brand colour rather than one shared
+                // accent, so the form and the calendar block read as the same
+                // thing at a glance.
+                style={
+                  on
+                    ? { backgroundColor: `${brand.color}1f`, borderColor: brand.color }
+                    : undefined
+                }
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                  on ? "text-slate-900" : "border-line text-slate-500 hover:bg-slate-50",
+                )}
+              >
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: brand.color, opacity: on ? 1 : 0.4 }}
+                />
+                {c.name}
+              </button>
+            );
+          })}
+        </div>
       </Field>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -475,6 +529,108 @@ function BookingForm({
   );
 }
 
+/**
+ * Who the room is for — one person, chosen from a searchable list.
+ *
+ * A plain dropdown was fine at nine logins and isn't at twenty-eight: you can't
+ * type at it, and a `<select>` whose stored value has no matching option (which
+ * happens whenever the room is already for the person editing) silently renders
+ * the first option instead, showing the wrong holder. A list of buttons has no
+ * such fallback — the chosen one is chosen, or nothing is.
+ *
+ * The current choice stays visible above the search box so it can't scroll out
+ * of sight behind a filter, mirroring the pinned-picks attendee list.
+ */
+function HolderPicker({
+  users,
+  excludeUserId,
+  defaultLabel,
+  value,
+  onChange,
+  search,
+  onSearch,
+}: {
+  users: BookableUser[];
+  /** The booker — the room already belongs to them, so they're not a choice. */
+  excludeUserId: number | null;
+  /** What "it's for whoever booked it" is called here. */
+  defaultLabel: string;
+  value: number;
+  onChange: (id: number) => void;
+  search: string;
+  onSearch: (v: string) => void;
+}) {
+  const selectable = users.filter((u) => u.id !== excludeUserId);
+  const chosen = selectable.find((u) => u.id === value) ?? null;
+
+  const term = search.trim().toLowerCase();
+  const matches = term
+    ? selectable.filter(
+        (u) => u.name.toLowerCase().includes(term) || u.email.toLowerCase().includes(term),
+      )
+    : selectable;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted">For:</span>
+        <span className="rounded-full border border-brand-600 bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-700">
+          {chosen ? chosen.name : defaultLabel}
+        </span>
+        {chosen && (
+          <button
+            type="button"
+            onClick={() => onChange(0)}
+            className="text-xs font-medium text-muted underline underline-offset-2 hover:text-slate-700"
+          >
+            back to {defaultLabel}
+          </button>
+        )}
+      </div>
+
+      <Input
+        value={search}
+        onChange={(e) => onSearch(e.target.value)}
+        placeholder="Search by name or email…"
+      />
+
+      <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto rounded-lg border border-line bg-white p-2">
+        <button
+          type="button"
+          onClick={() => onChange(0)}
+          className={cn(
+            "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
+            value === 0
+              ? "border-brand-600 bg-brand-50 text-brand-700"
+              : "border-line text-slate-500 hover:bg-slate-50",
+          )}
+        >
+          {defaultLabel}
+        </button>
+        {matches.map((u) => (
+          <button
+            key={u.id}
+            type="button"
+            onClick={() => onChange(u.id)}
+            title={u.email}
+            className={cn(
+              "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
+              value === u.id
+                ? "border-brand-600 bg-brand-50 text-brand-700"
+                : "border-line text-slate-500 hover:bg-slate-50",
+            )}
+          >
+            {u.name}
+          </button>
+        ))}
+        {matches.length === 0 && (
+          <p className="px-1 py-2 text-xs text-muted">Nobody matches “{search}”.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Booking detail + steal                                              */
 /* ------------------------------------------------------------------ */
@@ -564,6 +720,9 @@ function BookingDetail({
               ] as [string, string][])
             : ([["Booked by", booking.bookedByName]] as [string, string][])),
           ["Attendees", String(booking.attendeeCount)],
+          ...(booking.companies.length
+            ? [[booking.companies.length === 1 ? "Sub-company" : "Sub-companies", booking.companies.join(", ")]]
+            : []),
           ...(booking.clientName ? [["Client", booking.clientName]] : []),
           ...(booking.attendees.length ? [["Internal", booking.attendees.join(", ")]] : []),
           ...(booking.recurrenceLabel ? [["Repeats", booking.recurrenceLabel]] : []),
@@ -638,6 +797,7 @@ export function BookingsClient({
   bookings,
   teamMembers,
   allUsers,
+  subCompanies,
   currentUserId,
   canManageAny,
 }: {
@@ -648,7 +808,8 @@ export function BookingsClient({
   today: string;
   bookings: BookingBlock[];
   teamMembers: TeamMember[];
-  allUsers: { id: number; name: string }[];
+  allUsers: BookableUser[];
+  subCompanies: SubCompany[];
   currentUserId: number;
   canManageAny: boolean;
 }) {
@@ -784,7 +945,14 @@ export function BookingsClient({
                           setEditing(b);
                         }
                       }}
-                      title={b.canEdit ? "Click for detail, double-click to edit" : undefined}
+                      // A short block clips its chips, so the tooltip carries
+                      // the sub-companies for the 20-minute meetings too.
+                      title={[
+                        b.companies.length ? b.companies.join(", ") : "",
+                        b.canEdit ? "Click for detail, double-click to edit" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" — ") || undefined}
                       className="absolute left-0.5 right-0.5 overflow-hidden rounded-md border px-1.5 py-1 text-left transition-shadow hover:shadow-md"
                       style={{
                         top: (b.startMinute - DAY_START_MINUTE) * PX_PER_MIN,
@@ -805,6 +973,29 @@ export function BookingsClient({
                       {b.bookedForName && (
                         <span className="block truncate text-[10px] leading-tight text-slate-500">
                           booked by {b.bookedByName}
+                        </span>
+                      )}
+                      {/* Brand-coloured, because on a week view the colour is
+                          what's actually readable — the name is there for the
+                          taller blocks and clips away on the short ones. */}
+                      {b.companies.length > 0 && (
+                        <span className="mt-0.5 flex flex-wrap items-center gap-0.5">
+                          {b.companies.map((name) => (
+                            <span
+                              key={name}
+                              className="flex max-w-full items-center gap-0.5 rounded px-1 text-[9px] font-semibold leading-[14px]"
+                              style={{
+                                backgroundColor: `${brandFor(name).color}26`,
+                                color: brandFor(name).color,
+                              }}
+                            >
+                              <span
+                                className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                style={{ backgroundColor: brandFor(name).color }}
+                              />
+                              <span className="truncate">{name}</span>
+                            </span>
+                          ))}
                         </span>
                       )}
                       {b.clientName && (
@@ -846,6 +1037,7 @@ export function BookingsClient({
             startMinute={booking.startMinute}
             teamMembers={teamMembers}
             allUsers={allUsers}
+            subCompanies={subCompanies}
             currentUserId={currentUserId}
             onDone={() => {
               setBooking(null);
@@ -887,6 +1079,7 @@ export function BookingsClient({
             startMinute={editing.startMinute}
             teamMembers={teamMembers}
             allUsers={allUsers}
+            subCompanies={subCompanies}
             currentUserId={currentUserId}
             existing={editing}
             onDone={() => {
