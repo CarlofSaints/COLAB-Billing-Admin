@@ -281,7 +281,20 @@ export function describeRecurrence(rule: Recurrence): string {
 }
 
 /** "09:00 – 09:30 (30 min)" */
+/**
+ * "20 min", "1 hour", "2 hours 30 min".
+ *
+ * Bookings can run the length of a working day, and "480 min" is not a thing
+ * anyone reads as eight hours.
+ */
+export function durationLabel(mins: number): string {
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  const h = `${hours} hour${hours === 1 ? "" : "s"}`;
+  return rest === 0 ? h : `${h} ${rest} min`;
+}
+
 export function slotLabel(startMinute: number, endMinute: number): string {
-  const mins = endMinute - startMinute;
-  return `${minuteLabel(startMinute)} – ${minuteLabel(endMinute)} (${mins} min)`;
+  return `${minuteLabel(startMinute)} – ${minuteLabel(endMinute)} (${durationLabel(endMinute - startMinute)})`;
 }

@@ -110,6 +110,14 @@ export const PERMISSIONS: PermissionDef[] = [
     sort: 152,
   },
 
+  // Vehicles. The register only, for now — booking a vehicle isn't built yet.
+  {
+    key: "vehicles.manage",
+    label: "Add / edit vehicles in the fleet",
+    category: "Vehicles",
+    sort: 153,
+  },
+
   // Admin tasks
   { key: "tasks.view", label: "View admin tasks", category: "Admin Tasks", sort: 148 },
   { key: "tasks.manage", label: "Create & assign admin tasks", category: "Admin Tasks", sort: 149 },
@@ -190,6 +198,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "issues.manage",
     "rooms.manage",
     "bookings.manage",
+    "vehicles.manage",
   ],
 
   // Admin: the operator. Manages staff, groups, mail and runs billing —
@@ -219,6 +228,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "issues.manage",
     "rooms.manage",
     "bookings.manage",
+    "vehicles.manage",
   ],
 
   // Viewer: minimal read-only.

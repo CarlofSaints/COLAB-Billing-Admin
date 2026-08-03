@@ -31,6 +31,8 @@ import { cn } from "@/lib/utils";
 import {
   DAY_END_MINUTE,
   DAY_START_MINUTE,
+  MIN_DURATION,
+  durationLabel,
   DEFAULT_RECURRENCE,
   SLOT_MINUTES,
   addDays,
@@ -94,10 +96,18 @@ const SLOTS = slotStarts();
 const PX_PER_MIN = 0.9;
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function SubmitButton({ label, busy }: { label: string; busy: string }) {
+function SubmitButton({
+  label,
+  busy,
+  disabled,
+}: {
+  label: string;
+  busy: string;
+  disabled?: boolean;
+}) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" disabled={pending}>
+    <Button type="submit" disabled={pending || disabled}>
       {pending ? busy : label}
     </Button>
   );
@@ -261,8 +271,8 @@ function BookingForm({
     {},
   );
   const [start, setStart] = useState(minuteLabel(existing?.startMinute ?? startMinute));
-  const [duration, setDuration] = useState(
-    existing ? existing.endMinute - existing.startMinute : SLOT_MINUTES,
+  const [end, setEnd] = useState(
+    minuteLabel(existing?.endMinute ?? Math.min(startMinute + SLOT_MINUTES, DAY_END_MINUTE)),
   );
   const [bookingDate, setBookingDate] = useState(existing?.date ?? date);
   const [recurrence, setRecurrence] = useState<Recurrence>(DEFAULT_RECURRENCE);
@@ -278,8 +288,13 @@ function BookingForm({
   }, [state.ok, onDone]);
 
   const startMin = labelToMinute(start) ?? startMinute;
-  const endMin = startMin + duration;
+  const endMin = labelToMinute(end) ?? startMin + SLOT_MINUTES;
   const endsTooLate = endMin > DAY_END_MINUTE;
+  // Two ways an end time can be wrong that a duration picker made impossible.
+  // Caught here as well as on the server so the submit button can say so
+  // before the round trip, not after it.
+  const endsBeforeItStarts = endMin <= startMin;
+  const tooShort = !endsBeforeItStarts && endMin - startMin < MIN_DURATION;
 
   const toggleAttendee = (id: number) =>
     setAttendeeIds((prev) => {
@@ -418,18 +433,14 @@ function BookingForm({
         <Field label="Starts">
           <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} step={300} />
         </Field>
-        <Field label="For" hint="Book exactly what you need — 20 minutes is fine.">
-          <Select value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
-            {[10, 15, 20, 30, 45, 60, 90, 120, 180, 240].map((m) => (
-              <option key={m} value={m}>
-                {m < 60 ? `${m} minutes` : m === 60 ? "1 hour" : `${m / 60} hours`}
-              </option>
-            ))}
-          </Select>
+        <Field label="Ends" hint="Book exactly what you need — 20 minutes or all day.">
+          <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} step={300} />
         </Field>
       </div>
       <p className="-mt-2 text-xs text-muted">
-        {minuteLabel(startMin)} – {minuteLabel(endMin)}
+        {endsBeforeItStarts || tooShort
+          ? `${minuteLabel(startMin)} – ${minuteLabel(endMin)}`
+          : `${minuteLabel(startMin)} – ${minuteLabel(endMin)} · ${durationLabel(endMin - startMin)}`}
       </p>
 
       <Field label="Client name" hint="Optional — if this meeting is for a client.">
@@ -504,10 +515,21 @@ function BookingForm({
         <RecurrenceEditor value={recurrence} onChange={setRecurrence} startDate={bookingDate} />
       )}
 
+      {endsBeforeItStarts && (
+        <p className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <TriangleAlert className="h-4 w-4" /> The end time has to be after the start time.
+        </p>
+      )}
+      {tooShort && (
+        <p className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <TriangleAlert className="h-4 w-4" /> A meeting has to be at least {MIN_DURATION} minutes
+          long.
+        </p>
+      )}
       {endsTooLate && (
         <p className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <TriangleAlert className="h-4 w-4" /> That runs past{" "}
-          {minuteLabel(DAY_END_MINUTE)} — shorten it or start earlier.
+          {minuteLabel(DAY_END_MINUTE)} — end earlier or start later.
         </p>
       )}
       {state.error && (
@@ -520,9 +542,13 @@ function BookingForm({
         <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
         </Button>
+        {/* A duration picker couldn't express "ends before it starts"; two
+            time fields can, so the button has to refuse it rather than let
+            the round trip come back with an error. */}
         <SubmitButton
           label={editing ? "Save changes" : "Book the room"}
           busy={editing ? "Saving…" : "Booking…"}
+          disabled={endsBeforeItStarts || tooShort}
         />
       </div>
     </form>

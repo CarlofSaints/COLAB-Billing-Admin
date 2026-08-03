@@ -1029,6 +1029,45 @@ export const rooms = pgTable(
   (t) => [uniqueIndex("rooms_name_unique").on(sql`lower(${t.name})`)],
 );
 
+/**
+ * The vehicle register — the pool cars the office shares.
+ *
+ * Deliberately the same shape as `rooms`: a thing that gets booked, owned by
+ * one of the sub-companies, retired rather than deleted so that bookings made
+ * against it survive it leaving the fleet.
+ */
+export const vehicles = pgTable(
+  "vehicles",
+  {
+    id: serial("id").primaryKey(),
+    /** Make and model, e.g. "Toyota Corolla 1.6". */
+    name: text("name").notNull(),
+    /** What people actually call it, e.g. "Little Baby". */
+    nickname: text("nickname"),
+    vin: text("vin"),
+    regNumber: text("reg_number").notNull(),
+    colour: text("colour"),
+    /** Carrying sub-company livery, which decides where it can sensibly go. */
+    branded: boolean("branded").notNull().default(false),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // A plate identifies a car in the real world; two rows sharing one is a
+    // duplicate, not a fleet of two.
+    uniqueIndex("vehicles_reg_unique").on(sql`lower(${t.regNumber})`),
+    // VINs are optional — several of these are older cars whose VIN nobody has
+    // to hand — so this only constrains the ones actually entered.
+    uniqueIndex("vehicles_vin_unique")
+      .on(sql`lower(${t.vin})`)
+      .where(sql`${t.vin} is not null`),
+  ],
+);
+
 export const bookingStatusEnum = pgEnum("booking_status", ["confirmed", "cancelled"]);
 
 /**
