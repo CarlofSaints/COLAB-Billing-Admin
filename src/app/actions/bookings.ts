@@ -18,6 +18,8 @@ import { logEvent } from "@/lib/log";
 import {
   appBaseUrl,
   bookingConfirmedEmail,
+  bookingHandedOverEmail,
+  bookingTakenOverEmail,
   mailConfigured,
   roomStealApprovedEmail,
   roomStealDeclinedEmail,
@@ -431,8 +433,28 @@ export async function updateBooking(
     };
   }
 
+  // Who the room is for can be changed here too. 0 — and picking the person who
+  // made the booking — both mean "it's simply theirs again", which is how the
+  // calendar reads a null `bookedFor` (`bookedForName ?? bookedByName`). Storing
+  // someone as both booker and bookee would show "Booked for Jane, booked by
+  // Jane" on every screen and in every email.
+  let bookedFor: { id: number; name: string; email: string } | null = null;
+  if (input.bookedForUserId && input.bookedForUserId !== booking.bookedByUserId) {
+    const [target] = await db
+      .select({ id: users.id, name: users.name, email: users.email, active: users.active })
+      .from(users)
+      .where(eq(users.id, input.bookedForUserId))
+      .limit(1);
+    if (!target || !target.active) return { error: "That person can't be booked for." };
+    bookedFor = { id: target.id, name: target.name, email: target.email };
+  }
+
+  const holderChanged = (bookedFor?.id ?? null) !== booking.bookedForUserId;
+
   // Moving a booking to a new day or time means the day-before reminder that
-  // may already have gone is now wrong, so let it send again.
+  // may already have gone is now wrong, so let it send again. Handing it to
+  // someone else counts for the same reason: if the reminder has already gone
+  // out, the new holder would otherwise never be nudged about it at all.
   const moved =
     booking.date !== input.date ||
     booking.startMinute !== input.startMinute ||
@@ -446,9 +468,12 @@ export async function updateBooking(
       date: input.date,
       startMinute: input.startMinute,
       endMinute: input.endMinute,
+      bookedForUserId: bookedFor?.id ?? null,
+      bookedForName: bookedFor?.name ?? null,
+      bookedForEmail: bookedFor?.email ?? null,
       clientName: input.clientName ?? null,
       attendeeCount: input.attendeeCount,
-      ...(moved ? { reminderSentAt: null } : {}),
+      ...(moved || holderChanged ? { reminderSentAt: null } : {}),
       updatedAt: new Date(),
     })
     .where(eq(roomBookings.id, id));
@@ -460,18 +485,128 @@ export async function updateBooking(
       .values(input.attendeeStaffIds.map((staffId) => ({ bookingId: id, staffId })));
   }
 
+  // Who held it before, and who holds it now. A booking with no `bookedFor` is
+  // held by whoever made it, so both sides always resolve to a real person.
+  const previousHolder = {
+    name: booking.bookedForName ?? booking.bookedByName,
+    email: booking.bookedForEmail ?? booking.bookedByEmail,
+  };
+  const newHolder = {
+    name: bookedFor?.name ?? booking.bookedByName,
+    email: bookedFor?.email ?? booking.bookedByEmail,
+  };
+
   await logEvent({
     action: "booking.update",
     summary:
       `Edited "${input.title}" in ${room.name} — ${longDateLabel(input.date)} ` +
-      `${slotLabel(input.startMinute, input.endMinute)}`,
+      `${slotLabel(input.startMinute, input.endMinute)}` +
+      (holderChanged ? ` — now for ${newHolder.name} (was ${previousHolder.name})` : ""),
     actor: user,
     entityType: "room_booking",
     entityId: id,
   });
 
+  let warning: string | undefined;
+
+  if (holderChanged) {
+    const attendeeNames = await namesFor(input.attendeeStaffIds);
+    const details = {
+      roomName: room.name,
+      title: input.title,
+      dateLabel: longDateLabel(input.date),
+      timeLabel: slotLabel(input.startMinute, input.endMinute),
+      attendeeCount: input.attendeeCount,
+      clientName: input.clientName ?? null,
+      attendees: attendeeNames,
+      recurrenceLabel: booking.recurrenceLabel,
+      bookedForName: bookedFor?.name ?? null,
+      bookedByName: booking.bookedByName,
+    };
+
+    // Nobody is told about their own edit — they just made it. Everyone else on
+    // either side of the handover hears, so a booking never moves in or out of
+    // someone's name without a word.
+    const sent = await sendHandoverEmails({
+      details,
+      changedByName: user.name,
+      previousHolder,
+      newHolder,
+      skipEmail: user.email,
+    });
+    if (!sent) warning = "Saved — but the handover email couldn't be sent.";
+  }
+
   revalidateBookingPaths();
-  return { ok: true };
+  return { ok: true, warning };
+}
+
+/**
+ * Tell both sides that a booking has changed hands. Returns false only if a
+ * message was due and failed, so the caller can say so rather than implying
+ * someone has been told when they haven't.
+ */
+async function sendHandoverEmails(input: {
+  details: {
+    roomName: string;
+    title: string;
+    dateLabel: string;
+    timeLabel: string;
+    attendeeCount: number;
+    clientName: string | null;
+    attendees: string[];
+    recurrenceLabel: string | null;
+    bookedForName: string | null;
+    bookedByName: string;
+  };
+  changedByName: string;
+  previousHolder: { name: string; email: string };
+  newHolder: { name: string; email: string };
+  skipEmail: string;
+}): Promise<boolean> {
+  if (!mailConfigured()) return false;
+  const base = await appBaseUrl();
+  const bookingsUrl = `${base}/bookings`;
+  let ok = true;
+
+  if (input.newHolder.email !== input.skipEmail) {
+    const mail = bookingHandedOverEmail({
+      ...input.details,
+      holderName: input.newHolder.name,
+      previousHolderName: input.previousHolder.name,
+      changedByName: input.changedByName,
+      bookingsUrl,
+    });
+    const res = await sendMail({
+      to: input.newHolder.email,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    });
+    if (!res.ok) ok = false;
+  }
+
+  if (
+    input.previousHolder.email !== input.skipEmail &&
+    input.previousHolder.email !== input.newHolder.email
+  ) {
+    const mail = bookingTakenOverEmail({
+      ...input.details,
+      previousHolderName: input.previousHolder.name,
+      newHolderName: input.newHolder.name,
+      changedByName: input.changedByName,
+      bookingsUrl,
+    });
+    const res = await sendMail({
+      to: input.previousHolder.email,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    });
+    if (!res.ok) ok = false;
+  }
+
+  return ok;
 }
 
 /* ------------------------------------------------------------------ */

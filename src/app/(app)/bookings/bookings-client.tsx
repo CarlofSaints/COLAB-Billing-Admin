@@ -331,15 +331,27 @@ function BookingForm({
 
       <Field
         label="Who is the room for?"
-        hint="Booking for someone else? They're shown as the holder, and you both get the reminder and any request for the room."
+        hint={
+          editing
+            ? "Change this and the new person is emailed that the meeting is now theirs — and whoever it was for is told it no longer is."
+            : "Booking for someone else? They're shown as the holder, and you both get the reminder and any request for the room."
+        }
       >
         <Select
           value={bookedForUserId}
           onChange={(e) => setBookedForUserId(Number(e.target.value))}
         >
-          <option value={0}>Me</option>
+          {/* Option 0 is "nobody in particular — it belongs to whoever booked
+              it". That's the current user on a new booking, but on an edit it's
+              the original booker, who may well be someone else. Labelling it
+              "Me" there would offer to hand an admin someone else's room. */}
+          <option value={0}>
+            {editing && existing.bookedByUserId !== currentUserId
+              ? `${existing.bookedByName} (booked it)`
+              : "Me"}
+          </option>
           {allUsers
-            .filter((u) => u.id !== currentUserId)
+            .filter((u) => u.id !== (editing ? existing.bookedByUserId : currentUserId))
             .map((u) => (
               <option key={u.id} value={u.id}>
                 {u.name}

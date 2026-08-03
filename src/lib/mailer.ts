@@ -7,7 +7,9 @@ import { graphConfigured, graphSender, sendViaGraph } from "./graph-mail";
 // caller already imports its template and `sendMail` from the same place.
 export {
   bookingConfirmedEmail,
+  bookingHandedOverEmail,
   bookingReminderEmail,
+  bookingTakenOverEmail,
   credentialsEmail,
   hubInviteEmail,
   issueReportedEmail,

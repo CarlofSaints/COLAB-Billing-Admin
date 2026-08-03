@@ -666,6 +666,110 @@ export function bookingReminderEmail(
 }
 
 /**
+ * Someone edited a booking and changed who the room is for.
+ *
+ * Deliberately not the ordinary confirmation: the person receiving this didn't
+ * ask for the room and may know nothing about the meeting, so the first line has
+ * to say what changed and who it was for before, not just "here's your booking".
+ */
+export function bookingHandedOverEmail(
+  input: BookingDetails & {
+    /** The new holder — the person being written to. */
+    holderName: string;
+    /** Who it was for until now. */
+    previousHolderName: string;
+    /** Whoever made the change. */
+    changedByName: string;
+    bookingsUrl: string;
+  },
+) {
+  const subject = `${input.roomName} is now booked for you — ${input.dateLabel}`;
+
+  const html = emailShell({
+    preheader:
+      `This meeting was for ${input.previousHolderName} — ` +
+      `${input.roomName} on ${input.dateLabel} is now yours.`,
+    eyebrow: "Booking changed hands",
+    heading: `Hi ${input.holderName},`,
+    content: [
+      p(
+        `${escapeHtml(input.changedByName)} has changed who this meeting room is for. ` +
+          `It was for <strong>${escapeHtml(input.previousHolderName)}</strong> — it's now for you.`,
+      ),
+      detailTable(bookingRows(input)),
+      button(input.bookingsUrl, "View the room calendar"),
+      note(
+        "You'll get the reminder the day before, and any request for the room comes to you. " +
+          "If this isn't right, speak to whoever made the change — or cancel it from the calendar.",
+      ),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.holderName},`,
+    "",
+    `${input.changedByName} has changed who this meeting room is for.`,
+    `It was for ${input.previousHolderName} — it's now for you.`,
+    "",
+    ...bookingTextLines(input),
+    "",
+    `Room calendar: ${input.bookingsUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
+ * The other half of the handover — to the person the room is no longer for, so
+ * a booking never disappears from under someone without a word.
+ */
+export function bookingTakenOverEmail(
+  input: BookingDetails & {
+    /** The person losing the booking — who this is written to. */
+    previousHolderName: string;
+    /** Who it's for now. */
+    newHolderName: string;
+    changedByName: string;
+    bookingsUrl: string;
+  },
+) {
+  const subject = `${input.roomName} on ${input.dateLabel} is no longer booked for you`;
+
+  const html = emailShell({
+    preheader:
+      `${input.roomName} on ${input.dateLabel} is now for ${input.newHolderName}.`,
+    eyebrow: "Booking changed hands",
+    heading: `Hi ${input.previousHolderName},`,
+    content: [
+      p(
+        `${escapeHtml(input.changedByName)} has changed who this meeting room is for. ` +
+          `It was for you — it's now for <strong>${escapeHtml(input.newHolderName)}</strong>.`,
+      ),
+      detailTable(bookingRows(input)),
+      button(input.bookingsUrl, "View the room calendar"),
+      note(
+        "The booking itself still stands, as shown above — it's just no longer in your name. " +
+          "You won't get the reminder for it, and requests for the room will go to " +
+          `${escapeHtml(input.newHolderName)} instead.`,
+      ),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.previousHolderName},`,
+    "",
+    `${input.changedByName} has changed who this meeting room is for.`,
+    `It was for you — it's now for ${input.newHolderName}.`,
+    "",
+    ...bookingTextLines(input),
+    "",
+    `Room calendar: ${input.bookingsUrl}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
  * "Please can I have the room?" — to the current holder, with the two
  * outcomes. Both links land on the same page; declining asks for a reason
  * there rather than trying to collect one from an email.
