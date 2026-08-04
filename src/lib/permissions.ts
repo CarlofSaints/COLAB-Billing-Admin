@@ -162,9 +162,25 @@ export const ROLES: {
     rank: 20,
   },
   {
+    /**
+     * Split out of Admin so that Admin could be handed out widely.
+     *
+     * Everything that shows or moves money lives here: the billing dashboard,
+     * the invoice run, the controls that decide how costs are split, and the
+     * Xero/Dext credentials. Admin keeps the office work and no longer sees any
+     * of it.
+     */
+    key: "finance",
+    name: "Finance",
+    description:
+      "Runs the billing: the dashboard, controls, invoice runs and the accounting integrations. No user or role administration.",
+    rank: 25,
+  },
+  {
     key: "admin",
     name: "Admin",
-    description: "Does the day-to-day work: team members, documents, invoices and announcements.",
+    description:
+      "Does the day-to-day office work: team members, the hub, tasks, reception and announcements. No billing — that's Finance.",
     rank: 30,
   },
   {
@@ -219,19 +235,39 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "vehicles.crosscompany.grant",
   ],
 
-  // Admin: the operator. Manages staff, groups, mail and runs billing —
-  // but does NOT configure controls or manage users/roles.
-  admin: [
+  // Finance: the money. Everything Admin used to carry that shows or moves an
+  // amount, plus the accounting integrations and the restricted values. No
+  // users, no roles — seeing the numbers and changing who can sign in are
+  // different jobs.
+  finance: [
     "controls.view",
+    "controls.manage",
     "companies.view",
     "companies.manage",
+    "billing.view",
+    "billing.run",
+    "integrations.manage",
+    "values.restricted",
+    // Read-only on the team list: the headcount split bills per person, so the
+    // figures can't be checked without seeing who is counted.
+    "staff.view",
+    "logs.view",
+    "hub.view",
+    "hub.directory",
+    "profile.edit",
+    "reception.view",
+    "groups.view",
+  ],
+
+  // Admin: the office operator. Manages staff, groups, mail, tasks and
+  // reception. Deliberately NO billing, controls or sub-companies — those moved
+  // to Finance so this role could be given to far more people.
+  admin: [
     "staff.view",
     "staff.manage",
     "groups.view",
     "groups.manage",
     "mail.send",
-    "billing.view",
-    "billing.run",
     "logs.view",
     "hub.view",
     "hub.directory",
@@ -260,9 +296,17 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "reception.view",
   ],
 
-  // Team Member: just the social hub — see the team dashboard, meet the rest
-  // of the team and maintain their own profile. No billing, admin or settings.
-  team_member: ["hub.view", "hub.directory", "profile.edit", "reception.view"],
+  // Team Member: the social hub — the team dashboard, the directory, their own
+  // profile, and (Carl's call) the shared address book and announcements.
+  // `groups.view` is read-only: they can see who's in a group, not edit one.
+  team_member: [
+    "hub.view",
+    "hub.directory",
+    "profile.edit",
+    "reception.view",
+    "groups.view",
+    "mail.send",
+  ],
 };
 
 // The Super Admin role can never have permissions removed via the grid,

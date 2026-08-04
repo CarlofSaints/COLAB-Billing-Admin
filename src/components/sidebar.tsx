@@ -66,6 +66,10 @@ const SECTIONS: NavSection[] = [
       { href: "/vehicle-bookings", label: "Vehicle Bookings", icon: Car, perm: "hub.view" },
       { href: "/chat", label: "Chat", icon: MessagesSquare, perm: "hub.view" },
       { href: "/issues", label: "Say Something!", icon: Megaphone, perm: "hub.view" },
+      // Moved up from People: with team members able to reach them, these are
+      // things the whole office uses, not admin tooling.
+      { href: "/email-groups", label: "Email Groups", icon: Mails, perm: "groups.view" },
+      { href: "/mail", label: "Mail Sender", icon: Send, perm: "mail.send" },
       // "My Profile" used to sit here. It's part of My Account now — the
       // avatar bottom-left is the single place for anything about you.
     ],
@@ -98,8 +102,6 @@ const SECTIONS: NavSection[] = [
       { href: "/reception", label: "Reception Rota", icon: CalendarClock, perm: "reception.view" },
       { href: "/rooms", label: "Meeting Rooms", icon: DoorOpen, perm: "rooms.manage" },
       { href: "/vehicles", label: "Vehicles", icon: Car, perm: "vehicles.manage" },
-      { href: "/email-groups", label: "Email Groups", icon: Mails, perm: "groups.view" },
-      { href: "/mail", label: "Mail Sender", icon: Send, perm: "mail.send" },
     ],
   },
   {
