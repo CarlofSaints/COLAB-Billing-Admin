@@ -72,7 +72,8 @@ export type BookingRow = {
 
 type Scope = {
   companyName: string | null;
-  canBookAnyCompany: boolean;
+  /** Companies beyond their own that a Director has granted them. */
+  extraCompanyNames: string[];
   reason: "own_company" | "granted" | "super_admin" | "no_team_record";
 };
 
@@ -602,6 +603,12 @@ export function VehicleBookingsClient({
     { key: "taken", dir: "desc" },
   );
 
+  // Named in the order they'd be said out loud: own company first, then the
+  // ones a Director added.
+  const allowedNames = [scope.companyName, ...scope.extraCompanyNames].filter(
+    Boolean,
+  ) as string[];
+
   // Why the vehicle list is what it is. Worth saying out loud: an empty
   // dropdown with no explanation reads as a broken page, and the two ways it
   // happens here are both fixable by a person, not by a developer.
@@ -614,15 +621,13 @@ export function VehicleBookingsClient({
     ) : fleet.length === 0 ? (
       <Card className="mb-4 border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
         <strong>There are no vehicles you can book.</strong>{" "}
-        {scope.canBookAnyCompany
-          ? "Nothing is on the register yet — an admin can add vehicles on the Vehicles page."
-          : `You can book ${scope.companyName ?? "your company"}'s vehicles, and none are registered. A Director can tick “Can book vehicles from other companies” on your team member record if you need to drive one of the others.`}
+        {`You can book ${allowedNames.join(" and ")} vehicles, and none are registered. A Director can add another company on your team member record.`}
       </Card>
-    ) : !scope.canBookAnyCompany ? (
+    ) : (
       <p className="mb-4 text-xs text-muted">
-        {`You're booking ${scope.companyName}'s vehicles. A Director can widen this on your team member record.`}
+        {`You're booking ${allowedNames.join(" and ")} vehicles. A Director can add another company on your team member record.`}
       </p>
-    ) : null;
+    );
 
   return (
     <div className="space-y-4">

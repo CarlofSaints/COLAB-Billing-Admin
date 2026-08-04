@@ -33,6 +33,7 @@ import {
 import { GroupRuleBuilder, type RuleCompany } from "@/components/group-rule-builder";
 import type { GroupRule } from "@/lib/group-rules";
 import { TagChip } from "@/components/tag-chip";
+import { brandFor } from "@/lib/brands";
 import { cn, formatCurrency } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -67,8 +68,11 @@ export type StaffRow = {
   dateOfBirthSelf: string | null;
   /** The admin's stand-in, used only while the person hasn't set their own. */
   dateOfBirthAdmin: string | null;
-  /** May book vehicles belonging to any sub-company, not only their own. */
-  canBookOtherCompanyVehicles: boolean;
+  /**
+   * The EXTRA companies whose vehicles they may book. Their own company is
+   * always allowed and never appears here.
+   */
+  vehicleCompanyIds: number[];
   tags: TagOption[];
 };
 
@@ -352,11 +356,24 @@ function SaveButton({ label }: { label: string }) {
   );
 }
 
-function CompanySelect({ companies, defaultValue }: { companies: CompanyOpt[]; defaultValue?: number }) {
+function CompanySelect({
+  companies,
+  defaultValue,
+  onChange,
+}: {
+  companies: CompanyOpt[];
+  defaultValue?: number;
+  onChange?: (id: number) => void;
+}) {
   const colab = companies.filter((c) => c.type === "colab");
   const subs = companies.filter((c) => c.type === "sub");
   return (
-    <Select name="companyId" defaultValue={defaultValue ?? ""} required>
+    <Select
+      name="companyId"
+      defaultValue={defaultValue ?? ""}
+      onChange={(e) => onChange?.(Number(e.target.value))}
+      required
+    >
       <option value="" disabled>
         Select a company…
       </option>
@@ -385,6 +402,7 @@ function StaffForm({
   allTags,
   person,
   canGrantCrossCompany,
+  vehicleCompanyOptions,
   onDone,
 }: {
   companies: CompanyOpt[];
@@ -392,6 +410,8 @@ function StaffForm({
   person?: StaffRow;
   /** Directors only — see the field itself. */
   canGrantCrossCompany: boolean;
+  /** The sub-companies that own vehicles. */
+  vehicleCompanyOptions: { id: number; name: string }[];
   onDone: () => void;
 }) {
   const action = person ? updateStaff : createStaff;
@@ -399,9 +419,12 @@ function StaffForm({
   const [selectedTags, setSelectedTags] = useState<number[]>(
     person ? person.tags.map((t) => t.id) : [],
   );
-  const [canBookOther, setCanBookOther] = useState(
-    person?.canBookOtherCompanyVehicles ?? false,
+  const [vehicleCompanies, setVehicleCompanies] = useState<number[]>(
+    person?.vehicleCompanyIds ?? [],
   );
+  // Their own company follows the Company dropdown live, so changing it
+  // re-labels which chip is the automatic one without a save in between.
+  const [ownCompanyId, setOwnCompanyId] = useState(person?.companyId ?? 0);
   useEffect(() => {
     if (state.ok) onDone();
   }, [state.ok, onDone]);
@@ -461,7 +484,11 @@ function StaffForm({
         </p>
       )}
       <Field label="Company">
-        <CompanySelect companies={companies} defaultValue={person?.companyId} />
+        <CompanySelect
+          companies={companies}
+          defaultValue={person?.companyId}
+          onChange={setOwnCompanyId}
+        />
       </Field>
       <Field
         label="Include in Billing"
@@ -476,27 +503,57 @@ function StaffForm({
         </Select>
       </Field>
       {/* Directors only. Everyone else doesn't get the input at all — and the
-          server drops the field rather than reading a missing checkbox as
-          "untick", so an Admin's save can't undo what a Director decided. */}
-      {canGrantCrossCompany && (
+          server leaves the stored list alone rather than reading an absent
+          picker as "clear it", so an Admin's save can't undo what a Director
+          decided. */}
+      {canGrantCrossCompany && vehicleCompanyOptions.length > 0 && (
         <Field
-          label="Vehicles"
-          hint="Off, everyone can only book vehicles belonging to their own company. Tick this for someone who drives for the whole building."
+          label="Whose vehicles can they book?"
+          hint="Their own company is always allowed. Add any others they drive for."
         >
-          <input
-            type="hidden"
-            name="canBookOtherCompanyVehicles"
-            value={canBookOther ? "yes" : "no"}
-          />
-          <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-line px-3 py-2.5 text-sm text-slate-700 transition-colors hover:bg-slate-50">
-            <input
-              type="checkbox"
-              checked={canBookOther}
-              onChange={(e) => setCanBookOther(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 rounded border-line text-brand-600 focus:ring-brand-100"
-            />
-            <span>Can book vehicles from other companies</span>
-          </label>
+          {vehicleCompanies
+            .filter((id) => id !== ownCompanyId)
+            .map((id) => (
+              <input key={id} type="hidden" name="vehicleCompanyId" value={id} />
+            ))}
+          <div className="flex flex-wrap gap-1.5">
+            {vehicleCompanyOptions.map((c) => {
+              // Their own company can't be switched off, so it's shown as
+              // already on and not as a choice — a chip you can untick but
+              // that keeps working would be a lie.
+              const isOwn = c.id === ownCompanyId;
+              const on = isOwn || vehicleCompanies.includes(c.id);
+              const brand = brandFor(c.name);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  disabled={isOwn}
+                  title={isOwn ? "Their own company — always allowed" : undefined}
+                  onClick={() =>
+                    setVehicleCompanies((prev) =>
+                      prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id],
+                    )
+                  }
+                  style={
+                    on ? { backgroundColor: `${brand.color}1f`, borderColor: brand.color } : undefined
+                  }
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    on ? "text-slate-900" : "border-line text-slate-500 hover:bg-slate-50",
+                    isOwn && "cursor-default opacity-90",
+                  )}
+                >
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: brand.color, opacity: on ? 1 : 0.4 }}
+                  />
+                  {c.name}
+                  {isOwn && <span className="text-[10px] text-muted">(own)</span>}
+                </button>
+              );
+            })}
+          </div>
         </Field>
       )}
       <Field
@@ -673,10 +730,13 @@ export function StaffManager({
   canInvite,
   canManageGroups,
   canGrantCrossCompany,
+  vehicleCompanyOptions,
 }: {
   staff: StaffRow[];
   companies: CompanyOpt[];
   allTags: TagOption[];
+  /** The sub-companies that own vehicles, for the cross-company picker. */
+  vehicleCompanyOptions: { id: number; name: string }[];
   canManage: boolean;
   canInvite: boolean;
   /** `groups.manage` — gates turning the current filter into an email group. */
@@ -1003,6 +1063,7 @@ export function StaffManager({
             companies={companies}
             allTags={allTags}
             canGrantCrossCompany={canGrantCrossCompany}
+            vehicleCompanyOptions={vehicleCompanyOptions}
             onDone={() => setAdding(false)}
           />
         </Modal>
@@ -1018,6 +1079,7 @@ export function StaffManager({
             allTags={allTags}
             person={editing}
             canGrantCrossCompany={canGrantCrossCompany}
+            vehicleCompanyOptions={vehicleCompanyOptions}
             onDone={() => setEditing(null)}
           />
         </Modal>

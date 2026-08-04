@@ -2,8 +2,17 @@
 
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
-import { Plus, Pencil, DoorOpen, Users, TriangleAlert, Archive, RotateCcw } from "lucide-react";
-import { saveRoom, setRoomActive, type RoomState } from "@/app/actions/rooms";
+import {
+  Plus,
+  Pencil,
+  DoorOpen,
+  Users,
+  TriangleAlert,
+  Archive,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
+import { deleteRoom, saveRoom, setRoomActive, type RoomState } from "@/app/actions/rooms";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -102,10 +111,17 @@ function RoomForm({ room, onDone }: { room?: RoomRow; onDone: () => void }) {
 export function RoomsClient({ rooms }: { rooms: RoomRow[] }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<RoomRow | null>(null);
+  // Carries the "it was retired instead" explanation back from the server —
+  // deleting and having nothing happen with no reason given is the worst of the
+  // possible outcomes.
+  const [notice, setNotice] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
   return (
     <div className="space-y-4">
+      {notice && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">{notice}</p>
+      )}
       <div className="flex justify-end">
         <Button onClick={() => setAdding(true)}>
           <Plus className="h-4 w-4" /> Add room
@@ -163,6 +179,32 @@ export function RoomsClient({ rooms }: { rooms: RoomRow[] }) {
                   ) : (
                     <RotateCcw className="h-3.5 w-3.5 text-brand-600" />
                   )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={pending}
+                  title={
+                    r.bookingCount > 0
+                      ? `Can't be deleted — ${r.bookingCount} booking(s) on record`
+                      : "Delete this room"
+                  }
+                  onClick={() => {
+                    // The count is already on the row, so the warning can be
+                    // specific rather than "this might not work".
+                    const msg =
+                      r.bookingCount > 0
+                        ? `"${r.name}" has ${r.bookingCount} booking(s) on record, so it can't be deleted — it will be retired instead, keeping the calendar history. Carry on?`
+                        : `Delete "${r.name}"? It has never been booked, so it will be removed completely.`;
+                    if (!confirm(msg)) return;
+                    setNotice(null);
+                    start(async () => {
+                      const res = await deleteRoom(r.id);
+                      if (res?.error) setNotice(res.error);
+                    });
+                  }}
+                >
+                  <Trash2 className="h-3.5 w-3.5 text-red-500" />
                 </Button>
               </div>
             </div>

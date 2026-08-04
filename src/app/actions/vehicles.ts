@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { companies, vehicles } from "@/db/schema";
+import { companies, vehicleBookings, vehicles } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 
@@ -141,4 +141,64 @@ export async function setVehicleActive(id: number, active: boolean) {
   });
 
   revalidateVehiclePaths();
+}
+
+/**
+ * Removes a vehicle. Only really deletes if it has never been booked —
+ * otherwise it's retired, so it disappears from the booking form without taking
+ * its mileage history with it.
+ *
+ * The FK from `vehicle_bookings` is `restrict`, so a hard delete would throw a
+ * constraint error rather than do damage; this exists so the person gets an
+ * answer instead of a stack trace, and so the common case (a vehicle added by
+ * mistake, never driven) actually goes away.
+ */
+export async function deleteVehicle(id: number): Promise<VehicleState> {
+  const actor = await requirePermission("vehicles.manage");
+
+  const [vehicle] = await db
+    .select({ name: vehicles.name, regNumber: vehicles.regNumber, active: vehicles.active })
+    .from(vehicles)
+    .where(eq(vehicles.id, id))
+    .limit(1);
+  if (!vehicle) return { error: "That vehicle is no longer in the register." };
+
+  const [{ count } = { count: 0 }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(vehicleBookings)
+    .where(eq(vehicleBookings.vehicleId, id));
+
+  if (count > 0) {
+    // Already retired and still referenced: there is nothing further to do, and
+    // saying "done" would imply the record had gone.
+    if (!vehicle.active) {
+      return {
+        error: `${vehicle.name} has ${count} trip${count === 1 ? "" : "s"} on record, so it can't be deleted. It's already retired.`,
+      };
+    }
+    await db.update(vehicles).set({ active: false, updatedAt: new Date() }).where(eq(vehicles.id, id));
+    await logEvent({
+      action: "vehicle.retire",
+      summary: `Retired vehicle "${vehicle.name}" (${vehicle.regNumber}) — ${count} trip(s) on record, so not deleted`,
+      actor,
+      entityType: "vehicle",
+      entityId: id,
+    });
+    revalidateVehiclePaths();
+    return {
+      ok: true,
+      error: `${vehicle.name} has ${count} trip${count === 1 ? "" : "s"} on record, so it's been retired instead of deleted. The mileage history is kept.`,
+    };
+  }
+
+  await db.delete(vehicles).where(eq(vehicles.id, id));
+  await logEvent({
+    action: "vehicle.delete",
+    summary: `Deleted vehicle "${vehicle.name}" (${vehicle.regNumber}) — never booked`,
+    actor,
+    entityType: "vehicle",
+    entityId: id,
+  });
+  revalidateVehiclePaths();
+  return { ok: true };
 }

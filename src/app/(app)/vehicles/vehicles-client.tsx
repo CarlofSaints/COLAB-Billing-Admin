@@ -2,8 +2,13 @@
 
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
-import { Plus, Pencil, Car, TriangleAlert, Archive, RotateCcw, Search } from "lucide-react";
-import { saveVehicle, setVehicleActive, type VehicleState } from "@/app/actions/vehicles";
+import { Plus, Pencil, Car, TriangleAlert, Archive, RotateCcw, Search, Trash2 } from "lucide-react";
+import {
+  deleteVehicle,
+  saveVehicle,
+  setVehicleActive,
+  type VehicleState,
+} from "@/app/actions/vehicles";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +29,8 @@ type VehicleRow = {
   companyId: number;
   companyName: string;
   active: boolean;
+  /** Trips on record. Nonzero means it can be retired but never deleted. */
+  bookingCount: number;
 };
 
 type SubCompany = { id: number; name: string };
@@ -157,6 +164,8 @@ export function VehiclesClient({
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<VehicleRow | null>(null);
   const [search, setSearch] = useState("");
+  // Carries the "it was retired instead" explanation back from the server.
+  const [notice, setNotice] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
   const term = search.trim().toLowerCase();
@@ -183,6 +192,9 @@ export function VehiclesClient({
 
   return (
     <div className="space-y-4">
+      {notice && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">{notice}</p>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {vehicles.length > 0 && (
           <div className="relative max-w-xs flex-1">
@@ -270,6 +282,30 @@ export function VehiclesClient({
                     ) : (
                       <RotateCcw className="h-3.5 w-3.5 text-brand-600" />
                     )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={pending}
+                    title={
+                      v.bookingCount > 0
+                        ? `Can't be deleted — ${v.bookingCount} trip(s) on record`
+                        : "Delete this vehicle"
+                    }
+                    onClick={() => {
+                      const msg =
+                        v.bookingCount > 0
+                          ? `"${v.name}" has ${v.bookingCount} trip(s) on record, so it can't be deleted — it will be retired instead, keeping the mileage history. Carry on?`
+                          : `Delete "${v.name}" (${v.regNumber})? It has never been booked, so it will be removed completely.`;
+                      if (!confirm(msg)) return;
+                      setNotice(null);
+                      start(async () => {
+                        const res = await deleteVehicle(v.id);
+                        if (res?.error) setNotice(res.error);
+                      });
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-red-500" />
                   </Button>
                 </div>
               </div>

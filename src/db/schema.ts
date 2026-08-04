@@ -203,18 +203,9 @@ export const staff = pgTable(
     includeInBilling: boolean("include_in_billing").notNull().default(true),
     active: boolean("active").notNull().default(true),
 
-    /**
-     * Lets this person book a vehicle belonging to any of the sub-companies,
-     * not just their own.
-     *
-     * A per-person exception rather than a role permission, because it's a fact
-     * about one individual's job (they drive for everyone) and not about a rank
-     * — two people on the same role routinely differ. Who may *grant* it is the
-     * permission: `vehicles.crosscompany.grant`, held by Directors only.
-     */
-    canBookOtherCompanyVehicles: boolean("can_book_other_company_vehicles")
-      .notNull()
-      .default(false),
+    /* Which OTHER companies' vehicles this person may book lives in
+       `staffVehicleCompanies` below — their own company is always allowed and
+       is never stored. */
 
     /* --- Team-hub profile fields (self-maintained by the team member) --- */
     // The person's own login, once they've been turned into a user. The hub
@@ -1079,6 +1070,30 @@ export const vehicles = pgTable(
       .on(sql`lower(${t.vin})`)
       .where(sql`${t.vin} is not null`),
   ],
+);
+
+/**
+ * The EXTRA companies whose vehicles a team member may book, beyond their own.
+ *
+ * Deliberately stores only the additions. A person's own company is always
+ * allowed and is derived from `staff.companyId` at read time — storing the full
+ * set instead would mean that moving someone from Atomic to iRam left them able
+ * to book Atomic's cars and unable to book their new employer's, silently, and
+ * nothing on the screen would say why.
+ *
+ * Written only by someone holding `vehicles.crosscompany.grant` (Directors).
+ */
+export const staffVehicleCompanies = pgTable(
+  "staff_vehicle_companies",
+  {
+    staffId: integer("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.staffId, t.companyId] })],
 );
 
 /**

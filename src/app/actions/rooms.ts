@@ -1,10 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { rooms } from "@/db/schema";
+import { roomBookings, rooms } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 
@@ -98,4 +98,62 @@ export async function setRoomActive(id: number, active: boolean) {
     entityId: id,
   });
   revalidateRoomPaths();
+}
+
+/**
+ * Removes a room. Only really deletes if nobody has ever booked it — otherwise
+ * it's retired, so it stops appearing on the calendar without erasing the past.
+ *
+ * ⚠️ This check is the whole point. `room_bookings.room_id` is ON DELETE
+ * CASCADE, so a hard delete would take every booking ever made in that room
+ * with it, silently and with no error to notice.
+ */
+export async function deleteRoom(id: number): Promise<RoomState> {
+  const actor = await requirePermission("rooms.manage");
+
+  const [room] = await db
+    .select({ name: rooms.name, active: rooms.active })
+    .from(rooms)
+    .where(eq(rooms.id, id))
+    .limit(1);
+  if (!room) return { error: "That room is no longer in the list." };
+
+  // Every booking, not just the confirmed or the future ones: a cancelled
+  // booking from March is still a record of who had the room.
+  const [{ count } = { count: 0 }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(roomBookings)
+    .where(eq(roomBookings.roomId, id));
+
+  if (count > 0) {
+    if (!room.active) {
+      return {
+        error: `${room.name} has ${count} booking${count === 1 ? "" : "s"} on record, so it can't be deleted. It's already retired.`,
+      };
+    }
+    await db.update(rooms).set({ active: false, updatedAt: new Date() }).where(eq(rooms.id, id));
+    await logEvent({
+      action: "room.retire",
+      summary: `Retired meeting room "${room.name}" — ${count} booking(s) on record, so not deleted`,
+      actor,
+      entityType: "room",
+      entityId: id,
+    });
+    revalidateRoomPaths();
+    return {
+      ok: true,
+      error: `${room.name} has ${count} booking${count === 1 ? "" : "s"} on record, so it's been retired instead of deleted. The calendar history is kept.`,
+    };
+  }
+
+  await db.delete(rooms).where(eq(rooms.id, id));
+  await logEvent({
+    action: "room.delete",
+    summary: `Deleted meeting room "${room.name}" — never booked`,
+    actor,
+    entityType: "room",
+    entityId: id,
+  });
+  revalidateRoomPaths();
+  return { ok: true };
 }

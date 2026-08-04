@@ -130,7 +130,7 @@ export default async function VehicleBookingsPage() {
         currentUserEmail={user.email}
         scope={{
           companyName: scope.companyName,
-          canBookAnyCompany: scope.canBookAnyCompany,
+          extraCompanyNames: scope.extraCompanyNames,
           reason: scope.reason,
         }}
       />

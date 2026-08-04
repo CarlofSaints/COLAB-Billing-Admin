@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { companies, staff, vehicles } from "@/db/schema";
+import { companies, staff, staffVehicleCompanies, vehicles } from "@/db/schema";
 import { hasPermission, type SessionUser } from "@/lib/auth";
 
 /**
@@ -18,9 +18,15 @@ export type BookerScope = {
   staffId: number | null;
   companyId: number | null;
   companyName: string | null;
-  /** May reach beyond `companyId`. */
-  canBookAnyCompany: boolean;
-  /** Why they can, for the wording on screen. */
+  /**
+   * Every company whose vehicles they may book: their own, plus whichever
+   * others a Director has granted. This is THE list — nothing downstream should
+   * re-derive it.
+   */
+  allowedCompanyIds: number[];
+  /** The granted extras alone, for wording like "…and Atomic Marketing's". */
+  extraCompanyNames: string[];
+  /** Why the list is what it is, for the wording on screen. */
   reason: "own_company" | "granted" | "super_admin" | "no_team_record";
 };
 
@@ -39,7 +45,6 @@ export async function getBookerScope(user: SessionUser): Promise<BookerScope> {
       userId: staff.userId,
       companyId: staff.companyId,
       companyName: companies.name,
-      canBookOtherCompanyVehicles: staff.canBookOtherCompanyVehicles,
       active: staff.active,
     })
     .from(staff)
@@ -65,32 +70,55 @@ export async function getBookerScope(user: SessionUser): Promise<BookerScope> {
   // lock themselves out of it and have no way to tell why the list is empty.
   const isSuperAdmin = user.roleKey === "super_admin";
 
+  // The four sub-companies own the fleet; COLAB itself doesn't run a car.
+  const subCompanyIds = isSuperAdmin
+    ? (
+        await db
+          .select({ id: companies.id })
+          .from(companies)
+          .where(eq(companies.type, "sub"))
+      ).map((c) => c.id)
+    : [];
+
   if (!row) {
     return {
       staffId: null,
       companyId: null,
       companyName: null,
-      canBookAnyCompany: isSuperAdmin,
+      allowedCompanyIds: subCompanyIds,
+      extraCompanyNames: [],
       reason: isSuperAdmin ? "super_admin" : "no_team_record",
     };
   }
+
+  const extras = await db
+    .select({ id: companies.id, name: companies.name })
+    .from(staffVehicleCompanies)
+    .innerJoin(companies, eq(staffVehicleCompanies.companyId, companies.id))
+    .where(eq(staffVehicleCompanies.staffId, row.id))
+    .orderBy(asc(companies.name));
+
+  const allowed = new Set<number>([row.companyId, ...extras.map((e) => e.id)]);
+  if (isSuperAdmin) for (const id of subCompanyIds) allowed.add(id);
 
   return {
     staffId: row.id,
     companyId: row.companyId,
     companyName: row.companyName,
-    canBookAnyCompany: row.canBookOtherCompanyVehicles || isSuperAdmin,
-    reason: row.canBookOtherCompanyVehicles
-      ? "granted"
-      : isSuperAdmin
-        ? "super_admin"
-        : "own_company",
+    allowedCompanyIds: [...allowed],
+    extraCompanyNames: extras.map((e) => e.name),
+    reason: extras.length > 0 ? "granted" : isSuperAdmin ? "super_admin" : "own_company",
   };
 }
 
 /** The active vehicles this person is allowed to sign out. */
 export async function bookableVehicles(scope: BookerScope) {
-  const base = db
+  // An empty allow-list means nothing is bookable. Expressed as an impossible
+  // id rather than skipping the filter, so a future edit that loses the guard
+  // fails closed rather than opening the whole fleet.
+  const allowed = scope.allowedCompanyIds.length > 0 ? scope.allowedCompanyIds : [-1];
+
+  return db
     .select({
       id: vehicles.id,
       name: vehicles.name,
@@ -101,16 +129,7 @@ export async function bookableVehicles(scope: BookerScope) {
       companyName: companies.name,
     })
     .from(vehicles)
-    .innerJoin(companies, eq(vehicles.companyId, companies.id));
-
-  if (scope.canBookAnyCompany) {
-    return base.where(eq(vehicles.active, true)).orderBy(asc(vehicles.name));
-  }
-  // No company resolved and no grant means nothing is bookable. Expressed as an
-  // impossible id rather than an unfiltered query, so a future refactor that
-  // loses the null check fails closed.
-  const allowed = scope.companyId == null ? [-1] : [scope.companyId];
-  return base
+    .innerJoin(companies, eq(vehicles.companyId, companies.id))
     .where(and(eq(vehicles.active, true), inArray(vehicles.companyId, allowed)))
     .orderBy(asc(vehicles.name));
 }
@@ -141,13 +160,16 @@ export async function assertCanBookVehicle(
   if (!vehicle.active) {
     return { ok: false, error: `${vehicle.name} has been retired from the fleet.` };
   }
-  if (!scope.canBookAnyCompany && vehicle.companyId !== scope.companyId) {
+  if (!scope.allowedCompanyIds.includes(vehicle.companyId)) {
+    const mayBook = [scope.companyName, ...scope.extraCompanyNames].filter(Boolean);
     return {
       ok: false,
       error:
-        `${vehicle.name} belongs to ${vehicle.companyName}, and you can only book ` +
-        `${scope.companyName ?? "your own company"}'s vehicles. A Director can allow you to book ` +
-        `other companies' vehicles from the Team Members page.`,
+        `${vehicle.name} belongs to ${vehicle.companyName}, and you can book ` +
+        (mayBook.length
+          ? `${mayBook.join(" and ")}'s vehicles.`
+          : "no company's vehicles.") +
+        ` A Director can add ${vehicle.companyName} to your team member record.`,
     };
   }
   return {

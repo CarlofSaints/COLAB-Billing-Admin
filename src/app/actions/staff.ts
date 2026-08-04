@@ -1,11 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import * as XLSX from "xlsx";
 import { db } from "@/db";
-import { staff, companies, staffTags, tags } from "@/db/schema";
+import { staff, companies, staffTags, staffVehicleCompanies, tags } from "@/db/schema";
 import { hasPermission, requirePermission, type SessionUser } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { parseYesNo } from "@/lib/utils";
@@ -41,9 +41,6 @@ const staffSchema = z.object({
   position: z.string().trim().optional(),
   companyId: z.coerce.number().int().positive("Choose a company"),
   includeInBilling: z.boolean(),
-  // Parsed for everyone, but only ever *applied* by someone holding
-  // vehicles.crosscompany.grant — see the callers.
-  canBookOtherCompanyVehicles: z.boolean(),
   // Writes to `dateOfBirthAdmin` only. The person's own `dateOfBirth` is set
   // from My Profile and is never touched from here.
   dateOfBirthAdmin: z
@@ -64,26 +61,68 @@ function parse(formData: FormData) {
     position: formData.get("position") || undefined,
     companyId: formData.get("companyId"),
     includeInBilling: parseYesNo(formData.get("includeInBilling")),
-    canBookOtherCompanyVehicles: formData.get("canBookOtherCompanyVehicles") === "yes",
     dateOfBirthAdmin: String(formData.get("dateOfBirthAdmin") ?? ""),
   });
 }
 
 /**
- * Strips the cross-company vehicle flag unless the actor may grant it.
+ * Replaces the extra companies whose vehicles this person may book.
  *
- * The field isn't merely hidden from the form for everyone else — an absent
- * checkbox posts nothing, which parses as `false`, so an Admin saving an
- * unrelated edit would silently untick a Director's decision. Dropping the key
- * entirely leaves whatever is stored exactly as it was.
+ * DOES NOTHING AT ALL unless the actor holds `vehicles.crosscompany.grant`.
+ * The field isn't merely hidden from everyone else's form — an absent picker
+ * posts no ids, which would read as "clear the list", so an Admin saving an
+ * unrelated edit would silently revoke a Director's decision. Returning early
+ * leaves what's stored exactly as it was.
+ *
+ * The person's OWN company is never stored: it's always allowed, and writing it
+ * down would survive them moving to a different company.
  */
-function applyCrossCompanyFlag<T extends { canBookOtherCompanyVehicles: boolean }>(
-  values: T,
+async function syncVehicleCompanies(
+  staffId: number,
+  ownCompanyId: number,
+  formData: FormData,
   actor: SessionUser,
-): T | Omit<T, "canBookOtherCompanyVehicles"> {
-  if (hasPermission(actor, "vehicles.crosscompany.grant")) return values;
-  const { canBookOtherCompanyVehicles: _notYours, ...rest } = values;
-  return rest;
+): Promise<{ changed: boolean; names: string[] }> {
+  if (!hasPermission(actor, "vehicles.crosscompany.grant")) return { changed: false, names: [] };
+
+  const requested = [
+    ...new Set(
+      formData
+        .getAll("vehicleCompanyId")
+        .map((v) => Number(v))
+        .filter((n) => Number.isInteger(n) && n > 0 && n !== ownCompanyId),
+    ),
+  ];
+
+  const before = await db
+    .select({ companyId: staffVehicleCompanies.companyId })
+    .from(staffVehicleCompanies)
+    .where(eq(staffVehicleCompanies.staffId, staffId));
+  const beforeIds = before.map((b) => b.companyId).sort();
+
+  // Only real sub-companies, checked against the table rather than trusted from
+  // the form — an unknown id is dropped, not FK-failed, exactly as the room
+  // booking company chips behave.
+  const valid = requested.length
+    ? await db
+        .select({ id: companies.id, name: companies.name })
+        .from(companies)
+        .where(and(inArray(companies.id, requested), eq(companies.type, "sub")))
+        .orderBy(asc(companies.name))
+    : [];
+
+  await db.delete(staffVehicleCompanies).where(eq(staffVehicleCompanies.staffId, staffId));
+  if (valid.length) {
+    await db
+      .insert(staffVehicleCompanies)
+      .values(valid.map((c) => ({ staffId, companyId: c.id })))
+      .onConflictDoNothing();
+  }
+
+  const afterIds = valid.map((c) => c.id).sort();
+  const changed =
+    beforeIds.length !== afterIds.length || beforeIds.some((id, i) => id !== afterIds[i]);
+  return { changed, names: valid.map((c) => c.name) };
 }
 
 export async function createStaff(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -91,16 +130,22 @@ export async function createStaff(_prev: ActionState, formData: FormData): Promi
   const parsed = parse(formData);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  // The column defaults to false, so an actor who can't grant it simply
-  // doesn't set it.
-  const [row] = await db
-    .insert(staff)
-    .values(applyCrossCompanyFlag(parsed.data, user))
-    .returning();
+  const [row] = await db.insert(staff).values(parsed.data).returning();
   await syncTags(row.id, formData);
+  const vehicleCompanies = await syncVehicleCompanies(
+    row.id,
+    parsed.data.companyId,
+    formData,
+    user,
+  );
+
   await logEvent({
     action: "staff.create",
-    summary: `Added team member ${row.name}`,
+    summary:
+      `Added team member ${row.name}` +
+      (vehicleCompanies.names.length
+        ? ` — may also book ${vehicleCompanies.names.join(", ")} vehicles`
+        : ""),
     actor: user,
     entityType: "staff",
     entityId: row.id,
@@ -121,35 +166,29 @@ export async function updateStaff(_prev: ActionState, formData: FormData): Promi
   // admin field — and a disabled input submits nothing, which would read as
   // "clear it". Leave the stored admin date alone in that case.
   const [existing] = await db
-    .select({
-      dateOfBirth: staff.dateOfBirth,
-      canBookOtherCompanyVehicles: staff.canBookOtherCompanyVehicles,
-    })
+    .select({ dateOfBirth: staff.dateOfBirth })
     .from(staff)
     .where(eq(staff.id, id))
     .limit(1);
-  const withoutDob = existing?.dateOfBirth
+  const values = existing?.dateOfBirth
     ? (({ dateOfBirthAdmin: _ignored, ...rest }) => rest)(parsed.data)
     : parsed.data;
-  const values = applyCrossCompanyFlag(withoutDob, user);
 
   await db.update(staff).set({ ...values, updatedAt: new Date() }).where(eq(staff.id, id));
   await syncTags(id, formData);
+  const vehicleCompanies = await syncVehicleCompanies(id, parsed.data.companyId, formData, user);
 
   // Logged in its own right, not folded into "Updated team member": this one
   // widens what company property someone may drive away, and a line that
   // doesn't say so is no use when the question is asked months later.
-  const crossCompanyChanged =
-    "canBookOtherCompanyVehicles" in values &&
-    existing != null &&
-    existing.canBookOtherCompanyVehicles !== values.canBookOtherCompanyVehicles;
-
   await logEvent({
     action: "staff.update",
     summary:
       `Updated team member ${parsed.data.name}` +
-      (crossCompanyChanged
-        ? ` — ${parsed.data.canBookOtherCompanyVehicles ? "allowed" : "no longer allowed"} to book other companies' vehicles`
+      (vehicleCompanies.changed
+        ? vehicleCompanies.names.length
+          ? ` — may now also book ${vehicleCompanies.names.join(", ")} vehicles`
+          : " — may no longer book other companies' vehicles"
         : ""),
     actor: user,
     entityType: "staff",

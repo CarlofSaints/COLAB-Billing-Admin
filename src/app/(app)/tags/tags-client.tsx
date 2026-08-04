@@ -168,7 +168,18 @@ function RowActions({ tag }: { tag: TagRow }) {
         title="Delete"
         disabled={pending}
         onClick={() => {
-          if (confirm(`Delete the "${tag.name}" tag? It will be removed from everyone who has it.`))
+          // A costed tag bills per tagged head, so deleting one stops a real
+          // monthly charge. Saying so beats finding out at month-end.
+          const monthly =
+            tag.costPerPerson !== null
+              ? ` It currently bills ${formatCurrency(tag.billableCount * tag.costPerPerson)} a month, and that charge will stop.`
+              : "";
+          if (
+            confirm(
+              `Delete the "${tag.name}" tag? It will be removed from ` +
+                `${tag.count} ${tag.count === 1 ? "person" : "people"}.${monthly}`,
+            )
+          )
             start(() => deleteTag(tag.id));
         }}
       >

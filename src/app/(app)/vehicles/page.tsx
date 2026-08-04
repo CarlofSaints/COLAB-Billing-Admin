@@ -1,6 +1,6 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { companies, vehicles } from "@/db/schema";
+import { companies, vehicleBookings, vehicles } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page";
 import { VehiclesClient } from "./vehicles-client";
@@ -22,6 +22,12 @@ export default async function VehiclesPage() {
       companyId: vehicles.companyId,
       companyName: companies.name,
       active: vehicles.active,
+      // Drives the delete button's warning: with the number to hand it can say
+      // what will actually happen instead of "this might not work".
+      bookingCount: sql<number>`(
+        select count(*)::int from ${vehicleBookings}
+         where ${vehicleBookings.vehicleId} = ${vehicles.id}
+      )`,
     })
     .from(vehicles)
     .innerJoin(companies, eq(vehicles.companyId, companies.id))

@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { staff, companies, tags, staffTags } from "@/db/schema";
+import { staff, companies, tags, staffTags, staffVehicleCompanies } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page";
 import { StaffManager } from "./staff-client";
@@ -40,7 +40,6 @@ export default async function StaffPage() {
       userId: staff.userId,
       dateOfBirth: staff.dateOfBirth,
       dateOfBirthAdmin: staff.dateOfBirthAdmin,
-      canBookOtherCompanyVehicles: staff.canBookOtherCompanyVehicles,
       companyName: companies.name,
     })
     .from(staff)
@@ -71,6 +70,27 @@ export default async function StaffPage() {
     tagsByStaff.set(l.staffId, list);
   }
 
+  // The extra companies each person may book vehicles from. One query for the
+  // whole list rather than one per row.
+  const vehicleCompanyRows = await db
+    .select({
+      staffId: staffVehicleCompanies.staffId,
+      companyId: staffVehicleCompanies.companyId,
+    })
+    .from(staffVehicleCompanies);
+  const vehicleCompaniesByStaff = new Map<number, number[]>();
+  for (const r of vehicleCompanyRows) {
+    const list = vehicleCompaniesByStaff.get(r.staffId) ?? [];
+    list.push(r.companyId);
+    vehicleCompaniesByStaff.set(r.staffId, list);
+  }
+
+  // Only the sub-companies own vehicles — COLAB itself doesn't run a car, so
+  // it's never a sensible thing to grant.
+  const vehicleCompanyOptions = companyRows
+    .filter((c) => c.type === "sub")
+    .map((c) => ({ id: c.id, name: c.name }));
+
   const data = staffRows.map((s) => ({
     id: s.id,
     name: s.name,
@@ -85,7 +105,7 @@ export default async function StaffPage() {
     hasAccount: s.userId != null,
     dateOfBirthSelf: s.dateOfBirth,
     dateOfBirthAdmin: s.dateOfBirthAdmin,
-    canBookOtherCompanyVehicles: s.canBookOtherCompanyVehicles,
+    vehicleCompanyIds: vehicleCompaniesByStaff.get(s.id) ?? [],
     tags: tagsByStaff.get(s.id) ?? [],
   }));
 
@@ -103,6 +123,7 @@ export default async function StaffPage() {
         canInvite={canInvite}
         canManageGroups={canManageGroups}
         canGrantCrossCompany={canGrantCrossCompany}
+        vehicleCompanyOptions={vehicleCompanyOptions}
       />
     </div>
   );
