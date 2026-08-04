@@ -61,6 +61,9 @@ const SECTIONS: NavSection[] = [
       { href: "/hub", label: "Team Dashboard", icon: Sparkles, perm: "hub.view" },
       { href: "/meet-the-team", label: "Meet Your Team", icon: UsersRound, perm: "hub.directory" },
       { href: "/bookings", label: "Room Bookings", icon: CalendarDays, perm: "hub.view" },
+      // Booking a vehicle sits with the things everyone does, not with the
+      // register under People — that one is fleet admin and needs vehicles.manage.
+      { href: "/vehicle-bookings", label: "Vehicle Bookings", icon: Car, perm: "hub.view" },
       { href: "/chat", label: "Chat", icon: MessagesSquare, perm: "hub.view" },
       { href: "/issues", label: "Say Something!", icon: Megaphone, perm: "hub.view" },
       // "My Profile" used to sit here. It's part of My Account now — the

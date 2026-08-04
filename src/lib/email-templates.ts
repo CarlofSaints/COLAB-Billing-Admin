@@ -945,3 +945,67 @@ export function roomStealDeclinedEmail(input: {
 
   return { subject, html, text };
 }
+
+/* ------------------------------------------------------------------ */
+/* Vehicle bookings                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The one-time code for signing a vehicle back in.
+ *
+ * Carries the readings it is about, so the code is never approving something
+ * unseen — if the mileage in the email isn't what the person just typed, that
+ * is the moment to notice. Deliberately has no button and no link: this email
+ * is a code to type back into a page already open, and a link would train
+ * people to click their way into a sign-in prompt from an email.
+ */
+export function vehicleReturnOtpEmail(input: {
+  name: string;
+  code: string;
+  vehicleName: string;
+  vehicleReg: string;
+  closingMileage: number;
+  closingFuelLabel: string;
+  distanceLabel: string;
+  minutesValid: number;
+}) {
+  const subject = `${input.code} is your code to sign in ${input.vehicleName}`;
+
+  const html = emailShell({
+    preheader: `Your code is ${input.code} — it expires in ${input.minutesValid} minutes.`,
+    eyebrow: "Vehicle sign-in",
+    heading: `Hi ${input.name},`,
+    content: [
+      p(
+        `You're signing <strong>${escapeHtml(input.vehicleName)}</strong> (${escapeHtml(input.vehicleReg)}) back in. Enter this code on the vehicle bookings page to finish:`,
+      ),
+      codeValue(input.code),
+      p(`The code expires in ${input.minutesValid} minutes.`),
+      detailTable([
+        ["Closing mileage", escapeHtml(String(input.closingMileage))],
+        ["Distance travelled", escapeHtml(input.distanceLabel)],
+        ["Fuel on return", escapeHtml(input.closingFuelLabel)],
+      ]),
+      note(
+        "If those readings aren't the ones you entered, don't use the code — go back to the booking and check.",
+      ),
+      note("If you weren't signing a vehicle in, ignore this email and tell the COLAB office."),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.name},`,
+    "",
+    `Your code to sign ${input.vehicleName} (${input.vehicleReg}) back in is: ${input.code}`,
+    `It expires in ${input.minutesValid} minutes.`,
+    "",
+    `Closing mileage: ${input.closingMileage}`,
+    `Distance travelled: ${input.distanceLabel}`,
+    `Fuel on return: ${input.closingFuelLabel}`,
+    "",
+    "If those readings aren't the ones you entered, don't use the code — go back to the booking and check.",
+    "If you weren't signing a vehicle in, ignore this email and tell the COLAB office.",
+  ].join("\n");
+
+  return { subject, html, text };
+}

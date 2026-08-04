@@ -67,6 +67,8 @@ export type StaffRow = {
   dateOfBirthSelf: string | null;
   /** The admin's stand-in, used only while the person hasn't set their own. */
   dateOfBirthAdmin: string | null;
+  /** May book vehicles belonging to any sub-company, not only their own. */
+  canBookOtherCompanyVehicles: boolean;
   tags: TagOption[];
 };
 
@@ -382,17 +384,23 @@ function StaffForm({
   companies,
   allTags,
   person,
+  canGrantCrossCompany,
   onDone,
 }: {
   companies: CompanyOpt[];
   allTags: TagOption[];
   person?: StaffRow;
+  /** Directors only — see the field itself. */
+  canGrantCrossCompany: boolean;
   onDone: () => void;
 }) {
   const action = person ? updateStaff : createStaff;
   const [state, formAction] = useActionState<ActionState, FormData>(action, {});
   const [selectedTags, setSelectedTags] = useState<number[]>(
     person ? person.tags.map((t) => t.id) : [],
+  );
+  const [canBookOther, setCanBookOther] = useState(
+    person?.canBookOtherCompanyVehicles ?? false,
   );
   useEffect(() => {
     if (state.ok) onDone();
@@ -467,6 +475,30 @@ function StaffForm({
           <option value="No">No</option>
         </Select>
       </Field>
+      {/* Directors only. Everyone else doesn't get the input at all — and the
+          server drops the field rather than reading a missing checkbox as
+          "untick", so an Admin's save can't undo what a Director decided. */}
+      {canGrantCrossCompany && (
+        <Field
+          label="Vehicles"
+          hint="Off, everyone can only book vehicles belonging to their own company. Tick this for someone who drives for the whole building."
+        >
+          <input
+            type="hidden"
+            name="canBookOtherCompanyVehicles"
+            value={canBookOther ? "yes" : "no"}
+          />
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-line px-3 py-2.5 text-sm text-slate-700 transition-colors hover:bg-slate-50">
+            <input
+              type="checkbox"
+              checked={canBookOther}
+              onChange={(e) => setCanBookOther(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-line text-brand-600 focus:ring-brand-100"
+            />
+            <span>Can book vehicles from other companies</span>
+          </label>
+        </Field>
+      )}
       <Field
         label="Tags"
         hint={
@@ -640,6 +672,7 @@ export function StaffManager({
   canManage,
   canInvite,
   canManageGroups,
+  canGrantCrossCompany,
 }: {
   staff: StaffRow[];
   companies: CompanyOpt[];
@@ -648,6 +681,8 @@ export function StaffManager({
   canInvite: boolean;
   /** `groups.manage` — gates turning the current filter into an email group. */
   canManageGroups: boolean;
+  /** `vehicles.crosscompany.grant` — Directors only; gates the vehicle tickbox. */
+  canGrantCrossCompany: boolean;
 }) {
   const showActions = canManage || canInvite;
   const [adding, setAdding] = useState(false);
@@ -964,7 +999,12 @@ export function StaffManager({
 
       {adding && (
         <Modal title="Add team member" open onOpenChange={setAdding}>
-          <StaffForm companies={companies} allTags={allTags} onDone={() => setAdding(false)} />
+          <StaffForm
+            companies={companies}
+            allTags={allTags}
+            canGrantCrossCompany={canGrantCrossCompany}
+            onDone={() => setAdding(false)}
+          />
         </Modal>
       )}
       {editing && (
@@ -977,6 +1017,7 @@ export function StaffManager({
             companies={companies}
             allTags={allTags}
             person={editing}
+            canGrantCrossCompany={canGrantCrossCompany}
             onDone={() => setEditing(null)}
           />
         </Modal>

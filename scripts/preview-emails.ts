@@ -23,6 +23,7 @@ import {
   roomStealRequestEmail,
   roomStealApprovedEmail,
   roomStealDeclinedEmail,
+  vehicleReturnOtpEmail,
 } from "../src/lib/email-templates";
 import { emailShell, plainBodyHtml } from "../src/lib/email-layout";
 
@@ -293,6 +294,19 @@ const samples: { label: string; mail: { subject: string; html: string } }[] = [
       timeLabel: "09:00 – 10:00 (60 min)",
       reason: "Sorry — the auditors are already booked in and they've flown down for it.",
       bookingsUrl: `${BASE}/bookings`,
+    }),
+  },
+  {
+    label: "Vehicle sign-in code",
+    mail: vehicleReturnOtpEmail({
+      name: "Sky Roos",
+      code: "418 302",
+      vehicleName: "Toyota Corolla 1.6",
+      vehicleReg: "CA 123-456",
+      closingMileage: 84_312,
+      closingFuelLabel: "Quarter",
+      distanceLabel: "137 km",
+      minutesValid: 10,
     }),
   },
   {

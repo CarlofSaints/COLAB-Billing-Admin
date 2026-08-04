@@ -110,12 +110,27 @@ export const PERMISSIONS: PermissionDef[] = [
     sort: 152,
   },
 
-  // Vehicles. The register only, for now — booking a vehicle isn't built yet.
+  // Vehicles. Booking one needs only hub.view — everybody drives; these two are
+  // for looking after the fleet and for widening who may book what.
   {
     key: "vehicles.manage",
-    label: "Add / edit vehicles in the fleet",
+    label: "Add / edit vehicles in the fleet, and sign any vehicle back in",
     category: "Vehicles",
     sort: 153,
+  },
+  {
+    /**
+     * The right to hand out the exception, not the exception itself. Everyone
+     * is limited to their own company's vehicles; this permission is what lets
+     * you tick "Can book vehicles from other companies" on a team member.
+     *
+     * Directors only, by default and by request — moving a car between the
+     * businesses is a decision about company property, not office admin.
+     */
+    key: "vehicles.crosscompany.grant",
+    label: "Allow a team member to book OTHER companies' vehicles (Directors only)",
+    category: "Vehicles",
+    sort: 154,
   },
 
   // Admin tasks
@@ -199,6 +214,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "rooms.manage",
     "bookings.manage",
     "vehicles.manage",
+    // Deliberately NOT given to Admin below — Carl's rule is that only a
+    // Director may let someone drive another company's car.
+    "vehicles.crosscompany.grant",
   ],
 
   // Admin: the operator. Manages staff, groups, mail and runs billing —

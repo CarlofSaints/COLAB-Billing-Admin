@@ -13,6 +13,12 @@ export default async function StaffPage() {
   const canManage = user ? hasPermission(user, "staff.manage") : false;
   const canInvite = user ? hasPermission(user, "team.invite") : false;
   const canManageGroups = user ? hasPermission(user, "groups.manage") : false;
+  // Directors only. Everyone else gets the form without the tickbox at all —
+  // and `updateStaff` drops the field rather than reading its absence as "no",
+  // so an Admin's save can't quietly undo a Director's decision.
+  const canGrantCrossCompany = user
+    ? hasPermission(user, "vehicles.crosscompany.grant")
+    : false;
 
   const companyRows = await db
     .select({ id: companies.id, name: companies.name, type: companies.type })
@@ -34,6 +40,7 @@ export default async function StaffPage() {
       userId: staff.userId,
       dateOfBirth: staff.dateOfBirth,
       dateOfBirthAdmin: staff.dateOfBirthAdmin,
+      canBookOtherCompanyVehicles: staff.canBookOtherCompanyVehicles,
       companyName: companies.name,
     })
     .from(staff)
@@ -78,6 +85,7 @@ export default async function StaffPage() {
     hasAccount: s.userId != null,
     dateOfBirthSelf: s.dateOfBirth,
     dateOfBirthAdmin: s.dateOfBirthAdmin,
+    canBookOtherCompanyVehicles: s.canBookOtherCompanyVehicles,
     tags: tagsByStaff.get(s.id) ?? [],
   }));
 
@@ -94,6 +102,7 @@ export default async function StaffPage() {
         canManage={canManage}
         canInvite={canInvite}
         canManageGroups={canManageGroups}
+        canGrantCrossCompany={canGrantCrossCompany}
       />
     </div>
   );

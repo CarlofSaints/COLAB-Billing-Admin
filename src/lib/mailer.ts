@@ -22,6 +22,7 @@ export {
   signupNotifyEmail,
   taskAssignedEmail,
   taskCreatedEmail,
+  vehicleReturnOtpEmail,
 } from "./email-templates";
 
 /**

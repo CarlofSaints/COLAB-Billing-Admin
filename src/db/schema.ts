@@ -203,6 +203,19 @@ export const staff = pgTable(
     includeInBilling: boolean("include_in_billing").notNull().default(true),
     active: boolean("active").notNull().default(true),
 
+    /**
+     * Lets this person book a vehicle belonging to any of the sub-companies,
+     * not just their own.
+     *
+     * A per-person exception rather than a role permission, because it's a fact
+     * about one individual's job (they drive for everyone) and not about a rank
+     * — two people on the same role routinely differ. Who may *grant* it is the
+     * permission: `vehicles.crosscompany.grant`, held by Directors only.
+     */
+    canBookOtherCompanyVehicles: boolean("can_book_other_company_vehicles")
+      .notNull()
+      .default(false),
+
     /* --- Team-hub profile fields (self-maintained by the team member) --- */
     // The person's own login, once they've been turned into a user. The hub
     // links user↔team-member by email (the UID), but a nullable FK lets us
@@ -1068,6 +1081,118 @@ export const vehicles = pgTable(
   ],
 );
 
+/**
+ * Fuel level, eyeballed off the gauge. Deliberately five coarse steps rather
+ * than a percentage — nobody can read a needle to 5%, and a field people can't
+ * answer honestly gets filled in with whatever number is quickest.
+ */
+export const vehicleFuelLevelEnum = pgEnum("vehicle_fuel_level", [
+  "full",
+  "three_quarters",
+  "half",
+  "quarter",
+  "under_quarter",
+]);
+
+/**
+ * Where the vehicle is. `out` and `servicing` both mean "not on the premises",
+ * so both block a second booking; they're separate values because "it's at the
+ * workshop" is the answer to a question people actually ask.
+ */
+export const vehicleBookingStatusEnum = pgEnum("vehicle_booking_status", [
+  "out",
+  "home",
+  "servicing",
+]);
+
+/**
+ * One trip: a vehicle signed out, and — once it comes back — signed in again.
+ *
+ * The return half of the row is nullable because it's filled in later, by hand,
+ * possibly days after the booking was made. Nothing derives the closing figures
+ * automatically: the mileage difference is the whole point of the record, so it
+ * has to be two readings a person actually took, not one reading and a guess.
+ */
+export const vehicleBookings = pgTable(
+  "vehicle_bookings",
+  {
+    id: serial("id").primaryKey(),
+    vehicleId: integer("vehicle_id")
+      .notNull()
+      // Restrict, not cascade: the trip history is the reason the register
+      // retires vehicles instead of deleting them.
+      .references(() => vehicles.id, { onDelete: "restrict" }),
+
+    // Who signed it out. Name and email are snapshotted so the record still
+    // reads correctly if the user is later renamed or deactivated.
+    bookedByUserId: integer("booked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    bookedByName: text("booked_by_name").notNull(),
+    bookedByEmail: text("booked_by_email").notNull(),
+
+    /**
+     * Who is actually taking the vehicle, when someone books it on another
+     * person's behalf. Null means it's the booker. Both count as the holder for
+     * the purposes of signing it back in.
+     */
+    bookedForUserId: integer("booked_for_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    bookedForName: text("booked_for_name"),
+    bookedForEmail: text("booked_for_email"),
+
+    openingMileage: integer("opening_mileage").notNull(),
+    closingMileage: integer("closing_mileage"),
+    openingFuel: vehicleFuelLevelEnum("opening_fuel").notNull(),
+    closingFuel: vehicleFuelLevelEnum("closing_fuel"),
+
+    status: vehicleBookingStatusEnum("status").notNull().default("out"),
+    notes: text("notes"),
+
+    takenOutAt: timestamp("taken_out_at", { withTimezone: true }).notNull().defaultNow(),
+    returnedAt: timestamp("returned_at", { withTimezone: true }),
+
+    /**
+     * The closing figures as typed, held here until the OTP confirms them.
+     *
+     * Kept on the row rather than in the browser so the code approves *these*
+     * numbers and not whatever is posted second, and so a refresh mid-return
+     * doesn't lose what was already entered.
+     */
+    pendingClosingMileage: integer("pending_closing_mileage"),
+    pendingClosingFuel: vehicleFuelLevelEnum("pending_closing_fuel"),
+
+    /**
+     * The one-time code proving the person signing the vehicle back in is who
+     * they say they are. Stored as a salted hash — a code readable straight out
+     * of the database would prove nothing.
+     */
+    returnOtpHash: text("return_otp_hash"),
+    returnOtpExpiresAt: timestamp("return_otp_expires_at", { withTimezone: true }),
+    returnOtpSentAt: timestamp("return_otp_sent_at", { withTimezone: true }),
+    returnOtpAttempts: integer("return_otp_attempts").notNull().default(0),
+    /** Who asked for the code — only they can spend it. */
+    returnOtpUserId: integer("return_otp_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("vehicle_bookings_vehicle_idx").on(t.vehicleId),
+    index("vehicle_bookings_status_idx").on(t.status),
+    // A vehicle can only be in one place at a time. Enforced in the action too,
+    // so the error can name who currently has it — but enforced here as well
+    // because two people clicking "Book" at once is exactly the case an
+    // application-level check misses.
+    uniqueIndex("vehicle_bookings_one_out_per_vehicle")
+      .on(t.vehicleId)
+      .where(sql`${t.status} <> 'home'`),
+  ],
+);
+
 export const bookingStatusEnum = pgEnum("booking_status", ["confirmed", "cancelled"]);
 
 /**
@@ -1360,3 +1485,5 @@ export type ActivityLogEntry = typeof activityLog.$inferSelect;
 export type Room = typeof rooms.$inferSelect;
 export type RoomBooking = typeof roomBookings.$inferSelect;
 export type RoomStealRequest = typeof roomStealRequests.$inferSelect;
+export type Vehicle = typeof vehicles.$inferSelect;
+export type VehicleBooking = typeof vehicleBookings.$inferSelect;

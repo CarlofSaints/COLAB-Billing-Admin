@@ -6,7 +6,7 @@ import { z } from "zod";
 import * as XLSX from "xlsx";
 import { db } from "@/db";
 import { staff, companies, staffTags, tags } from "@/db/schema";
-import { requirePermission } from "@/lib/auth";
+import { hasPermission, requirePermission, type SessionUser } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { parseYesNo } from "@/lib/utils";
 import { normaliseGender } from "@/lib/staff-profile";
@@ -41,6 +41,9 @@ const staffSchema = z.object({
   position: z.string().trim().optional(),
   companyId: z.coerce.number().int().positive("Choose a company"),
   includeInBilling: z.boolean(),
+  // Parsed for everyone, but only ever *applied* by someone holding
+  // vehicles.crosscompany.grant — see the callers.
+  canBookOtherCompanyVehicles: z.boolean(),
   // Writes to `dateOfBirthAdmin` only. The person's own `dateOfBirth` is set
   // from My Profile and is never touched from here.
   dateOfBirthAdmin: z
@@ -61,8 +64,26 @@ function parse(formData: FormData) {
     position: formData.get("position") || undefined,
     companyId: formData.get("companyId"),
     includeInBilling: parseYesNo(formData.get("includeInBilling")),
+    canBookOtherCompanyVehicles: formData.get("canBookOtherCompanyVehicles") === "yes",
     dateOfBirthAdmin: String(formData.get("dateOfBirthAdmin") ?? ""),
   });
+}
+
+/**
+ * Strips the cross-company vehicle flag unless the actor may grant it.
+ *
+ * The field isn't merely hidden from the form for everyone else — an absent
+ * checkbox posts nothing, which parses as `false`, so an Admin saving an
+ * unrelated edit would silently untick a Director's decision. Dropping the key
+ * entirely leaves whatever is stored exactly as it was.
+ */
+function applyCrossCompanyFlag<T extends { canBookOtherCompanyVehicles: boolean }>(
+  values: T,
+  actor: SessionUser,
+): T | Omit<T, "canBookOtherCompanyVehicles"> {
+  if (hasPermission(actor, "vehicles.crosscompany.grant")) return values;
+  const { canBookOtherCompanyVehicles: _notYours, ...rest } = values;
+  return rest;
 }
 
 export async function createStaff(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -70,7 +91,12 @@ export async function createStaff(_prev: ActionState, formData: FormData): Promi
   const parsed = parse(formData);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const [row] = await db.insert(staff).values(parsed.data).returning();
+  // The column defaults to false, so an actor who can't grant it simply
+  // doesn't set it.
+  const [row] = await db
+    .insert(staff)
+    .values(applyCrossCompanyFlag(parsed.data, user))
+    .returning();
   await syncTags(row.id, formData);
   await logEvent({
     action: "staff.create",
@@ -95,19 +121,36 @@ export async function updateStaff(_prev: ActionState, formData: FormData): Promi
   // admin field — and a disabled input submits nothing, which would read as
   // "clear it". Leave the stored admin date alone in that case.
   const [existing] = await db
-    .select({ dateOfBirth: staff.dateOfBirth })
+    .select({
+      dateOfBirth: staff.dateOfBirth,
+      canBookOtherCompanyVehicles: staff.canBookOtherCompanyVehicles,
+    })
     .from(staff)
     .where(eq(staff.id, id))
     .limit(1);
-  const values = existing?.dateOfBirth
+  const withoutDob = existing?.dateOfBirth
     ? (({ dateOfBirthAdmin: _ignored, ...rest }) => rest)(parsed.data)
     : parsed.data;
+  const values = applyCrossCompanyFlag(withoutDob, user);
 
   await db.update(staff).set({ ...values, updatedAt: new Date() }).where(eq(staff.id, id));
   await syncTags(id, formData);
+
+  // Logged in its own right, not folded into "Updated team member": this one
+  // widens what company property someone may drive away, and a line that
+  // doesn't say so is no use when the question is asked months later.
+  const crossCompanyChanged =
+    "canBookOtherCompanyVehicles" in values &&
+    existing != null &&
+    existing.canBookOtherCompanyVehicles !== values.canBookOtherCompanyVehicles;
+
   await logEvent({
     action: "staff.update",
-    summary: `Updated team member ${parsed.data.name}`,
+    summary:
+      `Updated team member ${parsed.data.name}` +
+      (crossCompanyChanged
+        ? ` — ${parsed.data.canBookOtherCompanyVehicles ? "allowed" : "no longer allowed"} to book other companies' vehicles`
+        : ""),
     actor: user,
     entityType: "staff",
     entityId: id,
