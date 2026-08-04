@@ -42,6 +42,32 @@ const REMOVE_FROM_ADMIN = [
 /** Carl's call: the shared address book and announcements are for everyone. */
 const ADD_TO_TEAM_MEMBER = ["groups.view", "mail.send"];
 
+/**
+ * Finance is Admin PLUS the money — so its grants are computed from whatever
+ * Admin actually holds, not from a second hand-written list. Carl has edited
+ * the Admin grid by hand (it carries users.manage, which the code defaults
+ * never gave it), and a hard-coded copy would have silently missed that.
+ *
+ * Note the order this runs in: Finance is topped up from Admin's grants BEFORE
+ * the money keys are stripped from Admin, so nothing is lost in between.
+ */
+
+/**
+ * The people moving from Admin to Finance — Carl's list, 4 Aug 2026. Recorded
+ * here rather than clicked through the UI so the change is auditable and
+ * repeatable. Matched on email; a name that doesn't resolve is reported, never
+ * guessed at.
+ */
+const MOVE_TO_FINANCE = [
+  "ben@atomicmarketing.co.za",
+  "chantellmcgregor@iram.co.za",
+  "jennifer@outerjoin.co.za",
+  "nicki@outerjoin.co.za",
+  "toniel@iram.co.za",
+  "tyrone@colab2.co.za",
+  "venita@atomicmarketing.co.za",
+];
+
 async function grantsFor(roleKey: string): Promise<string[]> {
   const rows = (await sql.query(
     `select p.key from role_permissions rp
@@ -75,29 +101,66 @@ async function main() {
   const willRemove = REMOVE_FROM_ADMIN.filter((k) => adminBefore.includes(k));
   const willAdd = ADD_TO_TEAM_MEMBER.filter((k) => !teamBefore.includes(k));
 
+  // Finance = everything Admin holds today, plus the money. Read off the live
+  // Admin grid so hand-edits there are carried across rather than missed.
+  const financeTarget = [...new Set([...adminBefore, ...REMOVE_FROM_ADMIN])];
+  const financeMissing = financeTarget.filter((k) => !financeGrants.includes(k));
+
   console.log(`\nFinance holds ${financeGrants.length}: ${financeGrants.join(", ")}`);
+  console.log(
+    `Finance: add ${financeMissing.length ? financeMissing.join(", ") : "(nothing — already a superset of Admin)"}`,
+  );
   console.log(
     `\nAdmin: remove ${willRemove.length ? willRemove.join(", ") : "(nothing — already done)"}`,
   );
   console.log(`Team Member: add ${willAdd.length ? willAdd.join(", ") : "(nothing — already done)"}`);
 
-  // Who is about to lose the billing screens, by name — the point of the whole
-  // change, and not something to discover afterwards.
-  if (willRemove.length) {
-    const affected = (await sql.query(
-      `select u.name, u.email from users u join roles r on r.id = u.role_id
-        where r.key = 'admin' and u.active order by u.name`,
-    )) as { name: string; email: string }[];
-    console.log(`\n⚠ ${affected.length} active Admin(s) lose the billing screens:`);
-    for (const a of affected) console.log(`   ${a.name} <${a.email}>`);
-    console.log(
-      "   Give Finance to whoever actually does the invoicing (Users page → edit → Role).",
-    );
-  }
+  const movers = (await sql.query(
+    `select u.name, u.email, r.name as role from users u join roles r on r.id = u.role_id
+      where lower(u.email) = any($1::text[]) order by u.name`,
+    [MOVE_TO_FINANCE.map((e) => e.toLowerCase())],
+  )) as { name: string; email: string; role: string }[];
+  const unresolved = MOVE_TO_FINANCE.filter(
+    (e) => !movers.some((m) => m.email.toLowerCase() === e.toLowerCase()),
+  );
+  console.log(`\nMoving to Finance (${movers.length} of ${MOVE_TO_FINANCE.length}):`);
+  for (const m of movers) console.log(`   ${m.name} <${m.email}> — currently ${m.role}`);
+  if (unresolved.length) console.log(`   ⚠ no user found for: ${unresolved.join(", ")}`);
+
+  // Who stays on Admin and therefore loses the billing screens — the point of
+  // the whole change, and not something to discover afterwards.
+  const staying = (await sql.query(
+    `select u.name, u.email from users u join roles r on r.id = u.role_id
+      where r.key = 'admin' and u.active and not (lower(u.email) = any($1::text[]))
+      order by u.name`,
+    [MOVE_TO_FINANCE.map((e) => e.toLowerCase())],
+  )) as { name: string; email: string }[];
+  console.log(`\n⚠ Staying on Admin, so losing the billing screens (${staying.length}):`);
+  for (const a of staying) console.log(`   ${a.name} <${a.email}>`);
 
   if (!APPLY) {
     console.log("\nDry run. Re-run with --apply to write these changes.");
     return;
+  }
+
+  // Finance is topped up FIRST, so nothing is briefly missing from both roles.
+  if (financeMissing.length) {
+    await sql.query(
+      `insert into role_permissions (role_id, permission_id)
+       select r.id, p.id from roles r, permissions p
+        where r.key = 'finance' and p.key = any($1::text[])
+       on conflict do nothing`,
+      [financeMissing],
+    );
+  }
+
+  if (movers.length) {
+    await sql.query(
+      `update users set role_id = (select id from roles where key = 'finance'),
+                        updated_at = now()
+        where lower(email) = any($1::text[])`,
+      [MOVE_TO_FINANCE.map((e) => e.toLowerCase())],
+    );
   }
 
   if (willRemove.length) {
@@ -122,19 +185,39 @@ async function main() {
 
   const adminAfter = await grantsFor("admin");
   const teamAfter = await grantsFor("team_member");
-  console.log(`\n✓ Admin now holds ${adminAfter.length}: ${adminAfter.join(", ")}`);
+  const financeAfter = await grantsFor("finance");
+  console.log(`\n✓ Finance now holds ${financeAfter.length}: ${financeAfter.join(", ")}`);
+  console.log(`✓ Admin now holds ${adminAfter.length}: ${adminAfter.join(", ")}`);
   console.log(`✓ Team Member now holds ${teamAfter.length}: ${teamAfter.join(", ")}`);
 
+  const counts = (await sql.query(
+    `select r.name, count(u.id)::int as n from roles r
+       left join users u on u.role_id = r.id and u.active
+      group by r.name, r.rank order by r.rank`,
+  )) as { name: string; n: number }[];
+  console.log(`\n✓ ${counts.map((c) => `${c.name}: ${c.n}`).join(" · ")}`);
+
+  // Verify the three things that were actually asked for, rather than trusting
+  // that the statements above ran.
   const stillThere = REMOVE_FROM_ADMIN.filter((k) => adminAfter.includes(k));
   const missing = ADD_TO_TEAM_MEMBER.filter((k) => !teamAfter.includes(k));
-  if (stillThere.length || missing.length) {
+  const notSuperset = adminAfter.filter((k) => !financeAfter.includes(k));
+  const stillAdmin = (await sql.query(
+    `select u.email from users u join roles r on r.id = u.role_id
+      where r.key <> 'finance' and lower(u.email) = any($1::text[])`,
+    [MOVE_TO_FINANCE.map((e) => e.toLowerCase())],
+  )) as { email: string }[];
+
+  if (stillThere.length || missing.length || notSuperset.length || stillAdmin.length) {
     console.error(
-      `\n✗ Not what was asked for — admin still has ${stillThere.join(", ") || "—"}, ` +
-        `team_member is missing ${missing.join(", ") || "—"}`,
+      `\n✗ Not what was asked for — admin still has ${stillThere.join(", ") || "—"}; ` +
+        `team_member missing ${missing.join(", ") || "—"}; ` +
+        `finance missing ${notSuperset.join(", ") || "—"}; ` +
+        `not moved: ${stillAdmin.map((u) => u.email).join(", ") || "—"}`,
     );
     process.exit(1);
   }
-  console.log("\nVerified.");
+  console.log("Verified: Finance ⊇ Admin, Admin has no money keys, all 7 moved.");
 }
 
 main().catch((err) => {

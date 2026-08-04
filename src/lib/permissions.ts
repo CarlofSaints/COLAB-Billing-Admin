@@ -201,6 +201,55 @@ export const ROLES: {
 // All permission keys.
 const ALL = PERMISSIONS.map((p) => p.key);
 
+/**
+ * The office operator's set — team members, the hub, tasks, reception,
+ * announcements. Everything except money, users and roles.
+ *
+ * Named because Finance is defined as this PLUS the money, rather than as its
+ * own hand-maintained list. Two lists that were meant to overlap would drift
+ * the first time a permission was added to one of them.
+ */
+const ADMIN_PERMISSIONS = [
+  "staff.view",
+  "staff.manage",
+  "groups.view",
+  "groups.manage",
+  "mail.send",
+  "logs.view",
+  "hub.view",
+  "hub.directory",
+  "profile.edit",
+  "events.manage",
+  "team.invite",
+  "tasks.view",
+  "tasks.manage",
+  "tags.manage",
+  "reception.view",
+  "reception.manage",
+  "issues.manage",
+  "rooms.manage",
+  "bookings.manage",
+  "vehicles.manage",
+];
+
+/**
+ * The money. Split out of Admin so that Admin could be handed to far more
+ * people without showing them a single amount.
+ *
+ * `companies.view` belongs here because it gates the billing dashboard as well
+ * as the Sub-Companies page — leaving it on Admin would defeat the split.
+ */
+const MONEY_PERMISSIONS = [
+  "controls.view",
+  "controls.manage",
+  "companies.view",
+  "companies.manage",
+  "billing.view",
+  "billing.run",
+  "integrations.manage",
+  "values.restricted",
+];
+
 /** Default permission set per role key. */
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   // Super Admin: everything.
@@ -235,55 +284,14 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "vehicles.crosscompany.grant",
   ],
 
-  // Finance: the money. Everything Admin used to carry that shows or moves an
-  // amount, plus the accounting integrations and the restricted values. No
-  // users, no roles — seeing the numbers and changing who can sign in are
-  // different jobs.
-  finance: [
-    "controls.view",
-    "controls.manage",
-    "companies.view",
-    "companies.manage",
-    "billing.view",
-    "billing.run",
-    "integrations.manage",
-    "values.restricted",
-    // Read-only on the team list: the headcount split bills per person, so the
-    // figures can't be checked without seeing who is counted.
-    "staff.view",
-    "logs.view",
-    "hub.view",
-    "hub.directory",
-    "profile.edit",
-    "reception.view",
-    "groups.view",
-  ],
+  // Finance: everything Admin does, PLUS the money. These are the people who
+  // ran the whole operation before the split — they lose nothing by moving
+  // here, which is the only reason the split is safe to make.
+  finance: [...ADMIN_PERMISSIONS, ...MONEY_PERMISSIONS],
 
-  // Admin: the office operator. Manages staff, groups, mail, tasks and
-  // reception. Deliberately NO billing, controls or sub-companies — those moved
-  // to Finance so this role could be given to far more people.
-  admin: [
-    "staff.view",
-    "staff.manage",
-    "groups.view",
-    "groups.manage",
-    "mail.send",
-    "logs.view",
-    "hub.view",
-    "hub.directory",
-    "profile.edit",
-    "events.manage",
-    "team.invite",
-    "tasks.view",
-    "tasks.manage",
-    "tags.manage",
-    "reception.view",
-    "reception.manage",
-    "issues.manage",
-    "rooms.manage",
-    "bookings.manage",
-    "vehicles.manage",
-  ],
+  // Admin: the office operator, and now a role that can be handed out freely.
+  // No billing, no controls, no sub-companies — those are Finance's.
+  admin: [...ADMIN_PERMISSIONS],
 
   // Viewer: minimal read-only.
   viewer: [
