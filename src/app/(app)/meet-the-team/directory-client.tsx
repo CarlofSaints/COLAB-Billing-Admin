@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Search, Users } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Search, Users, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/field";
 import { EmptyState } from "@/components/ui/page";
@@ -37,6 +37,9 @@ export function DirectoryClient({
 }) {
   const [query, setQuery] = useState("");
   const [company, setCompany] = useState<string | null>(null);
+  // Held here rather than per card so only one photo can ever be open, and so
+  // filtering the list while one is up doesn't leave an orphan overlay.
+  const [enlarged, setEnlarged] = useState<Person | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -103,10 +106,71 @@ export function DirectoryClient({
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map((p) => (
-            <PersonCard key={p.id} person={p} />
+            <PersonCard key={p.id} person={p} onEnlarge={() => setEnlarged(p)} />
           ))}
         </div>
       )}
+
+      {enlarged && <PhotoLightbox person={enlarged} onClose={() => setEnlarged(null)} />}
+    </div>
+  );
+}
+
+/**
+ * The blown-up profile photo.
+ *
+ * Its own overlay rather than the shared `Modal`, which is a white card with a
+ * titled header — a photo wants the frame out of the way. Same URL as the
+ * thumbnail, so the browser almost always has it cached and it opens instantly.
+ */
+function PhotoLightbox({ person: p, onClose }: { person: Person; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      // Clicking anywhere closes it. The image itself stops the event, so
+      // clicking the photo to look closer doesn't dismiss the thing you're
+      // looking at.
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-slate-900/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Photo of ${p.name}`}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
+      >
+        <X className="h-5 w-5" />
+      </button>
+
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={`/api/photo/${p.id}`}
+        alt={p.name}
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[75dvh] max-w-full rounded-xl object-contain shadow-2xl"
+      />
+
+      <div className="text-center" onClick={(e) => e.stopPropagation()}>
+        <p className="text-lg font-semibold text-white">{p.name}</p>
+        {p.position && <p className="text-sm text-white/70">{p.position}</p>}
+        <p className="mt-1 text-xs font-medium" style={{ color: p.companyColour }}>
+          {p.companyName}
+        </p>
+      </div>
     </div>
   );
 }
@@ -138,7 +202,12 @@ function FilterPill({
   );
 }
 
-function PersonCard({ person: p }: { person: Person }) {
+function PersonCard({ person: p, onEnlarge }: { person: Person; onEnlarge: () => void }) {
+  // A real button only when there's a photo behind it. Someone with no picture
+  // has nothing to enlarge, and offering the click would land them on a giant
+  // pair of initials.
+  const Avatar = p.hasPhoto ? "button" : "div";
+
   return (
     <Card className="flex flex-col overflow-hidden bg-white/90 backdrop-blur-sm">
       {/* A thin band in the sub-company's colour — the fastest way to see who
@@ -147,8 +216,20 @@ function PersonCard({ person: p }: { person: Person }) {
 
       <div className="flex flex-1 flex-col gap-3 p-5">
         <div className="flex items-start gap-3">
-          <div
-            className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full text-base font-semibold text-white"
+          <Avatar
+            {...(p.hasPhoto
+              ? {
+                  type: "button" as const,
+                  onClick: onEnlarge,
+                  "aria-label": `See ${p.name}'s photo full size`,
+                  title: "Click to enlarge",
+                }
+              : {})}
+            className={cn(
+              "flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full text-base font-semibold text-white",
+              p.hasPhoto &&
+                "cursor-zoom-in ring-brand-600/0 transition hover:ring-2 hover:ring-brand-600/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600",
+            )}
             style={{ backgroundColor: p.favouriteColour }}
           >
             {p.hasPhoto ? (
@@ -162,7 +243,7 @@ function PersonCard({ person: p }: { person: Person }) {
             ) : (
               initials(p.name)
             )}
-          </div>
+          </Avatar>
           <div className="min-w-0 flex-1">
             <p className="truncate text-base font-semibold text-slate-900">{p.name}</p>
             {p.position && <p className="text-sm text-slate-600">{p.position}</p>}
