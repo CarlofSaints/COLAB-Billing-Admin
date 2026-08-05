@@ -1191,6 +1191,15 @@ export const vehicleBookings = pgTable(
     closingFuel: vehicleFuelLevelEnum("closing_fuel"),
 
     status: vehicleBookingStatusEnum("status").notNull().default("out"),
+    /**
+     * Why the vehicle is being taken — written when it's signed out.
+     *
+     * Deliberately a separate column from `notes` rather than one shared field:
+     * `notes` is written at the RETURN and is about what happened to the
+     * vehicle, so reusing it would mean recording a scratch erased the reason
+     * anyone had the car in the first place.
+     */
+    purpose: text("purpose"),
     /** Anything worth saying about the trip, written at the return. */
     notes: text("notes"),
 

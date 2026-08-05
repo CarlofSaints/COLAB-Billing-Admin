@@ -112,6 +112,8 @@ const createSchema = z
     expectedReturnAt: dateTime,
     bookedForUserId: z.number().int().nonnegative(),
     forService: z.boolean(),
+    /** Why the vehicle is being taken. Optional — the form is meant to be quick. */
+    purpose: z.string().trim().max(500).optional(),
   })
   .refine((v) => v.expectedReturnAt.getTime() > v.takenOutAt.getTime(), {
     message: "The expected return has to be after the time the vehicle is taken",
@@ -291,9 +293,11 @@ export async function createVehicleBooking(
     expectedReturnAt: String(formData.get("expectedReturnAt") ?? ""),
     bookedForUserId: Number(formData.get("bookedForUserId") || 0),
     forService: formData.get("forService") === "yes",
+    purpose: String(formData.get("purpose") ?? "").trim() || undefined,
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
-  const { vehicleId, takenOutAt, expectedReturnAt, bookedForUserId, forService } = parsed.data;
+  const { vehicleId, takenOutAt, expectedReturnAt, bookedForUserId, forService, purpose } =
+    parsed.data;
 
   // The company rule, checked against the database and not against whatever the
   // browser was given — a filtered dropdown is a convenience, not a control.
@@ -339,6 +343,7 @@ export async function createVehicleBooking(
         bookedForEmail: bookedFor?.email ?? null,
         takenOutAt,
         expectedReturnAt,
+        purpose: purpose ?? null,
         // Both mean "not here"; they're separate so the grid can answer "where
         // is it?" rather than only "is it available?".
         status: forService ? "servicing" : "out",
@@ -359,7 +364,8 @@ export async function createVehicleBooking(
       `Took out ${vehicle.name} (${vehicle.regNumber})` +
       (bookedFor ? ` for ${bookedFor.name}` : "") +
       ` from ${formatDateTime(takenOutAt)}, due back ${formatDateTime(expectedReturnAt)}` +
-      (forService ? " — going in for a service" : ""),
+      (forService ? " — going in for a service" : "") +
+      (purpose ? ` — ${purpose}` : ""),
     actor: user,
     entityType: "vehicle_booking",
     entityId: row.id,
@@ -376,6 +382,7 @@ export async function createVehicleBooking(
     takenOutAt,
     expectedReturnAt,
     forService,
+    purpose: purpose ?? null,
   });
 
   revalidate();
@@ -393,6 +400,7 @@ async function sendBookedEmails(booking: {
   takenOutAt: Date;
   expectedReturnAt: Date;
   forService: boolean;
+  purpose: string | null;
 }) {
   // A booking that saved is a booking that happened. Mail is best-effort on top
   // of it, never a reason to fail the action after the row is committed.
@@ -416,6 +424,7 @@ async function sendBookedEmails(booking: {
       name: party.name,
       forDriver: party.isDriver && booking.bookedForEmail != null,
       forService: booking.forService,
+      purpose: booking.purpose,
     });
     await sendMail({ to: party.email, subject: mail.subject, html: mail.html, text: mail.text });
   }
@@ -707,6 +716,9 @@ export async function respondToVehicleSteal(
         bookedForEmail: request.requestedForEmail,
         takenOutAt: request.requestedFrom,
         expectedReturnAt: request.requestedTo,
+        // The case they made for the vehicle IS why they're taking it, so it
+        // carries straight through rather than being asked for a second time.
+        purpose: request.message,
         status: request.forService ? "servicing" : "out",
       })
       .returning({ id: vehicleBookings.id });

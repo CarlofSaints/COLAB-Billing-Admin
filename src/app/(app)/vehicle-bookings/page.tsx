@@ -39,6 +39,7 @@ export default async function VehicleBookingsPage() {
       openingFuel: vehicleBookings.openingFuel,
       closingFuel: vehicleBookings.closingFuel,
       status: vehicleBookings.status,
+      purpose: vehicleBookings.purpose,
       notes: vehicleBookings.notes,
       takenOutAt: vehicleBookings.takenOutAt,
       expectedReturnAt: vehicleBookings.expectedReturnAt,

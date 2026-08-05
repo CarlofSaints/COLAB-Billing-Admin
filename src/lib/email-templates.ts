@@ -1012,6 +1012,8 @@ export function vehicleBookedEmail(
     /** True when this copy is going to the driver rather than the booker. */
     forDriver: boolean;
     forService: boolean;
+    /** Why the vehicle is being taken, if they said. */
+    purpose: string | null;
   },
 ) {
   const title = tripTitle(input);
@@ -1032,6 +1034,9 @@ export function vehicleBookedEmail(
     content: [
       p(opening),
       detailTable(tripRows(input)),
+      // Matters most on the driver's copy: somebody else arranged this, and
+      // "what for?" is the first thing they'll want to know.
+      ...(input.purpose ? [p("What it's for:"), quote(escapeHtml(input.purpose))] : []),
       ...(input.forService
         ? [note("This one is going in for a service, so it shows as being at the workshop.")]
         : []),
@@ -1053,6 +1058,7 @@ export function vehicleBookedEmail(
       : `You've booked ${title}${input.bookedByName !== input.driverName ? ` for ${input.driverName}` : ""}.`,
     "",
     ...tripLines(input),
+    ...(input.purpose ? ["", `What it's for: ${input.purpose}`] : []),
     ...(input.forService ? ["", "Going in for a service."] : []),
     "",
     "Nothing else is needed now — the mileage, the fuel and anything you spent are filled in when the vehicle comes back.",

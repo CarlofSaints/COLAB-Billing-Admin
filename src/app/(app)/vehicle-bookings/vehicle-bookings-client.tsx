@@ -83,6 +83,8 @@ export type BookingRow = {
   openingFuel: FuelLevel | null;
   closingFuel: FuelLevel | null;
   status: VehicleBookingStatus;
+  /** Why it was taken, written at sign-out. Distinct from the return notes. */
+  purpose: string | null;
   notes: string | null;
   takenOutAt: string;
   expectedReturnAt: string;
@@ -347,6 +349,18 @@ function BookingForm({
             <p className="px-1 py-2 text-xs text-muted">Nobody matches “{search}”.</p>
           )}
         </div>
+      </Field>
+
+      <Field
+        label="Notes"
+        hint="Why you're taking it — where you're going, who you're seeing. Everyone can see this on the calendar."
+      >
+        <Textarea
+          name="purpose"
+          maxLength={500}
+          rows={2}
+          placeholder="Client meeting in Claremont, back by 4."
+        />
       </Field>
 
       <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-line px-3 py-2.5 text-sm text-slate-700 transition-colors hover:bg-slate-50">
@@ -637,6 +651,11 @@ function ReturnForm({
           {booking.bookedForName ?? booking.bookedByName}, due back{" "}
           {formatDateTime(booking.expectedReturnAt)}.
         </span>
+        {/* Shown read-only: it's what they said on the way out, and the Notes
+            box below is for what happened, not for restating it. */}
+        {booking.purpose && (
+          <span className="mt-1 block text-xs italic text-muted">“{booking.purpose}”</span>
+        )}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -695,7 +714,7 @@ function ReturnForm({
       </div>
 
       <Field
-        label="Notes"
+        label="Notes on the return"
         hint="Optional — anything worth knowing, like a scratch or a warning light."
       >
         <Textarea name="notes" maxLength={1000} rows={2} />
@@ -1323,9 +1342,24 @@ function TripDetail({ booking, onDone }: { booking: BookingRow; onDone: () => vo
         ))}
       </dl>
 
+      {/* Two different facts, kept apart on purpose: why they took it, and what
+          happened to it. */}
+      {booking.purpose && (
+        <div>
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
+            What it was for
+          </p>
+          <p className="whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            {booking.purpose}
+          </p>
+        </div>
+      )}
+
       {booking.notes && (
         <div>
-          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Notes</p>
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
+            Notes on the return
+          </p>
           <p className="whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
             {booking.notes}
           </p>

@@ -23,6 +23,8 @@ export type CalendarTrip = {
   vehicleReg: string;
   bookedByName: string;
   bookedForName: string | null;
+  /** Why it's out — the thing the calendar is most often opened to find. */
+  purpose: string | null;
   status: VehicleBookingStatus;
   overdue: boolean;
   takenOutAt: string;
@@ -198,7 +200,8 @@ export function VehicleCalendar({
                           `${driver} — ${formatDateTime(t.takenOutAt)} to ` +
                           `${formatDateTime(t.returnedAt ?? t.expectedReturnAt)}` +
                           (t.returnedAt ? "" : " (expected)") +
-                          `\n${t.overdue ? "Overdue" : STATUS_LABELS[t.status]}`
+                          `\n${t.overdue ? "Overdue" : STATUS_LABELS[t.status]}` +
+                          (t.purpose ? `\n\n${t.purpose}` : "")
                         }
                         className={cn(
                           "absolute flex items-center overflow-hidden px-2 text-xs font-medium transition-opacity hover:opacity-85",
@@ -216,9 +219,15 @@ export function VehicleCalendar({
                           height: LANE_HEIGHT - 4,
                         }}
                       >
+                        {/* The name is what identifies the bar, so it never
+                            gets pushed out; the reason follows only when the
+                            bar is wide enough to carry it. */}
                         <span className="truncate">
                           {bar.clippedStart ? "‹ " : ""}
                           {driver}
+                          {t.purpose ? (
+                            <span className="font-normal opacity-75"> · {t.purpose}</span>
+                          ) : null}
                           {bar.clippedEnd ? " ›" : ""}
                         </span>
                       </button>
