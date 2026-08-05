@@ -129,8 +129,18 @@ export function SubCompanyCard({
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-muted">Other expenses</span>
-                <span className="font-semibold text-slate-900">
-                  {otherExpenses > 0 ? formatCurrency(otherExpenses) : "—"}{" "}
+                {/* ⚠️ A NEGATIVE HERE IS REAL AND MUST BE SHOWN. It used to
+                    test `> 0`, so a month-end credit larger than the recurring
+                    fixed items rendered as an em dash — the card then showed
+                    rent, a dash, and a total that was smaller than the rent
+                    above it and explained by nothing on screen. */}
+                <span
+                  className={cn(
+                    "font-semibold",
+                    otherExpenses < 0 ? "text-emerald-700" : "text-slate-900",
+                  )}
+                >
+                  {otherExpenses !== 0 ? formatCurrency(otherExpenses) : "—"}{" "}
                   <Share of={shares?.other} />
                 </span>
               </div>

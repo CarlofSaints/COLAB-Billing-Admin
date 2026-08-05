@@ -148,7 +148,12 @@ export default async function Dashboard({
   const staffShares = percentShares(subCompanies.map((c) => staffByCompany.get(c.id) ?? 0));
   const sqmShares = percentShares(subCompanies.map((c) => sqmByCompany.get(c.id) ?? 0));
   const rentShares = percentShares(subCompanies.map((c) => rentByCompany.get(c.id) ?? 0));
-  const otherShares = percentShares(subCompanies.map((c) => otherByCompany.get(c.id) ?? 0));
+  // Other expenses can come out NEGATIVE — a month-end creditor variance
+  // credits back more than the recurring fixed items charged. "A share of the
+  // total" means nothing for a credit, so those get no percentage rather than a
+  // misleading 0%.
+  const otherValues = subCompanies.map((c) => otherByCompany.get(c.id) ?? 0);
+  const otherShares = percentShares(otherValues).map((s, i) => (otherValues[i] < 0 ? null : s));
   const totalShares = percentShares(
     subCompanies.map((c) => (rentByCompany.get(c.id) ?? 0) + (otherByCompany.get(c.id) ?? 0)),
   );
