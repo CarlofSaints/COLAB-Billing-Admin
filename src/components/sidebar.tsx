@@ -33,7 +33,7 @@ import {
   Plug,
   LogOut,
 } from "lucide-react";
-import { Logo } from "./logo";
+import { ColabWordmark, Logo } from "./logo";
 import { ChatUnreadBadge } from "./chat-unread-badge";
 import { logout } from "@/app/actions/auth";
 import { cn, initials } from "@/lib/utils";
@@ -166,7 +166,9 @@ export function Sidebar({
         >
           <Menu className="h-5 w-5" />
         </button>
-        <Logo />
+        {/* The wordmark alone, not the sidebar `Logo` — that one stacks "Hub"
+            beneath it and is taller than a 56px bar. */}
+        <ColabWordmark size="sm" />
         <Link
           href="/account"
           aria-label="My account"
