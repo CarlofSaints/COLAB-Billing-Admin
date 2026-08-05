@@ -1234,6 +1234,70 @@ export function vehicleReturnedEmail(
   return { subject, html, text };
 }
 
+/**
+ * "That booking is gone" — to whoever booked it and, when different, to
+ * whoever was going to drive.
+ *
+ * Sent even to the person who did the cancelling, because a booking made on
+ * somebody's behalf can be undone by either of them, and silence is exactly how
+ * two people both turn up expecting a car that nobody has. It says who did it
+ * for the same reason.
+ */
+export function vehicleBookingCancelledEmail(
+  input: VehicleTrip & {
+    name: string;
+    cancelledByName: string;
+    /** True on the copy going to whoever pressed the button. */
+    byYou: boolean;
+    /** Why it was taken, if they'd said — the reminder of which booking this was. */
+    purpose: string | null;
+  },
+) {
+  const title = tripTitle(input);
+  const subject = `${input.vehicleName} booking cancelled — ${input.takenOnLabel}`;
+
+  const opening = input.byYou
+    ? `You've removed your booking of ${escapeHtml(title)}.`
+    : `<strong>${escapeHtml(input.cancelledByName)}</strong> has removed the booking of ${escapeHtml(title)}.`;
+
+  const html = emailShell({
+    preheader: `It was for ${input.takenOnLabel}. The vehicle is free again.`,
+    eyebrow: "Vehicle booking cancelled",
+    heading: `Hi ${input.name},`,
+    content: [
+      p(opening),
+      detailTable(tripRows(input)),
+      ...(input.purpose ? [p("It was booked for:"), quote(escapeHtml(input.purpose))] : []),
+      p(
+        "Nothing was recorded against it — no mileage, no fuel. The vehicle is free for anyone to book over those times again.",
+      ),
+      button(input.bookingsUrl, "Open vehicle bookings"),
+      ...(input.byYou
+        ? []
+        : [note("If you still need the vehicle, book it again — it's available.")]),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.name},`,
+    "",
+    input.byYou
+      ? `You've removed your booking of ${title}.`
+      : `${input.cancelledByName} has removed the booking of ${title}.`,
+    "",
+    ...tripLines(input),
+    ...(input.purpose ? ["", `It was booked for: ${input.purpose}`] : []),
+    "",
+    "Nothing was recorded against it — no mileage, no fuel.",
+    "The vehicle is free for anyone to book over those times again.",
+    "",
+    input.bookingsUrl,
+    ...(input.byYou ? [] : ["", "If you still need the vehicle, book it again — it's available."]),
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
 /* ------------------------------------------------------------------ */
 /* Asking for a vehicle somebody else has                             */
 /* ------------------------------------------------------------------ */

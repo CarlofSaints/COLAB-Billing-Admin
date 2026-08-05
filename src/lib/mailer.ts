@@ -23,6 +23,7 @@ export {
   taskAssignedEmail,
   taskCreatedEmail,
   vehicleBookedEmail,
+  vehicleBookingCancelledEmail,
   vehicleOverdueEmail,
   vehicleReturnedEmail,
   vehicleStealApprovedEmail,

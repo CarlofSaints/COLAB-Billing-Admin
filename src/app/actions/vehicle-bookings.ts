@@ -13,6 +13,7 @@ import {
   mailConfigured,
   sendMail,
   vehicleBookedEmail,
+  vehicleBookingCancelledEmail,
   vehicleReturnedEmail,
   vehicleStealApprovedEmail,
   vehicleStealDeclinedEmail,
@@ -1103,6 +1104,34 @@ export async function cancelVehicleBooking(bookingId: number): Promise<VehicleBo
     entityId: bookingId,
   });
 
+  // Told after the row is gone, and best-effort: a booking that was cancelled
+  // was cancelled whether or not the mail goes out.
+  if (mailConfigured()) {
+    const base = await appBaseUrl();
+    const trip = {
+      vehicleName: booking.vehicleName,
+      vehicleReg: booking.vehicleReg,
+      vehicleNickname: booking.vehicleNickname,
+      driverName: booking.bookedForName ?? booking.bookedByName,
+      bookedByName: booking.bookedByName,
+      takenOnLabel: formatDateTime(booking.takenOutAt),
+      expectedReturnLabel: formatDateTime(booking.expectedReturnAt),
+      bookingsUrl: `${base}/vehicle-bookings`,
+    };
+    for (const party of bothParties(booking)) {
+      const mail = vehicleBookingCancelledEmail({
+        ...trip,
+        name: party.name,
+        cancelledByName: user.name,
+        // Either of the two can undo it, so the copy going to whoever pressed
+        // the button reads as a receipt rather than as news.
+        byYou: party.email.toLowerCase() === user.email.toLowerCase(),
+        purpose: booking.purpose,
+      });
+      await sendMail({ to: party.email, subject: mail.subject, html: mail.html, text: mail.text });
+    }
+  }
+
   revalidate();
   return { ok: true };
 }
@@ -1129,6 +1158,7 @@ async function loadBooking(id: number) {
       takenOutAt: vehicleBookings.takenOutAt,
       expectedReturnAt: vehicleBookings.expectedReturnAt,
       returnedAt: vehicleBookings.returnedAt,
+      purpose: vehicleBookings.purpose,
       status: vehicleBookings.status,
     })
     .from(vehicleBookings)
