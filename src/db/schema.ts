@@ -1128,6 +1128,13 @@ export const vehicleBookingStatusEnum = pgEnum("vehicle_booking_status", [
   "out",
   "home",
   "servicing",
+  /**
+   * Refused by an organiser. Distinct from a booking removed as a mistake —
+   * that one is deleted, because it was the booker's own act and there is
+   * nothing to explain. A decline is somebody else overruling them, so it
+   * keeps the row, the reason and the name.
+   */
+  "declined",
 ]);
 
 /**
@@ -1220,6 +1227,20 @@ export const vehicleBookings = pgTable(
      * instead of silently costing the pair their next reminder.
      */
     overdueRemindedAt: timestamp("overdue_reminded_at", { withTimezone: true }),
+
+    /**
+     * Set when an organiser refuses the booking. ⚠️ The no-overlap exclusion
+     * constraint is predicated on `returned_at is null AND declined_at is null`,
+     * so a declined booking releases the window it was holding — see
+     * `scripts/add-vehicle-decline.ts`.
+     */
+    declinedAt: timestamp("declined_at", { withTimezone: true }),
+    /** Required when declining: it's the whole point of the email that follows. */
+    declinedReason: text("declined_reason"),
+    declinedByUserId: integer("declined_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    declinedByName: text("declined_by_name"),
 
     /**
      * Fuel bought during the trip. `refuelled` is the answer to the question,

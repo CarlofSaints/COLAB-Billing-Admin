@@ -116,6 +116,16 @@ async function main() {
     console.log(`OK notify.${key} → ${GROUP_NAME}`);
   }
 
+  // The same tag, used for the other half: who may DECLINE a booking. Stored as
+  // the tag id rather than its name so renaming the tag can't quietly take
+  // everyone's authority away.
+  await sql.query(
+    `insert into "app_settings" ("key","value") values ('organiser.tag_id',$1)
+     on conflict ("key") do update set value = excluded.value, updated_at = now()`,
+    [String(tag.id)],
+  );
+  console.log(`OK organiser.tag_id → ${tag.name} (can decline vehicle bookings)`);
+
   const settings = (await sql.query(
     `select key, value from "app_settings" where key like 'notify.%' order by key`,
   )) as { key: string; value: string | null }[];

@@ -24,6 +24,7 @@ export {
   taskCreatedEmail,
   vehicleBookedEmail,
   vehicleBookingCancelledEmail,
+  vehicleBookingDeclinedEmail,
   vehicleOverdueEmail,
   vehicleReturnedEmail,
   vehicleStealApprovedEmail,

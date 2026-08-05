@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 import {
   CalendarDays,
   Car,
+  Ban,
   Clock,
   HandHelping,
   Plus,
@@ -17,6 +18,7 @@ import {
 import {
   cancelVehicleBooking,
   createVehicleBooking,
+  declineVehicleBooking,
   extendVehicleBooking,
   requestVehicleSteal,
   returnVehicleBooking,
@@ -97,8 +99,12 @@ export type BookingRow = {
   overdue: boolean;
   overdueFor: string | null;
   barEndAt: string;
+  declinedAt: string | null;
+  declinedReason: string | null;
+  declinedByName: string | null;
   canReturn: boolean;
   canCancel: boolean;
+  canDecline: boolean;
   canSeeReceipt: boolean;
 };
 
@@ -109,10 +115,13 @@ type Scope = {
   reason: "own_company" | "granted" | "super_admin" | "no_team_record";
 };
 
-const STATUS_TONE: Record<VehicleBookingStatus, "amber" | "green" | "violet"> = {
+const STATUS_TONE: Record<VehicleBookingStatus, "amber" | "green" | "violet" | "slate"> = {
   out: "amber",
   home: "green",
   servicing: "violet",
+  // Slate, not red: red is what an overdue vehicle wears, and a refused booking
+  // is a settled fact rather than something anyone still needs to act on.
+  declined: "slate",
 };
 
 /** Rounded up to the next quarter hour — nobody books a vehicle for 14:07. */
@@ -586,6 +595,78 @@ function ExtendForm({ booking, onDone }: { booking: BookingRow; onDone: () => vo
 }
 
 /* ------------------------------------------------------------------ */
+/* An organiser refusing a booking                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Declining is not the same as removing a booking made in error, so it doesn't
+ * share the `confirm()` the bin icon uses: a reason is required, and a browser
+ * confirm can't collect one.
+ */
+function DeclineForm({ booking, onDone }: { booking: BookingRow; onDone: () => void }) {
+  const [state, action] = useActionState<VehicleBookingState, FormData>(
+    declineVehicleBooking,
+    {},
+  );
+  const [reason, setReason] = useState("");
+
+  useEffect(() => {
+    if (state.ok) onDone();
+  }, [state.ok, onDone]);
+
+  return (
+    <form action={action} className="space-y-4">
+      <input type="hidden" name="bookingId" value={booking.id} />
+
+      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+        <strong>{booking.vehicleName}</strong>
+        {booking.vehicleNickname ? ` “${booking.vehicleNickname}”` : ""} · {booking.vehicleReg}
+        <span className="mt-0.5 block text-xs text-muted">
+          {booking.bookedForName ?? booking.bookedByName}, {formatDateTime(booking.takenOutAt)} to{" "}
+          {formatDateTime(booking.expectedReturnAt)}.
+        </span>
+        {booking.purpose && (
+          <span className="mt-1 block text-xs italic text-muted">“{booking.purpose}”</span>
+        )}
+      </div>
+
+      <Field
+        label="Why are you declining it?"
+        hint={`${booking.bookedForName ?? booking.bookedByName} sees this word for word — it's the whole of the email they get.`}
+      >
+        <Textarea
+          name="reason"
+          required
+          autoFocus
+          rows={3}
+          maxLength={1000}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="The Foton is going in for a service that morning — take the Suzuki instead."
+        />
+      </Field>
+
+      <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-muted">
+        {`The booking is kept as a record with your name and reason on it, and the vehicle is freed for those times. Nothing is recorded against the trip — no mileage, no fuel.`}
+      </p>
+
+      {state.error && <ErrorLine message={state.error} />}
+
+      <div className="flex justify-end gap-2 pt-1">
+        <Button type="button" variant="ghost" onClick={onDone}>
+          Cancel
+        </Button>
+        <SubmitButton
+          label="Decline the booking"
+          busy="Declining…"
+          disabled={reason.trim().length < 5}
+        />
+      </div>
+    </form>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Signing it back in — everything is recorded here                    */
 /* ------------------------------------------------------------------ */
 
@@ -594,6 +675,7 @@ function ReturnForm({
   lastMileage,
   onDone,
   onRemove,
+  onDecline,
 }: {
   booking: BookingRow;
   /** The last closing reading for this vehicle, as a sanity check. */
@@ -601,6 +683,8 @@ function ReturnForm({
   onDone: () => void;
   /** Booked by mistake — offered here so the calendar can reach it too. */
   onRemove: (booking: BookingRow) => void;
+  /** An organiser can refuse it from here rather than backing out first. */
+  onDecline: (booking: BookingRow) => void;
 }) {
   const [state, action] = useActionState<VehicleBookingState, FormData>(
     returnVehicleBooking,
@@ -820,7 +904,17 @@ function ReturnForm({
       <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
         {/* The way to a booking made in error, for anyone who got here from the
             calendar — where the bars are far too narrow to carry a button. */}
-        {booking.canCancel && (
+        {booking.canDecline && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="mr-auto text-red-600 hover:bg-red-50"
+            onClick={() => onDecline(booking)}
+          >
+            <Ban className="h-3.5 w-3.5" /> Decline
+          </Button>
+        )}
+        {booking.canCancel && !booking.canDecline && (
           <Button
             type="button"
             variant="ghost"
@@ -869,6 +963,7 @@ export function VehicleBookingsClient({
   const [view, setView] = useState<"calendar" | "list">("calendar");
   const [booking, setBooking] = useState(false);
   const [asking, setAsking] = useState<StealIntent | null>(null);
+  const [declining, setDeclining] = useState<BookingRow | null>(null);
   const [returning, setReturning] = useState<BookingRow | null>(null);
   const [extending, setExtending] = useState<BookingRow | null>(null);
   const [viewing, setViewing] = useState<BookingRow | null>(null);
@@ -890,7 +985,13 @@ export function VehicleBookingsClient({
   // showing is the filter, and hiding finished trips there would leave gaps
   // that read as "the vehicle was free" when it wasn't.
   const calendarTrips = useMemo(
-    () => bookings.map((b) => ({ ...b, startAt: b.takenOutAt, endAt: b.barEndAt })),
+    () =>
+      bookings
+        // A declined booking no longer holds the vehicle, so drawing a bar for
+        // it would say the opposite of the truth: that the vehicle is spoken
+        // for. It stays in the list, where the reason can be read.
+        .filter((b) => !b.declinedAt)
+        .map((b) => ({ ...b, startAt: b.takenOutAt, endAt: b.barEndAt })),
     [bookings],
   );
 
@@ -904,6 +1005,28 @@ export function VehicleBookingsClient({
     if (found.canReturn) setReturning(found);
     else setViewing(found);
   };
+
+  /**
+   * `?booking=123` — where the link in the confirmation email lands.
+   *
+   * The detail panel, always, rather than whatever the row click would open:
+   * the person following that link is reviewing one booking, and dropping an
+   * organiser straight into a "book the vehicle in" form for somebody else's
+   * trip would be the wrong thing entirely. Every action hangs off the panel.
+   *
+   * Read once on mount and then left alone — it's an opening instruction, not
+   * state to keep in sync, and re-applying it would reopen the panel every time
+   * the page revalidated after an action.
+   */
+  const [deepLinked, setDeepLinked] = useState(false);
+  if (!deepLinked && typeof window !== "undefined") {
+    setDeepLinked(true);
+    const wanted = Number(new URLSearchParams(window.location.search).get("booking"));
+    if (Number.isInteger(wanted) && wanted > 0) {
+      const found = bookings.find((b) => b.id === wanted);
+      if (found) setViewing(found);
+    }
+  }
 
   /**
    * Removing a booking made in error. One path for all three entry points —
@@ -1292,7 +1415,20 @@ export function VehicleBookingsClient({
             lastMileage={lastMileageFor.get(returning.vehicleId) ?? null}
             onDone={() => setReturning(null)}
             onRemove={removeBooking}
+            onDecline={(b) => {
+              setReturning(null);
+              setDeclining(b);
+            }}
           />
+        </Modal>
+      )}
+      {declining && (
+        <Modal
+          title={`Decline ${declining.vehicleName}`}
+          open
+          onOpenChange={(o) => !o && setDeclining(null)}
+        >
+          <DeclineForm booking={declining} onDone={() => setDeclining(null)} />
         </Modal>
       )}
       {extending && (
@@ -1314,6 +1450,10 @@ export function VehicleBookingsClient({
             booking={viewing}
             onDone={() => setViewing(null)}
             onRemove={removeBooking}
+            onDecline={(b) => {
+              setViewing(null);
+              setDeclining(b);
+            }}
           />
         </Modal>
       )}
@@ -1332,10 +1472,12 @@ function TripDetail({
   booking,
   onDone,
   onRemove,
+  onDecline,
 }: {
   booking: BookingRow;
   onDone: () => void;
   onRemove: (booking: BookingRow) => void;
+  onDecline: (booking: BookingRow) => void;
 }) {
   const diff = mileageDifference(booking.openingMileage, booking.closingMileage);
   const rows: [string, string][] = [
@@ -1382,6 +1524,22 @@ function TripDetail({
           </div>
         ))}
       </dl>
+
+      {/* The refusal comes first — it's the reason the rest of this trip never
+          happened, and it's what the booker was told. */}
+      {booking.declinedAt && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
+          <p className="text-xs font-medium uppercase tracking-wide text-red-700">
+            Declined by {booking.declinedByName ?? "an organiser"} ·{" "}
+            {formatDateTime(booking.declinedAt)}
+          </p>
+          {booking.declinedReason && (
+            <p className="mt-1 whitespace-pre-wrap text-sm text-red-900">
+              {booking.declinedReason}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Two different facts, kept apart on purpose: why they took it, and what
           happened to it. */}
@@ -1431,7 +1589,17 @@ function TripDetail({
         ))}
 
       <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
-        {booking.canCancel && (
+        {booking.canDecline && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="mr-auto text-red-600 hover:bg-red-50"
+            onClick={() => onDecline(booking)}
+          >
+            <Ban className="h-3.5 w-3.5" /> Decline this booking
+          </Button>
+        )}
+        {booking.canCancel && !booking.canDecline && (
           <Button
             type="button"
             variant="ghost"

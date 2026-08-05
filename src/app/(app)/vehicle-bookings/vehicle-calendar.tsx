@@ -53,6 +53,10 @@ const BAR_STYLE: Record<"overdue" | VehicleBookingStatus, string> = {
   out: "bg-amber-400/90 text-amber-950",
   servicing: "bg-violet-400/90 text-violet-950",
   home: "bg-slate-300/90 text-slate-700",
+  // Present for completeness only — declined trips are filtered out before they
+  // reach the calendar, because they no longer hold the vehicle and a bar would
+  // say they did.
+  declined: "bg-slate-200/90 text-slate-500",
 };
 
 const ROW_HEIGHT = 34;

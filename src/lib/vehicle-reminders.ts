@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, isNotNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { companies, vehicleBookings, vehicles } from "@/db/schema";
 import { appBaseUrl, mailConfigured, sendMail, vehicleOverdueEmail } from "@/lib/mailer";
@@ -60,6 +60,8 @@ export async function runVehicleOverdueReminders(
       and(
         // Both `out` and `servicing` mean the vehicle isn't back.
         ne(vehicleBookings.status, "home"),
+        // A declined trip isn't happening, so nobody is late for it.
+        isNull(vehicleBookings.declinedAt),
         lt(vehicleBookings.expectedReturnAt, now),
         // Never reminded, or last reminded more than a day ago.
         or(
@@ -175,6 +177,9 @@ export async function previewVehicleOverdueReminders(now: Date = new Date()) {
     .where(
       and(
         ne(vehicleBookings.status, "home"),
+        // Must match the runner exactly — a diagnostic that disagrees with the
+        // thing it diagnoses is worse than no diagnostic.
+        isNull(vehicleBookings.declinedAt),
         lt(vehicleBookings.expectedReturnAt, now),
         or(
           sql`${vehicleBookings.overdueRemindedAt} is null`,
@@ -198,6 +203,12 @@ export async function openVehicleBookings() {
     })
     .from(vehicleBookings)
     .innerJoin(vehicles, eq(vehicleBookings.vehicleId, vehicles.id))
-    .where(and(ne(vehicleBookings.status, "home"), isNotNull(vehicleBookings.expectedReturnAt)))
+    .where(
+      and(
+        ne(vehicleBookings.status, "home"),
+        isNull(vehicleBookings.declinedAt),
+        isNotNull(vehicleBookings.expectedReturnAt),
+      ),
+    )
     .orderBy(asc(vehicleBookings.expectedReturnAt));
 }

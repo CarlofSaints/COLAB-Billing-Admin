@@ -968,6 +968,12 @@ type VehicleTrip = {
   takenOnLabel: string;
   expectedReturnLabel: string;
   bookingsUrl: string;
+  /**
+   * Straight to THIS booking rather than the list. What an organiser needs from
+   * the confirmation email is to open the one trip and act on it, and hunting
+   * for it in a grid is where that intention goes to die.
+   */
+  bookingUrl?: string;
 };
 
 function tripTitle(trip: VehicleTrip): string {
@@ -1063,7 +1069,7 @@ export function vehicleBookedEmail(
               "Nothing else is needed now — the mileage, the fuel and anything you spent are all filled in when the vehicle comes back.",
             ),
           ]),
-      button(input.bookingsUrl, "Open vehicle bookings"),
+      button(input.bookingUrl ?? input.bookingsUrl, "Open this booking"),
       ...(input.audience === "observer"
         ? []
         : [
@@ -1091,7 +1097,7 @@ export function vehicleBookedEmail(
       ? "You're copied on this because of the notification settings — there's nothing for you to do."
       : "Nothing else is needed now — the mileage, the fuel and anything you spent are filled in when the vehicle comes back.",
     "",
-    input.bookingsUrl,
+    input.bookingUrl ?? input.bookingsUrl,
     ...(input.audience === "observer"
       ? []
       : [
@@ -1336,6 +1342,68 @@ export function vehicleBookingCancelledEmail(
     "",
     input.bookingsUrl,
     ...(input.byYou ? [] : ["", "If you still need the vehicle, book it again — it's available."]),
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
+ * "An organiser has declined your booking" — to whoever booked it and, when
+ * different, whoever was going to drive.
+ *
+ * The reason is the point of this email, not a footnote: somebody has overruled
+ * a plan the reader had already made, and "declined" without a why is the kind
+ * of message that generates an angry walk down the corridor. It's quoted
+ * verbatim, in their own words, high up.
+ */
+export function vehicleBookingDeclinedEmail(
+  input: VehicleTrip & {
+    name: string;
+    declinedByName: string;
+    reason: string;
+    /** Why it was taken, if they'd said — so they know which booking this was. */
+    purpose: string | null;
+  },
+) {
+  const title = tripTitle(input);
+  const subject = `Your booking of ${input.vehicleName} has been declined`;
+
+  const html = emailShell({
+    preheader: `${input.declinedByName} has declined it — the reason is inside.`,
+    eyebrow: "Vehicle booking declined",
+    heading: `Hi ${input.name},`,
+    content: [
+      p(
+        `<strong>${escapeHtml(input.declinedByName)}</strong> has declined the booking of ${escapeHtml(title)}. You won't have the vehicle for those times.`,
+      ),
+      p("The reason given:"),
+      quote(escapeHtml(input.reason)),
+      detailTable(tripRows(input)),
+      ...(input.purpose ? [p("You'd booked it for:"), quote(escapeHtml(input.purpose))] : []),
+      p(
+        "Nothing was recorded against it — no mileage, no fuel. The vehicle is free for those times again, so another vehicle or another slot may work.",
+      ),
+      button(input.bookingsUrl, "See what's free"),
+      note("If you think this is a mistake, take it up with them directly — replying here won't reach anyone."),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.name},`,
+    "",
+    `${input.declinedByName} has declined the booking of ${title}. You won't have the vehicle for those times.`,
+    "",
+    `The reason given: ${input.reason}`,
+    "",
+    ...tripLines(input),
+    ...(input.purpose ? ["", `You'd booked it for: ${input.purpose}`] : []),
+    "",
+    "Nothing was recorded against it — no mileage, no fuel.",
+    "The vehicle is free for those times again, so another vehicle or another slot may work.",
+    "",
+    input.bookingsUrl,
+    "",
+    "If you think this is a mistake, take it up with them directly — replying here won't reach anyone.",
   ].join("\n");
 
   return { subject, html, text };

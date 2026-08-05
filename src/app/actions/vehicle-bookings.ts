@@ -14,12 +14,14 @@ import {
   sendMail,
   vehicleBookedEmail,
   vehicleBookingCancelledEmail,
+  vehicleBookingDeclinedEmail,
   vehicleReturnedEmail,
   vehicleStealApprovedEmail,
   vehicleStealDeclinedEmail,
   vehicleStealRequestEmail,
 } from "@/lib/mailer";
 import { extraRecipients } from "@/lib/notifications";
+import { isOrganiser } from "@/lib/organisers";
 import { storePrivatePhoto } from "@/lib/private-photo";
 import {
   assertCanBookVehicle,
@@ -201,6 +203,9 @@ async function conflictingBookings(vehicleId: number, from: Date, to: Date) {
       and(
         eq(vehicleBookings.vehicleId, vehicleId),
         isNull(vehicleBookings.returnedAt),
+        // A declined booking has released the vehicle — see the exclusion
+        // constraint, which is predicated on the same pair.
+        isNull(vehicleBookings.declinedAt),
         sql`tstzrange(${vehicleBookings.takenOutAt}, greatest(${vehicleBookings.expectedReturnAt}, now()), '[)')
             && tstzrange(${from}, ${to}, '[)')`,
       ),
@@ -374,6 +379,7 @@ export async function createVehicleBooking(
   });
 
   await sendBookedEmails({
+    bookingId: row.id,
     bookedByName: user.name,
     bookedByEmail: user.email,
     bookedForName: bookedFor?.name ?? null,
@@ -392,6 +398,7 @@ export async function createVehicleBooking(
 }
 
 async function sendBookedEmails(booking: {
+  bookingId: number;
   bookedByName: string;
   bookedByEmail: string;
   bookedForName: string | null;
@@ -418,6 +425,10 @@ async function sendBookedEmails(booking: {
     takenOnLabel: formatDateTime(booking.takenOutAt),
     expectedReturnLabel: formatDateTime(booking.expectedReturnAt),
     bookingsUrl: `${base}/vehicle-bookings`,
+    // Straight to this one booking. An organiser reading the confirmation is
+    // deciding whether to allow it, and the click has to land on the thing
+    // they're deciding about — not on a grid they then have to search.
+    bookingUrl: `${base}/vehicle-bookings?booking=${booking.bookingId}`,
   };
 
   const parties = bothParties(booking);
@@ -506,6 +517,9 @@ export async function requestVehicleSteal(
   if (booking.vehicleId !== vehicleId) return { error: "That request doesn't match the vehicle." };
   if (booking.returnedAt) {
     return { error: `${vehicle.name} has since been brought back — try booking it again.` };
+  }
+  if (booking.declinedAt) {
+    return { error: `That booking has been declined, so ${vehicle.name} is free — just book it.` };
   }
   if (canReturnBooking(user, booking)) {
     return { error: "That's your own booking — you can extend it instead." };
@@ -649,6 +663,11 @@ export async function respondToVehicleSteal(
   // holding the vehicle — or whoever looks after the fleet — can answer.
   if (!canReturnBooking(user, booking)) {
     return { error: "Only the person who booked the vehicle can answer this." };
+  }
+  if (booking.declinedAt) {
+    return {
+      error: `That booking has been declined, so ${booking.vehicleName} is free for those times. Tell them to book it.`,
+    };
   }
   if (booking.returnedAt) {
     return {
@@ -837,6 +856,11 @@ export async function extendVehicleBooking(
   if (booking.status === "home") {
     return { error: `${booking.vehicleName} is already back — there's nothing to extend.` };
   }
+  if (booking.declinedAt) {
+    return {
+      error: `That booking was declined by ${booking.declinedByName ?? "an organiser"}, so there's nothing to extend.`,
+    };
+  }
   if (!canReturnBooking(user, booking)) {
     return {
       error: "Only the person who took the vehicle — or whoever looks after the fleet — can extend it.",
@@ -930,6 +954,11 @@ export async function returnVehicleBooking(
   if (!booking) return { error: "That booking no longer exists." };
   if (booking.status === "home") {
     return { error: `${booking.vehicleName} has already been signed back in.` };
+  }
+  if (booking.declinedAt) {
+    return {
+      error: `That booking was declined by ${booking.declinedByName ?? "an organiser"}, so the trip didn't happen — there's nothing to book in.`,
+    };
   }
   if (!canReturnBooking(user, booking)) {
     return {
@@ -1090,6 +1119,134 @@ async function sendReturnedEmails(
 }
 
 /* ------------------------------------------------------------------ */
+/* An organiser refusing a booking                                    */
+/* ------------------------------------------------------------------ */
+
+const declineSchema = z.object({
+  bookingId: z.number().int().positive(),
+  reason: z
+    .string()
+    .trim()
+    .min(5, "Say why you're declining it — that's what they'll be told")
+    .max(1000),
+});
+
+/**
+ * An organiser refuses somebody else's booking.
+ *
+ * Three things this is NOT, all of which already exist and stay as they are:
+ *   - stealing, which hands the slot to whoever asked for it;
+ *   - "booked by mistake", which DELETES the row — that's the booker undoing
+ *     their own act, and there is nothing to explain;
+ *   - signing it back in, which is what happens when the trip really happened.
+ *
+ * A decline is somebody overruling a plan the booker had already made, so the
+ * row is kept with the reason and the name against it, and the booker is told
+ * why in their own organiser's words. The vehicle is released — see the
+ * exclusion constraint's `declined_at is null`.
+ *
+ * ⚠️ AUTHORITY IS THE ORGANISER TAG, NOT A ROLE. Carl was explicit: Tyrone is
+ * Finance and the other six Finance people are not organisers.
+ */
+export async function declineVehicleBooking(
+  _prev: VehicleBookingState,
+  formData: FormData,
+): Promise<VehicleBookingState> {
+  const user = await requirePermission("hub.view");
+
+  if (!(await isOrganiser(user))) {
+    return { error: "Only an organiser can decline a booking." };
+  }
+
+  const parsed = declineSchema.safeParse({
+    bookingId: Number(formData.get("bookingId") || 0),
+    reason: formData.get("reason"),
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const { bookingId, reason } = parsed.data;
+
+  const booking = await loadBooking(bookingId);
+  if (!booking) return { error: "That booking no longer exists." };
+  if (booking.declinedAt) {
+    return { error: `That booking was already declined by ${booking.declinedByName ?? "someone"}.` };
+  }
+  if (booking.returnedAt || booking.status === "home") {
+    return {
+      error: `${booking.vehicleName} has already been brought back — that trip happened, so there's nothing to decline.`,
+    };
+  }
+  // Declining your own booking is just cancelling it, and the email would tell
+  // you what you already know.
+  if (booking.bookedByUserId === user.id || booking.bookedForUserId === user.id) {
+    return { error: `That's your own booking — remove it instead.` };
+  }
+
+  const declinedAt = new Date();
+  await db
+    .update(vehicleBookings)
+    .set({
+      status: "declined",
+      declinedAt,
+      declinedReason: reason,
+      declinedByUserId: user.id,
+      declinedByName: user.name,
+      // The trip isn't happening, so there is nothing left to be late for.
+      overdueRemindedAt: null,
+      updatedAt: declinedAt,
+    })
+    .where(eq(vehicleBookings.id, bookingId));
+
+  // Anyone still waiting to hear about this booking is asking about a booking
+  // that no longer holds the vehicle.
+  await db
+    .update(vehicleStealRequests)
+    .set({ status: "withdrawn", respondedAt: declinedAt })
+    .where(
+      and(
+        eq(vehicleStealRequests.bookingId, bookingId),
+        eq(vehicleStealRequests.status, "pending"),
+      ),
+    );
+
+  await logEvent({
+    action: "vehicle_booking.decline",
+    summary:
+      `Declined ${booking.bookedForName ?? booking.bookedByName}'s booking of ` +
+      `${booking.vehicleName} (${booking.vehicleReg}) for ${formatDateTime(booking.takenOutAt)} — ${reason}`,
+    actor: user,
+    entityType: "vehicle_booking",
+    entityId: bookingId,
+  });
+
+  if (mailConfigured()) {
+    const base = await appBaseUrl();
+    const trip = {
+      vehicleName: booking.vehicleName,
+      vehicleReg: booking.vehicleReg,
+      vehicleNickname: booking.vehicleNickname,
+      driverName: booking.bookedForName ?? booking.bookedByName,
+      bookedByName: booking.bookedByName,
+      takenOnLabel: formatDateTime(booking.takenOutAt),
+      expectedReturnLabel: formatDateTime(booking.expectedReturnAt),
+      bookingsUrl: `${base}/vehicle-bookings`,
+    };
+    for (const party of bothParties(booking)) {
+      const mail = vehicleBookingDeclinedEmail({
+        ...trip,
+        name: party.name,
+        declinedByName: user.name,
+        reason,
+        purpose: booking.purpose,
+      });
+      await sendMail({ to: party.email, subject: mail.subject, html: mail.html, text: mail.text });
+    }
+  }
+
+  revalidate();
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
 /* Escape hatch                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -1113,6 +1270,13 @@ export async function cancelVehicleBooking(bookingId: number): Promise<VehicleBo
   }
   if (booking.status === "home") {
     return { error: "That trip is finished — its mileage is part of the vehicle's history now." };
+  }
+  // A declined booking is deliberately kept, with the reason and the name
+  // against it. Deleting it would erase the answer the booker was given.
+  if (booking.declinedAt) {
+    return {
+      error: `That booking was declined by ${booking.declinedByName ?? "an organiser"} — it's kept as a record, and the vehicle is already free.`,
+    };
   }
 
   await db.delete(vehicleBookings).where(eq(vehicleBookings.id, bookingId));
@@ -1186,6 +1350,8 @@ async function loadBooking(id: number) {
       takenOutAt: vehicleBookings.takenOutAt,
       expectedReturnAt: vehicleBookings.expectedReturnAt,
       returnedAt: vehicleBookings.returnedAt,
+      declinedAt: vehicleBookings.declinedAt,
+      declinedByName: vehicleBookings.declinedByName,
       purpose: vehicleBookings.purpose,
       status: vehicleBookings.status,
     })

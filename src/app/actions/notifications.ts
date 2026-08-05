@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { emailGroups } from "@/db/schema";
+import { emailGroups, tags } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import {
@@ -11,6 +11,7 @@ import {
   saveNotificationGroupIds,
   type NotificationKey,
 } from "@/lib/notifications";
+import { setOrganiserTagId } from "@/lib/organisers";
 
 export type NotificationState = { error?: string; ok?: boolean };
 
@@ -72,5 +73,55 @@ export async function saveNotificationRecipients(
   }
 
   revalidatePath("/notifications");
+  return { ok: true };
+}
+
+/**
+ * Which tag makes somebody an organiser.
+ *
+ * A separate action from the notification routing above because it isn't
+ * routing — it grants the power to decline somebody else's vehicle booking, and
+ * a page that saved both from one button would make that easy to do by accident.
+ */
+export async function saveOrganiserTag(
+  _prev: NotificationState,
+  formData: FormData,
+): Promise<NotificationState> {
+  const actor = await requirePermission("notifications.manage");
+
+  const raw = String(formData.get("tagId") ?? "").trim();
+  if (raw === "") {
+    await setOrganiserTagId(null);
+    await logEvent({
+      action: "notifications.organiser_tag",
+      summary: "Cleared the organiser tag — nobody can decline vehicle bookings now",
+      actor,
+      entityType: "app_setting",
+    });
+    revalidatePath("/notifications");
+    revalidatePath("/vehicle-bookings");
+    return { ok: true };
+  }
+
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id <= 0) return { error: "That isn't a valid tag." };
+
+  const [tag] = await db
+    .select({ id: tags.id, name: tags.name })
+    .from(tags)
+    .where(eq(tags.id, id))
+    .limit(1);
+  if (!tag) return { error: "That tag no longer exists — reload and try again." };
+
+  await setOrganiserTagId(tag.id);
+  await logEvent({
+    action: "notifications.organiser_tag",
+    summary: `Anyone tagged "${tag.name}" can now decline vehicle bookings`,
+    actor,
+    entityType: "app_setting",
+  });
+
+  revalidatePath("/notifications");
+  revalidatePath("/vehicle-bookings");
   return { ok: true };
 }

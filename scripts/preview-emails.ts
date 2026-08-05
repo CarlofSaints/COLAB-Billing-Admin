@@ -25,6 +25,7 @@ import {
   roomStealDeclinedEmail,
   vehicleBookedEmail,
   vehicleBookingCancelledEmail,
+  vehicleBookingDeclinedEmail,
   vehicleOverdueEmail,
   vehicleReturnedEmail,
   vehicleStealApprovedEmail,
@@ -470,6 +471,24 @@ const samples: { label: string; mail: { subject: string; html: string } }[] = [
       cancelledByName: "Sky Roos",
       byYou: true,
       purpose: null,
+    }),
+  },
+  {
+    label: "Vehicle booking declined by an organiser",
+    mail: vehicleBookingDeclinedEmail({
+      name: "Meya Ndlovu",
+      vehicleName: "Toyota Corolla 1.6",
+      vehicleReg: "CA 123-456",
+      vehicleNickname: "Little Baby",
+      driverName: "Meya Ndlovu",
+      bookedByName: "Meya Ndlovu",
+      takenOnLabel: "Wed, 5 Aug 2026, 09:30",
+      expectedReturnLabel: "Wed, 5 Aug 2026, 16:00",
+      bookingsUrl: `${BASE}/vehicle-bookings`,
+      declinedByName: "Tyrone Manicha",
+      reason:
+        "The Corolla is going in for its service that morning — take the Suzuki instead, it's free all day.",
+      purpose: "Client meeting in Claremont, then dropping stock at the Epping branch.",
     }),
   },
   {

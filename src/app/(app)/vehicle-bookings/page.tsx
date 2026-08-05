@@ -5,6 +5,7 @@ import { getCurrentUser, hasPermission, requirePermission } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page";
 import { bookableVehicles, getBookerScope } from "@/lib/vehicle-access";
 import { isOverdue, overdueLabel } from "@/lib/vehicle-bookings";
+import { isOrganiser } from "@/lib/organisers";
 import { sastDateKey } from "@/lib/schedules";
 import { VehicleBookingsClient } from "./vehicle-bookings-client";
 
@@ -41,6 +42,9 @@ export default async function VehicleBookingsPage() {
       status: vehicleBookings.status,
       purpose: vehicleBookings.purpose,
       notes: vehicleBookings.notes,
+      declinedAt: vehicleBookings.declinedAt,
+      declinedReason: vehicleBookings.declinedReason,
+      declinedByName: vehicleBookings.declinedByName,
       takenOutAt: vehicleBookings.takenOutAt,
       expectedReturnAt: vehicleBookings.expectedReturnAt,
       returnedAt: vehicleBookings.returnedAt,
@@ -73,14 +77,27 @@ export default async function VehicleBookingsPage() {
   // mismatch. The cron is what chases anyone who leaves the page open.
   const now = new Date();
 
+  // Authority to decline is the ORGANISER TAG, not a role — Carl was explicit
+  // that Tyrone's Finance role is beside the point. Resolved once here rather
+  // than per row.
+  const organiser = await isOrganiser(sessionUser);
+
   const bookings = bookingRows.map((b) => {
     const mine = b.bookedByUserId === sessionUser.id || b.bookedForUserId === sessionUser.id;
     const late = isOverdue({ status: b.status, expectedReturnAt: b.expectedReturnAt }, now);
+    const dead = b.declinedAt != null || b.status === "home";
     return {
       ...b,
       takenOutAt: b.takenOutAt.toISOString(),
       expectedReturnAt: b.expectedReturnAt.toISOString(),
       returnedAt: b.returnedAt?.toISOString() ?? null,
+      declinedAt: b.declinedAt?.toISOString() ?? null,
+      /**
+       * An organiser may refuse somebody else's live booking. Never their own —
+       * that's just cancelling it, and the email would tell them what they
+       * already know.
+       */
+      canDecline: organiser && !mine && !dead,
       overdue: late,
       /** "3 hours ago" — worded here so the grid never does date maths. */
       overdueFor: late ? overdueLabel(b.expectedReturnAt, now) : null,
@@ -94,8 +111,8 @@ export default async function VehicleBookingsPage() {
       barEndAt: (b.returnedAt ??
         new Date(Math.max(b.expectedReturnAt.getTime(), now.getTime()))).toISOString(),
       /** Who may fill in the return, and who may push the deadline out. */
-      canReturn: b.status !== "home" && (mine || canManageFleet),
-      canCancel: b.status !== "home" && (b.bookedByUserId === sessionUser.id || canManageFleet),
+      canReturn: !dead && (mine || canManageFleet),
+      canCancel: !dead && (b.bookedByUserId === sessionUser.id || canManageFleet),
       /** Same set as canReturn — the receipt route enforces this server-side. */
       canSeeReceipt: mine || canManageFleet,
     };
@@ -106,7 +123,7 @@ export default async function VehicleBookingsPage() {
   // be booked for next week, and the overlap check on submit is what decides.
   const outNow = new Set(
     bookingRows
-      .filter((b) => !b.returnedAt && b.takenOutAt <= now)
+      .filter((b) => !b.returnedAt && !b.declinedAt && b.takenOutAt <= now)
       .map((b) => b.vehicleId),
   );
 

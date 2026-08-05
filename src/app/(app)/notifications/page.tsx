@@ -6,7 +6,9 @@ import { requirePermission } from "@/lib/auth";
 import { PageHeader, EmptyState } from "@/components/ui/page";
 import { resolveGroupMembers } from "@/lib/group-members";
 import { NOTIFICATION_TYPES, notificationGroupIds } from "@/lib/notifications";
+import { allTags, organiserPeople, organiserTagId } from "@/lib/organisers";
 import { NotificationsClient } from "./notifications-client";
+import { OrganiserClient } from "./organiser-client";
 
 export const metadata = { title: "Notifications — COLAB" };
 
@@ -38,6 +40,15 @@ export default async function NotificationsPage() {
 
   const chosen = await notificationGroupIds();
 
+  // Who can decline a vehicle booking. Kept on this page because it's the same
+  // question ("who is the organiser?") asked for a different purpose, but saved
+  // separately — it grants a power, not an email.
+  const [tagOptions, organiserTag, organisers] = await Promise.all([
+    allTags(),
+    organiserTagId(),
+    organiserPeople(),
+  ]);
+
   if (groups.length === 0) {
     return (
       <div className="mx-auto max-w-3xl">
@@ -61,6 +72,13 @@ export default async function NotificationsPage() {
         description="Who else gets emailed when something happens. This is always in addition to the people who are already told — it can never switch an existing email off."
       />
       <NotificationsClient types={NOTIFICATION_TYPES} groups={options} chosen={chosen} />
+      <div className="mt-8">
+        <OrganiserClient
+          tags={tagOptions}
+          chosenTagId={organiserTag}
+          organisers={organisers.map((p) => p.name)}
+        />
+      </div>
     </div>
   );
 }

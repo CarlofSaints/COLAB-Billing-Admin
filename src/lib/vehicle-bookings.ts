@@ -31,7 +31,7 @@ export function isFuelLevel(value: unknown): value is FuelLevel {
   return typeof value === "string" && FUEL_LABELS.has(value as FuelLevel);
 }
 
-export type VehicleBookingStatus = "out" | "home" | "servicing";
+export type VehicleBookingStatus = "out" | "home" | "servicing" | "declined";
 
 /**
  * The words Carl asked for, verbatim. "At Home" is the one people read fastest
@@ -41,11 +41,17 @@ export const STATUS_LABELS: Record<VehicleBookingStatus, string> = {
   out: "Vehicle is out",
   home: "At Home",
   servicing: "Vehicle being serviced",
+  declined: "Declined",
 };
 
 /** Anything that isn't home is unavailable — the two are not the same thing. */
 export function isVehicleAvailable(status: VehicleBookingStatus): boolean {
   return status === "home";
+}
+
+/** A trip that isn't happening and never will. */
+export function isDeclined(status: VehicleBookingStatus): boolean {
+  return status === "declined";
 }
 
 /**
@@ -303,7 +309,8 @@ export function isOverdue(
   booking: { status: VehicleBookingStatus; expectedReturnAt: Date | string },
   now: Date = new Date(),
 ): boolean {
-  if (booking.status === "home") return false;
+  // A declined trip isn't happening, so nobody is late for it.
+  if (booking.status === "home" || booking.status === "declined") return false;
   const due =
     typeof booking.expectedReturnAt === "string"
       ? new Date(booking.expectedReturnAt)
