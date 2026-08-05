@@ -1227,3 +1227,177 @@ export function vehicleReturnedEmail(
 
   return { subject, html, text };
 }
+
+/* ------------------------------------------------------------------ */
+/* Asking for a vehicle somebody else has                             */
+/* ------------------------------------------------------------------ */
+
+function vehicleTitle(name: string, reg: string, nickname?: string | null): string {
+  return `${name}${nickname ? ` “${nickname}”` : ""} (${reg})`;
+}
+
+/**
+ * "Can I have the car?" — to whoever holds it.
+ *
+ * Leads with the window being asked for rather than with the request, because
+ * the answer usually turns on one question: does that overlap what I actually
+ * need it for? Both windows are shown side by side for the same reason.
+ */
+export function vehicleStealRequestEmail(input: {
+  holderName: string;
+  requesterName: string;
+  vehicleName: string;
+  vehicleReg: string;
+  vehicleNickname?: string | null;
+  message: string;
+  yourFromLabel: string;
+  yourToLabel: string;
+  wantedFromLabel: string;
+  wantedToLabel: string;
+  approveUrl: string;
+  declineUrl: string;
+}) {
+  const title = vehicleTitle(input.vehicleName, input.vehicleReg, input.vehicleNickname);
+  const subject = `${input.requesterName} is asking for ${input.vehicleName}`;
+
+  const html = emailShell({
+    preheader: `They want it ${input.wantedFromLabel} – ${input.wantedToLabel}.`,
+    eyebrow: "Vehicle request",
+    heading: `Hi ${input.holderName},`,
+    content: [
+      p(
+        `<strong>${escapeHtml(input.requesterName)}</strong> would like ${escapeHtml(title)}, which you have booked.`,
+      ),
+      detailTable([
+        ["Vehicle", escapeHtml(title)],
+        ["You have it", escapeHtml(`${input.yourFromLabel} – ${input.yourToLabel}`)],
+        ["They want it", escapeHtml(`${input.wantedFromLabel} – ${input.wantedToLabel}`)],
+      ]),
+      p("What they said:"),
+      quote(escapeHtml(input.message)),
+      p(
+        "If you agree, your booking is shortened to end when theirs begins — or given up entirely if theirs covers the whole of it. If you already have the vehicle, that shortened time is when it needs to be back.",
+      ),
+      button(input.approveUrl, "Let them have it"),
+      p(link(input.declineUrl, "Or decline, and say why")),
+      note("Nothing changes until you answer. You'll need to be signed in."),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.holderName},`,
+    "",
+    `${input.requesterName} would like ${title}, which you have booked.`,
+    "",
+    `You have it: ${input.yourFromLabel} - ${input.yourToLabel}`,
+    `They want it: ${input.wantedFromLabel} - ${input.wantedToLabel}`,
+    "",
+    `What they said: ${input.message}`,
+    "",
+    "If you agree, your booking is shortened to end when theirs begins — or given up entirely if theirs covers the whole of it.",
+    "If you already have the vehicle, that shortened time is when it needs to be back.",
+    "",
+    `Let them have it: ${input.approveUrl}`,
+    `Decline: ${input.declineUrl}`,
+    "",
+    "Nothing changes until you answer. You'll need to be signed in.",
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/** "It's yours" — to whoever asked. */
+export function vehicleStealApprovedEmail(input: {
+  requesterName: string;
+  holderName: string;
+  vehicleName: string;
+  vehicleReg: string;
+  vehicleNickname?: string | null;
+  wantedFromLabel: string;
+  wantedToLabel: string;
+  bookingsUrl: string;
+}) {
+  const title = vehicleTitle(input.vehicleName, input.vehicleReg, input.vehicleNickname);
+  const subject = `${input.vehicleName} is yours — ${input.wantedFromLabel}`;
+
+  const html = emailShell({
+    preheader: `${input.holderName} agreed. It's booked for you.`,
+    eyebrow: "Vehicle request approved",
+    heading: `Hi ${input.requesterName},`,
+    content: [
+      p(
+        `<strong>${escapeHtml(input.holderName)}</strong> has let you have ${escapeHtml(title)}. It's booked for you — you don't need to do anything else.`,
+      ),
+      detailTable([
+        ["Vehicle", escapeHtml(title)],
+        ["Yours from", escapeHtml(input.wantedFromLabel)],
+        ["Due back", escapeHtml(input.wantedToLabel)],
+      ]),
+      p(
+        "The mileage, the fuel and anything you spend are filled in when you bring it back.",
+      ),
+      button(input.bookingsUrl, "Open vehicle bookings"),
+      note("If you no longer need it, remove the booking so somebody else can have it."),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.requesterName},`,
+    "",
+    `${input.holderName} has let you have ${title}. It's booked for you — you don't need to do anything else.`,
+    "",
+    `Yours from: ${input.wantedFromLabel}`,
+    `Due back: ${input.wantedToLabel}`,
+    "",
+    "The mileage, the fuel and anything you spend are filled in when you bring it back.",
+    "",
+    input.bookingsUrl,
+    "",
+    "If you no longer need it, remove the booking so somebody else can have it.",
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/** "Sorry, no" — to whoever asked, carrying the reason they gave. */
+export function vehicleStealDeclinedEmail(input: {
+  requesterName: string;
+  holderName: string;
+  vehicleName: string;
+  vehicleReg: string;
+  wantedFromLabel: string;
+  wantedToLabel: string;
+  reason: string;
+  bookingsUrl: string;
+}) {
+  const subject = `${input.holderName} is keeping ${input.vehicleName}`;
+
+  const html = emailShell({
+    preheader: "They've said why.",
+    eyebrow: "Vehicle request declined",
+    heading: `Hi ${input.requesterName},`,
+    content: [
+      p(
+        `<strong>${escapeHtml(input.holderName)}</strong> is keeping ${escapeHtml(input.vehicleName)} (${escapeHtml(input.vehicleReg)}) for ${escapeHtml(`${input.wantedFromLabel} – ${input.wantedToLabel}`)}.`,
+      ),
+      p("What they said:"),
+      quote(escapeHtml(input.reason)),
+      p("Another vehicle may be free for that window — the calendar shows the whole fleet."),
+      button(input.bookingsUrl, "See what's free"),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.requesterName},`,
+    "",
+    `${input.holderName} is keeping ${input.vehicleName} (${input.vehicleReg}) for ${input.wantedFromLabel} - ${input.wantedToLabel}.`,
+    "",
+    `What they said: ${input.reason}`,
+    "",
+    "Another vehicle may be free for that window — the calendar shows the whole fleet.",
+    "",
+    input.bookingsUrl,
+  ].join("\n");
+
+  return { subject, html, text };
+}

@@ -26,6 +26,9 @@ import {
   vehicleBookedEmail,
   vehicleOverdueEmail,
   vehicleReturnedEmail,
+  vehicleStealApprovedEmail,
+  vehicleStealDeclinedEmail,
+  vehicleStealRequestEmail,
 } from "../src/lib/email-templates";
 import { emailShell, plainBodyHtml } from "../src/lib/email-layout";
 
@@ -393,6 +396,49 @@ const samples: { label: string; mail: { subject: string; html: string } }[] = [
       notes: null,
       refuel: null,
       signedInByName: "Sky Roos",
+    }),
+  },
+  {
+    label: "Vehicle request — to the holder",
+    mail: vehicleStealRequestEmail({
+      holderName: "Sky Roos",
+      requesterName: "Meya Ndlovu",
+      vehicleName: "Toyota Corolla 1.6",
+      vehicleReg: "CA 123-456",
+      vehicleNickname: "Little Baby",
+      message: "I have a client meeting in Claremont at 14:00 and no other way to get there.",
+      yourFromLabel: "Wed, 5 Aug 2026, 08:00",
+      yourToLabel: "Wed, 5 Aug 2026, 17:00",
+      wantedFromLabel: "Wed, 5 Aug 2026, 13:00",
+      wantedToLabel: "Wed, 5 Aug 2026, 16:00",
+      approveUrl: `${BASE}/vehicle-bookings/request/abc123?action=approve`,
+      declineUrl: `${BASE}/vehicle-bookings/request/abc123?action=decline`,
+    }),
+  },
+  {
+    label: "Vehicle request approved",
+    mail: vehicleStealApprovedEmail({
+      requesterName: "Meya Ndlovu",
+      holderName: "Sky Roos",
+      vehicleName: "Toyota Corolla 1.6",
+      vehicleReg: "CA 123-456",
+      vehicleNickname: "Little Baby",
+      wantedFromLabel: "Wed, 5 Aug 2026, 13:00",
+      wantedToLabel: "Wed, 5 Aug 2026, 16:00",
+      bookingsUrl: `${BASE}/vehicle-bookings`,
+    }),
+  },
+  {
+    label: "Vehicle request declined",
+    mail: vehicleStealDeclinedEmail({
+      requesterName: "Meya Ndlovu",
+      holderName: "Sky Roos",
+      vehicleName: "Toyota Corolla 1.6",
+      vehicleReg: "CA 123-456",
+      wantedFromLabel: "Wed, 5 Aug 2026, 13:00",
+      wantedToLabel: "Wed, 5 Aug 2026, 16:00",
+      reason: "I'm collecting stock in Epping all afternoon and can't be back before 16:30.",
+      bookingsUrl: `${BASE}/vehicle-bookings`,
     }),
   },
   {

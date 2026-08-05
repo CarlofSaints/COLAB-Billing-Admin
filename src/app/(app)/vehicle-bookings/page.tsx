@@ -5,6 +5,7 @@ import { getCurrentUser, hasPermission, requirePermission } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page";
 import { bookableVehicles, getBookerScope } from "@/lib/vehicle-access";
 import { isOverdue, overdueLabel } from "@/lib/vehicle-bookings";
+import { sastDateKey } from "@/lib/schedules";
 import { VehicleBookingsClient } from "./vehicle-bookings-client";
 
 export const metadata = { title: "Vehicle Bookings — COLAB" };
@@ -82,6 +83,15 @@ export default async function VehicleBookingsPage() {
       overdue: late,
       /** "3 hours ago" — worded here so the grid never does date maths. */
       overdueFor: late ? overdueLabel(b.expectedReturnAt, now) : null,
+      /**
+       * Where the calendar bar ends: the real return once it's back, otherwise
+       * the expected one — but never earlier than now, so an overdue vehicle's
+       * bar runs up to the present instead of looking as though it came back on
+       * time. Decided here because the calendar must not read a clock during a
+       * client render.
+       */
+      barEndAt: (b.returnedAt ??
+        new Date(Math.max(b.expectedReturnAt.getTime(), now.getTime()))).toISOString(),
       /** Who may fill in the return, and who may push the deadline out. */
       canReturn: b.status !== "home" && (mine || canManageFleet),
       canCancel: b.status !== "home" && (b.bookedByUserId === sessionUser.id || canManageFleet),
@@ -90,10 +100,13 @@ export default async function VehicleBookingsPage() {
     };
   });
 
-  // Which vehicles are currently unavailable, so the form can grey them out
-  // rather than accept the booking and then refuse it.
-  const openTrips = new Set(
-    bookingRows.filter((b) => b.status !== "home").map((b) => b.vehicleId),
+  // Which vehicles are physically away right now. This is a LABEL, not a gate:
+  // since bookings carry their own window, a vehicle that's out today can still
+  // be booked for next week, and the overlap check on submit is what decides.
+  const outNow = new Set(
+    bookingRows
+      .filter((b) => !b.returnedAt && b.takenOutAt <= now)
+      .map((b) => b.vehicleId),
   );
 
   // Last recorded odometer reading per vehicle. No longer prefills anything at
@@ -117,7 +130,7 @@ export default async function VehicleBookingsPage() {
     companyName: v.companyName,
     mileageRequired: v.mileageRequired,
     lastMileage: lastMileage.get(v.id) ?? null,
-    available: !openTrips.has(v.id),
+    outNow: outNow.has(v.id),
   }));
 
   // "Booking for someone else" has to be a login, not a team member: that
@@ -141,6 +154,9 @@ export default async function VehicleBookingsPage() {
         allUsers={bookableUsers}
         currentUserId={sessionUser.id}
         currentUserEmail={user.email}
+        // Today in SAST, so the calendar opens on the right week without the
+        // browser's clock — and without the two render passes disagreeing.
+        todayKey={sastDateKey(now)}
         scope={{
           companyName: scope.companyName,
           extraCompanyNames: scope.extraCompanyNames,

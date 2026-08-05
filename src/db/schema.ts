@@ -1232,13 +1232,31 @@ export const vehicleBookings = pgTable(
   (t) => [
     index("vehicle_bookings_vehicle_idx").on(t.vehicleId),
     index("vehicle_bookings_status_idx").on(t.status),
-    // A vehicle can only be in one place at a time. Enforced in the action too,
-    // so the error can name who currently has it — but enforced here as well
-    // because two people clicking "Book" at once is exactly the case an
-    // application-level check misses.
-    uniqueIndex("vehicle_bookings_one_out_per_vehicle")
-      .on(t.vehicleId)
-      .where(sql`${t.status} <> 'home'`),
+    index("vehicle_bookings_window_idx").on(t.vehicleId, t.takenOutAt, t.expectedReturnAt),
+    /**
+     * ⚠️ THE REAL RULE LIVES IN THE DATABASE AS AN EXCLUSION CONSTRAINT that
+     * Drizzle can't express, so it is created by
+     * `scripts/add-vehicle-steal.ts` and only described here:
+     *
+     *   exclude using gist (vehicle_id with =,
+     *                       tstzrange(taken_out_at, expected_return_at) with &&)
+     *   where (returned_at is null)
+     *
+     * It replaced a unique index that allowed one un-returned booking per
+     * vehicle, full stop — which made booking next Tuesday impossible while the
+     * car was out today. Two things about its shape are load-bearing:
+     *
+     *   - it ranges over the DECLARED window, never `returned_at`. If the
+     *     occupied range grew when someone came back late, signing the vehicle
+     *     in would be REFUSED by the constraint whenever the next booking had
+     *     already started. Being late must not make a vehicle un-returnable.
+     *   - `where (returned_at is null)` is what lets a vehicle brought back
+     *     early be re-booked inside its original window.
+     *
+     * The action checks overlaps too — that's where the message naming who has
+     * it, and the offer to ask for it, come from. This is what survives two
+     * people clicking Book in the same second.
+     */
   ],
 );
 
@@ -1397,6 +1415,60 @@ export const roomStealRequests = pgTable(
   (t) => [
     uniqueIndex("steal_token_unique").on(t.token),
     index("steal_booking_idx").on(t.bookingId),
+  ],
+);
+
+/**
+ * Asking for a vehicle somebody else has booked.
+ *
+ * The room version transfers the slot in place, because a room steal is always
+ * for exactly the same slot. A vehicle steal isn't: the holder may have it from
+ * 09:00 to 17:00 while the asker only wants it from 13:00. So the window being
+ * asked for is stored on the request, and approving shortens or removes the
+ * holder's booking and creates the asker's — see `respondToVehicleSteal`.
+ */
+export const vehicleStealRequests = pgTable(
+  "vehicle_steal_requests",
+  {
+    id: serial("id").primaryKey(),
+    bookingId: integer("booking_id")
+      .notNull()
+      .references(() => vehicleBookings.id, { onDelete: "cascade" }),
+    requesterUserId: integer("requester_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    requesterName: text("requester_name").notNull(),
+    requesterEmail: text("requester_email").notNull(),
+    /** Why they need it — the case they're making to the current holder. */
+    message: text("message").notNull(),
+    /**
+     * The window they want. Kept on the request rather than re-read from the
+     * form at approval time: the holder is agreeing to a specific slot, and it
+     * has to be the one they were shown.
+     */
+    requestedFrom: timestamp("requested_from", { withTimezone: true }).notNull(),
+    requestedTo: timestamp("requested_to", { withTimezone: true }).notNull(),
+    /** Carried through so an approved request books it for the right person. */
+    requestedForUserId: integer("requested_for_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    requestedForName: text("requested_for_name"),
+    requestedForEmail: text("requested_for_email"),
+    forService: boolean("for_service").notNull().default(false),
+    status: stealStatusEnum("status").notNull().default("pending"),
+    declineReason: text("decline_reason"),
+    /**
+     * Unguessable id for the Approve / Decline links in the email. It names the
+     * request, it does not authenticate — the responder still has to be signed
+     * in as the booking's holder.
+     */
+    token: text("token").notNull(),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("vehicle_steal_token_unique").on(t.token),
+    index("vehicle_steal_booking_idx").on(t.bookingId),
   ],
 );
 

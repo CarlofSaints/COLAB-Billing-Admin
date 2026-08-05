@@ -193,6 +193,111 @@ export function overdueLabel(due: Date, now: Date = new Date()): string {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
+/* ------------------------------------------------------------------ */
+/* The week timeline                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The calendar deliberately does NOT copy the meeting-room one.
+ *
+ * A room booking is a slice of one working day, so rooms get a 07:00–18:00
+ * vertical grid with a day per column. A vehicle goes out on Tuesday afternoon
+ * and comes back on Thursday — that shape cannot be drawn on a day grid at all.
+ * So vehicles get the other axis: a row per vehicle, the week running left to
+ * right, and a bar spanning whatever it spans. It also answers the question
+ * that's actually being asked — "which vehicle is free?" — which a
+ * one-room-at-a-time view can't.
+ */
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The instants a week of the calendar covers: SAST midnight on the Monday to
+ * SAST midnight on the following Monday.
+ *
+ * Via `fromDateTimeInput`, so the boundary is a Johannesburg midnight and not
+ * whatever midnight the server happens to be in. SAST has no DST, so a week is
+ * always exactly seven 24-hour days.
+ */
+export function weekBounds(mondayKey: string): { startMs: number; endMs: number } {
+  const start = fromDateTimeInput(`${mondayKey}T00:00`);
+  if (!start) throw new Error(`Not a date key: ${mondayKey}`);
+  return { startMs: start.getTime(), endMs: start.getTime() + WEEK_MS };
+}
+
+export type TimelineTrip = {
+  id: number;
+  vehicleId: number;
+  /** ISO instants. */
+  startAt: string;
+  /**
+   * Where the bar ends: the actual return for a finished trip, the expected
+   * return for an open one — and for an overdue one, now, so it doesn't look
+   * as though the vehicle came back on time. Computed on the server, because a
+   * clock read during a client render disagrees with the server pass.
+   */
+  endAt: string;
+};
+
+export type TimelineBar<T> = {
+  trip: T;
+  /** Percentages across the week, for a `left`/`width` style. */
+  left: number;
+  width: number;
+  /** The trip runs on beyond this week's edge, so the bar is cut off. */
+  clippedStart: boolean;
+  clippedEnd: boolean;
+  /** Which stacked row inside the vehicle's lane this sits on. */
+  lane: number;
+};
+
+/**
+ * Places one vehicle's trips across the week.
+ *
+ * Lanes exist because two trips can legitimately share a week — one finished on
+ * Monday, the next starting Tuesday — and, if data ever lets two overlap, two
+ * bars drawn on top of each other would hide one of them completely rather than
+ * looking wrong.
+ */
+export function layOutWeek<T extends TimelineTrip>(
+  trips: T[],
+  startMs: number,
+  endMs: number,
+): TimelineBar<T>[] {
+  const span = endMs - startMs;
+  const withinWeek = trips
+    .map((trip) => ({ trip, from: Date.parse(trip.startAt), to: Date.parse(trip.endAt) }))
+    .filter((t) => Number.isFinite(t.from) && Number.isFinite(t.to) && t.to > startMs && t.from < endMs)
+    .sort((a, b) => a.from - b.from || a.to - b.to);
+
+  // The last end time in each lane, so a trip drops into the first lane it
+  // doesn't collide with.
+  const laneEnds: number[] = [];
+
+  return withinWeek.map(({ trip, from, to }) => {
+    let lane = laneEnds.findIndex((end) => end <= from);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(to);
+    } else {
+      laneEnds[lane] = to;
+    }
+
+    const clippedFrom = Math.max(from, startMs);
+    const clippedTo = Math.min(to, endMs);
+    return {
+      trip,
+      left: ((clippedFrom - startMs) / span) * 100,
+      // A floor, so a fifteen-minute trip is still something you can see and
+      // click rather than a hairline.
+      width: Math.max(((clippedTo - clippedFrom) / span) * 100, 1.2),
+      clippedStart: from < startMs,
+      clippedEnd: to > endMs,
+      lane,
+    };
+  });
+}
+
 /** Past its expected return and still not back. */
 export function isOverdue(
   booking: { status: VehicleBookingStatus; expectedReturnAt: Date | string },

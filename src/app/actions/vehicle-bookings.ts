@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq, ne } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { users, vehicleBookings, vehicles } from "@/db/schema";
+import { users, vehicleBookings, vehicleStealRequests, vehicles } from "@/db/schema";
 import { hasPermission, requirePermission, type SessionUser } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import {
@@ -13,6 +14,9 @@ import {
   sendMail,
   vehicleBookedEmail,
   vehicleReturnedEmail,
+  vehicleStealApprovedEmail,
+  vehicleStealDeclinedEmail,
+  vehicleStealRequestEmail,
 } from "@/lib/mailer";
 import { storePrivatePhoto } from "@/lib/private-photo";
 import {
@@ -36,7 +40,29 @@ import {
   type RefuelPayer,
 } from "@/lib/vehicle-bookings";
 
-export type VehicleBookingState = { error?: string; ok?: boolean };
+/**
+ * The booking that's in the way, handed back to the form so it can name who has
+ * the vehicle and offer to ask them for it — rather than just refusing.
+ */
+export type VehicleConflict = {
+  bookingId: number;
+  vehicleName: string;
+  holderName: string;
+  fromLabel: string;
+  toLabel: string;
+  /** Out now and past its expected return, which is worth saying differently. */
+  overdue: boolean;
+  /** Their own booking. Asking yourself for the vehicle isn't a thing. */
+  isMine: boolean;
+};
+
+export type VehicleBookingState = {
+  error?: string;
+  ok?: boolean;
+  /** Saved, but something worth saying happened — an email that didn't send. */
+  warning?: string;
+  conflict?: VehicleConflict;
+};
 
 const fuelValues = FUEL_LEVELS.map((f) => f.value) as [FuelLevel, ...FuelLevel[]];
 const payerValues = REFUEL_PAYERS.map((p) => p.value) as [RefuelPayer, ...RefuelPayer[]];
@@ -141,6 +167,75 @@ function revalidate() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Is the vehicle free then?                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The bookings standing in the way of a window.
+ *
+ * Deliberately a little wider than the database constraint: that one ranges
+ * over the DECLARED window, while this treats a vehicle that is out and past
+ * its expected return as occupied right up to now. Otherwise the moment a trip
+ * ran late its slot would read as free, and the next person would be told to
+ * come and collect a car that isn't there.
+ */
+async function conflictingBookings(vehicleId: number, from: Date, to: Date) {
+  return db
+    .select({
+      id: vehicleBookings.id,
+      bookedByUserId: vehicleBookings.bookedByUserId,
+      bookedByName: vehicleBookings.bookedByName,
+      bookedForUserId: vehicleBookings.bookedForUserId,
+      bookedForName: vehicleBookings.bookedForName,
+      takenOutAt: vehicleBookings.takenOutAt,
+      expectedReturnAt: vehicleBookings.expectedReturnAt,
+      status: vehicleBookings.status,
+      overdue: sql<boolean>`${vehicleBookings.expectedReturnAt} < now()`,
+    })
+    .from(vehicleBookings)
+    .where(
+      and(
+        eq(vehicleBookings.vehicleId, vehicleId),
+        isNull(vehicleBookings.returnedAt),
+        sql`tstzrange(${vehicleBookings.takenOutAt}, greatest(${vehicleBookings.expectedReturnAt}, now()), '[)')
+            && tstzrange(${from}, ${to}, '[)')`,
+      ),
+    )
+    .orderBy(asc(vehicleBookings.takenOutAt))
+    .limit(1);
+}
+
+/** True when a write bounced off the no-overlap exclusion constraint. */
+function isOverlapViolation(err: unknown): boolean {
+  return err instanceof Error && /vehicle_bookings_no_overlap/.test(err.message);
+}
+
+function describeConflict(
+  clash: {
+    id: number;
+    bookedByUserId: number | null;
+    bookedByName: string;
+    bookedForUserId: number | null;
+    bookedForName: string | null;
+    takenOutAt: Date;
+    expectedReturnAt: Date;
+    overdue: boolean;
+  },
+  vehicleName: string,
+  askerId: number,
+): VehicleConflict {
+  return {
+    bookingId: clash.id,
+    vehicleName,
+    holderName: clash.bookedForName ?? clash.bookedByName,
+    fromLabel: formatDateTime(clash.takenOutAt),
+    toLabel: formatDateTime(clash.expectedReturnAt),
+    overdue: clash.overdue,
+    isMine: clash.bookedByUserId === askerId || clash.bookedForUserId === askerId,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Telling both people                                                */
 /* ------------------------------------------------------------------ */
 
@@ -207,28 +302,12 @@ export async function createVehicleBooking(
   if (!allowed.ok) return { error: allowed.error };
   const vehicle = allowed.vehicle;
 
-  // A vehicle can only be in one place. Checked here so the message can say who
-  // has it; the partial unique index is what actually holds the line when two
-  // people click Book at the same moment.
-  const [openBooking] = await db
-    .select({
-      id: vehicleBookings.id,
-      bookedByName: vehicleBookings.bookedByName,
-      bookedForName: vehicleBookings.bookedForName,
-      status: vehicleBookings.status,
-    })
-    .from(vehicleBookings)
-    .where(and(eq(vehicleBookings.vehicleId, vehicleId), ne(vehicleBookings.status, "home")))
-    .limit(1);
-
-  if (openBooking) {
-    const holder = openBooking.bookedForName ?? openBooking.bookedByName;
-    return {
-      error:
-        openBooking.status === "servicing"
-          ? `${vehicle.name} is at the workshop — it has to be signed back in first.`
-          : `${holder} still has ${vehicle.name}. It has to be signed back in before it can go out again.`,
-    };
+  // Is it free then? Checked here so the refusal can name who has it and offer
+  // to ask them for it; the exclusion constraint is what actually holds the
+  // line when two people click Book in the same second.
+  const [clash] = await conflictingBookings(vehicleId, takenOutAt, expectedReturnAt);
+  if (clash) {
+    return { conflict: describeConflict(clash, vehicle.name, user.id) };
   }
 
   // Booking on someone else's behalf. Resolved from the users table so the
@@ -246,23 +325,33 @@ export async function createVehicleBooking(
     bookedFor = { id: row.id, name: row.name, email: row.email };
   }
 
-  const [row] = await db
-    .insert(vehicleBookings)
-    .values({
-      vehicleId,
-      bookedByUserId: user.id,
-      bookedByName: user.name,
-      bookedByEmail: user.email,
-      bookedForUserId: bookedFor?.id ?? null,
-      bookedForName: bookedFor?.name ?? null,
-      bookedForEmail: bookedFor?.email ?? null,
-      takenOutAt,
-      expectedReturnAt,
-      // Both mean "not here"; they're separate so the grid can answer "where is
-      // it?" rather than only "is it available?".
-      status: forService ? "servicing" : "out",
-    })
-    .returning({ id: vehicleBookings.id });
+  let row: { id: number };
+  try {
+    [row] = await db
+      .insert(vehicleBookings)
+      .values({
+        vehicleId,
+        bookedByUserId: user.id,
+        bookedByName: user.name,
+        bookedByEmail: user.email,
+        bookedForUserId: bookedFor?.id ?? null,
+        bookedForName: bookedFor?.name ?? null,
+        bookedForEmail: bookedFor?.email ?? null,
+        takenOutAt,
+        expectedReturnAt,
+        // Both mean "not here"; they're separate so the grid can answer "where
+        // is it?" rather than only "is it available?".
+        status: forService ? "servicing" : "out",
+      })
+      .returning({ id: vehicleBookings.id });
+  } catch (err) {
+    // Somebody booked the same window between the check above and this insert.
+    if (!isOverlapViolation(err)) throw err;
+    const [now] = await conflictingBookings(vehicleId, takenOutAt, expectedReturnAt);
+    return now
+      ? { conflict: describeConflict(now, vehicle.name, user.id) }
+      : { error: `${vehicle.name} was booked for that window a moment ago. Try again.` };
+  }
 
   await logEvent({
     action: "vehicle_booking.create",
@@ -333,6 +422,363 @@ async function sendBookedEmails(booking: {
 }
 
 /* ------------------------------------------------------------------ */
+/* Asking for a vehicle somebody else has                             */
+/* ------------------------------------------------------------------ */
+
+const stealSchema = z
+  .object({
+    bookingId: z.number().int().positive(),
+    vehicleId: z.number().int().positive("Pick a vehicle"),
+    takenOutAt: dateTime,
+    expectedReturnAt: dateTime,
+    bookedForUserId: z.number().int().nonnegative(),
+    forService: z.boolean(),
+    message: z
+      .string()
+      .trim()
+      .min(5, "Say why you need it — that's what they'll be deciding on")
+      .max(500),
+  })
+  .refine((v) => v.expectedReturnAt.getTime() > v.takenOutAt.getTime(), {
+    message: "The expected return has to be after the time the vehicle is taken",
+  });
+
+/**
+ * "Can I have it?" — sent to whoever holds the vehicle for that window.
+ *
+ * The window being asked for is stored on the request, not re-read from a form
+ * at approval time: the holder is agreeing to a specific slot, and it has to be
+ * the one they were shown.
+ */
+export async function requestVehicleSteal(
+  _prev: VehicleBookingState,
+  formData: FormData,
+): Promise<VehicleBookingState> {
+  const user = await requirePermission("hub.view");
+
+  const parsed = stealSchema.safeParse({
+    bookingId: Number(formData.get("bookingId") || 0),
+    vehicleId: Number(formData.get("vehicleId") || 0),
+    takenOutAt: String(formData.get("takenOutAt") ?? ""),
+    expectedReturnAt: String(formData.get("expectedReturnAt") ?? ""),
+    bookedForUserId: Number(formData.get("bookedForUserId") || 0),
+    forService: formData.get("forService") === "yes",
+    message: formData.get("message"),
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const { bookingId, vehicleId, takenOutAt, expectedReturnAt, bookedForUserId, forService, message } =
+    parsed.data;
+
+  // Asking for a vehicle is still booking a vehicle: the same company rule
+  // applies, re-read from the register.
+  const scope = await getBookerScope(user);
+  const allowed = await assertCanBookVehicle(scope, vehicleId);
+  if (!allowed.ok) return { error: allowed.error };
+  const vehicle = allowed.vehicle;
+
+  const booking = await loadBooking(bookingId);
+  if (!booking) return { error: "That booking no longer exists — try booking it again." };
+  if (booking.vehicleId !== vehicleId) return { error: "That request doesn't match the vehicle." };
+  if (booking.returnedAt) {
+    return { error: `${vehicle.name} has since been brought back — try booking it again.` };
+  }
+  if (canReturnBooking(user, booking)) {
+    return { error: "That's your own booking — you can extend it instead." };
+  }
+
+  // One live request per person per booking, so a keen asker can't fill the
+  // holder's inbox.
+  const [pending] = await db
+    .select({ id: vehicleStealRequests.id })
+    .from(vehicleStealRequests)
+    .where(
+      and(
+        eq(vehicleStealRequests.bookingId, bookingId),
+        eq(vehicleStealRequests.requesterUserId, user.id),
+        eq(vehicleStealRequests.status, "pending"),
+      ),
+    )
+    .limit(1);
+  if (pending) return { error: "You've already asked for this one — waiting on their reply." };
+
+  // Who it would be for, resolved now so approving doesn't have to.
+  let bookedFor: { id: number; name: string; email: string } | null = null;
+  if (bookedForUserId > 0 && bookedForUserId !== user.id) {
+    const [found] = await db
+      .select({ id: users.id, name: users.name, email: users.email, active: users.active })
+      .from(users)
+      .where(eq(users.id, bookedForUserId))
+      .limit(1);
+    if (!found || !found.active) {
+      return { error: "That person no longer has an active account — pick someone else." };
+    }
+    bookedFor = { id: found.id, name: found.name, email: found.email };
+  }
+
+  const token = randomUUID();
+  await db.insert(vehicleStealRequests).values({
+    bookingId,
+    requesterUserId: user.id,
+    requesterName: user.name,
+    requesterEmail: user.email,
+    message,
+    requestedFrom: takenOutAt,
+    requestedTo: expectedReturnAt,
+    requestedForUserId: bookedFor?.id ?? null,
+    requestedForName: bookedFor?.name ?? null,
+    requestedForEmail: bookedFor?.email ?? null,
+    forService,
+    token,
+  });
+
+  let delivered = false;
+  if (mailConfigured()) {
+    const base = await appBaseUrl();
+    // Both the booker and the driver are asked; either can answer, whoever gets
+    // to it first.
+    for (const party of bothParties(booking)) {
+      const mail = vehicleStealRequestEmail({
+        holderName: party.name,
+        requesterName: user.name,
+        vehicleName: vehicle.name,
+        vehicleReg: vehicle.regNumber,
+        vehicleNickname: vehicle.nickname,
+        message,
+        yourFromLabel: formatDateTime(booking.takenOutAt),
+        yourToLabel: formatDateTime(booking.expectedReturnAt),
+        wantedFromLabel: formatDateTime(takenOutAt),
+        wantedToLabel: formatDateTime(expectedReturnAt),
+        approveUrl: `${base}/vehicle-bookings/request/${token}?action=approve`,
+        declineUrl: `${base}/vehicle-bookings/request/${token}?action=decline`,
+      });
+      const res = await sendMail({
+        to: party.email,
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
+      });
+      if (res.ok) delivered = true;
+    }
+  }
+
+  await logEvent({
+    action: "vehicle_booking.steal_request",
+    summary:
+      `Asked ${booking.bookedForName ?? booking.bookedByName} for ${vehicle.name} ` +
+      `(${vehicle.regNumber}) from ${formatDateTime(takenOutAt)} to ${formatDateTime(expectedReturnAt)}` +
+      (delivered ? "" : " (email failed)"),
+    actor: user,
+    entityType: "vehicle_booking",
+    entityId: bookingId,
+  });
+
+  revalidate();
+  return {
+    ok: true,
+    warning: delivered
+      ? undefined
+      : "Your request was saved, but the email didn't send — tell them in person, they can still answer it in the app.",
+  };
+}
+
+/**
+ * The holder's answer.
+ *
+ * Approving does NOT transfer the booking the way a room steal does. A room
+ * steal is always for exactly the same slot; a vehicle steal usually isn't —
+ * the holder may have it all day while the asker only wants the afternoon. So
+ * approving makes room and then books it:
+ *
+ *   - the holder's booking is shortened to end where the asker's begins, if it
+ *     started earlier. They keep the first half, and if they've already got the
+ *     vehicle the shortened deadline is what tells them to bring it back;
+ *   - if the holder's booking begins at or after the asker's start it is
+ *     entirely displaced, so it's deleted — it can only be a future
+ *     reservation, because the asker's window can't start in the past.
+ */
+export async function respondToVehicleSteal(
+  _prev: VehicleBookingState,
+  formData: FormData,
+): Promise<VehicleBookingState> {
+  const user = await requirePermission("hub.view");
+  const token = String(formData.get("token") ?? "");
+  const decision = formData.get("decision") === "approve" ? "approve" : "decline";
+  const reason = String(formData.get("reason") ?? "").trim();
+
+  if (decision === "decline" && !reason) {
+    return { error: "Please say why — they'll only see the reason you give." };
+  }
+
+  const [request] = await db
+    .select()
+    .from(vehicleStealRequests)
+    .where(eq(vehicleStealRequests.token, token))
+    .limit(1);
+  if (!request) return { error: "That request no longer exists." };
+  if (request.status !== "pending") return { error: "You've already answered this one." };
+
+  const booking = await loadBooking(request.bookingId);
+  if (!booking) return { error: "That booking no longer exists." };
+
+  // The token names the request; it does not authorise it. Only the people
+  // holding the vehicle — or whoever looks after the fleet — can answer.
+  if (!canReturnBooking(user, booking)) {
+    return { error: "Only the person who booked the vehicle can answer this." };
+  }
+  if (booking.returnedAt) {
+    return {
+      error: `${booking.vehicleName} has already been brought back, so there's nothing to hand over. Tell them to book it.`,
+    };
+  }
+
+  const base = mailConfigured() ? await appBaseUrl() : null;
+
+  if (decision === "decline") {
+    await db
+      .update(vehicleStealRequests)
+      .set({ status: "declined", declineReason: reason, respondedAt: new Date() })
+      .where(eq(vehicleStealRequests.id, request.id));
+
+    if (base) {
+      const mail = vehicleStealDeclinedEmail({
+        requesterName: request.requesterName,
+        holderName: booking.bookedForName ?? booking.bookedByName,
+        vehicleName: booking.vehicleName,
+        vehicleReg: booking.vehicleReg,
+        wantedFromLabel: formatDateTime(request.requestedFrom),
+        wantedToLabel: formatDateTime(request.requestedTo),
+        reason,
+        bookingsUrl: `${base}/vehicle-bookings`,
+      });
+      await sendMail({
+        to: request.requesterEmail,
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
+      });
+    }
+
+    await logEvent({
+      action: "vehicle_booking.steal_declined",
+      summary: `Declined ${request.requesterName}'s request for ${booking.vehicleName} (${booking.vehicleReg})`,
+      actor: user,
+      entityType: "vehicle_booking",
+      entityId: booking.id,
+    });
+
+    revalidate();
+    revalidatePath(`/vehicle-bookings/request/${token}`);
+    return { ok: true };
+  }
+
+  /* --- approved ------------------------------------------------------- */
+
+  const keepsTheFirstPart = booking.takenOutAt.getTime() < request.requestedFrom.getTime();
+
+  // Making room comes first. If the insert below fails there is no way to put
+  // this back, so it is deliberately the reversible half that goes first: a
+  // shortened booking is still a booking, and a deleted future reservation is
+  // recorded in the activity log.
+  if (keepsTheFirstPart) {
+    await db
+      .update(vehicleBookings)
+      .set({
+        expectedReturnAt: request.requestedFrom,
+        // The deadline moved, so the old nudge no longer describes it.
+        overdueRemindedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(vehicleBookings.id, booking.id));
+  } else {
+    await db.delete(vehicleBookings).where(eq(vehicleBookings.id, booking.id));
+  }
+
+  let created: { id: number };
+  try {
+    [created] = await db
+      .insert(vehicleBookings)
+      .values({
+        vehicleId: booking.vehicleId,
+        bookedByUserId: request.requesterUserId,
+        bookedByName: request.requesterName,
+        bookedByEmail: request.requesterEmail,
+        bookedForUserId: request.requestedForUserId,
+        bookedForName: request.requestedForName,
+        bookedForEmail: request.requestedForEmail,
+        takenOutAt: request.requestedFrom,
+        expectedReturnAt: request.requestedTo,
+        status: request.forService ? "servicing" : "out",
+      })
+      .returning({ id: vehicleBookings.id });
+  } catch (err) {
+    if (!isOverlapViolation(err)) throw err;
+    // Somebody else took the window while this request sat unanswered. The
+    // holder's booking has already been shortened, which is the answer they
+    // gave — so say what happened rather than pretending nothing did.
+    return {
+      error:
+        `Your booking has been shortened as you agreed, but ${booking.vehicleName} is now booked by ` +
+        `somebody else for that window, so ${request.requesterName} couldn't be given it. Tell them to book it again.`,
+    };
+  }
+
+  await db
+    .update(vehicleStealRequests)
+    .set({ status: "approved", respondedAt: new Date() })
+    .where(eq(vehicleStealRequests.id, request.id));
+
+  // Any other outstanding asks were about a booking that has now changed shape,
+  // so retire them rather than leave them answerable. (A deleted booking
+  // cascades its requests away; a shortened one doesn't.)
+  await db
+    .update(vehicleStealRequests)
+    .set({ status: "withdrawn", respondedAt: new Date() })
+    .where(
+      and(
+        eq(vehicleStealRequests.bookingId, booking.id),
+        eq(vehicleStealRequests.status, "pending"),
+        ne(vehicleStealRequests.id, request.id),
+      ),
+    );
+
+  if (base) {
+    const mail = vehicleStealApprovedEmail({
+      requesterName: request.requesterName,
+      holderName: booking.bookedForName ?? booking.bookedByName,
+      vehicleName: booking.vehicleName,
+      vehicleReg: booking.vehicleReg,
+      vehicleNickname: booking.vehicleNickname,
+      wantedFromLabel: formatDateTime(request.requestedFrom),
+      wantedToLabel: formatDateTime(request.requestedTo),
+      bookingsUrl: `${base}/vehicle-bookings`,
+    });
+    await sendMail({
+      to: request.requesterEmail,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    });
+  }
+
+  await logEvent({
+    action: "vehicle_booking.steal_approved",
+    summary:
+      `Gave ${request.requesterName} ${booking.vehicleName} (${booking.vehicleReg}) from ` +
+      `${formatDateTime(request.requestedFrom)} to ${formatDateTime(request.requestedTo)} — ` +
+      (keepsTheFirstPart
+        ? `own booking shortened to end ${formatDateTime(request.requestedFrom)}`
+        : "own booking given up entirely"),
+    actor: user,
+    entityType: "vehicle_booking",
+    entityId: created.id,
+  });
+
+  revalidate();
+  revalidatePath(`/vehicle-bookings/request/${token}`);
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
 /* Extending an open booking                                          */
 /* ------------------------------------------------------------------ */
 
@@ -372,10 +818,24 @@ export async function extendVehicleBooking(
     return { error: "The expected return has to be after the time the vehicle was taken." };
   }
 
-  await db
-    .update(vehicleBookings)
-    .set({ expectedReturnAt, overdueRemindedAt: null, updatedAt: new Date() })
-    .where(eq(vehicleBookings.id, bookingId));
+  try {
+    await db
+      .update(vehicleBookings)
+      .set({ expectedReturnAt, overdueRemindedAt: null, updatedAt: new Date() })
+      .where(eq(vehicleBookings.id, bookingId));
+  } catch (err) {
+    // Extending into somebody else's booked window. Worth its own message —
+    // "keep it longer" failing because of a constraint would otherwise read as
+    // a bug rather than as somebody else being next in the queue.
+    if (!isOverlapViolation(err)) throw err;
+    const [next] = await conflictingBookings(booking.vehicleId, booking.expectedReturnAt, expectedReturnAt);
+    return {
+      error: next
+        ? `${next.bookedForName ?? next.bookedByName} has ${booking.vehicleName} booked from ` +
+          `${formatDateTime(next.takenOutAt)}, so it can't be kept until then. Bring it back, or ask them for it.`
+        : `${booking.vehicleName} is booked by somebody else before then.`,
+    };
+  }
 
   await logEvent({
     action: "vehicle_booking.extend",
@@ -656,6 +1116,7 @@ async function loadBooking(id: number) {
       bookedForEmail: vehicleBookings.bookedForEmail,
       takenOutAt: vehicleBookings.takenOutAt,
       expectedReturnAt: vehicleBookings.expectedReturnAt,
+      returnedAt: vehicleBookings.returnedAt,
       status: vehicleBookings.status,
     })
     .from(vehicleBookings)

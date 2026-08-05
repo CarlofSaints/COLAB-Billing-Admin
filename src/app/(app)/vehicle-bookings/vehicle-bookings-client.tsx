@@ -2,13 +2,26 @@
 
 import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
-import { Car, Clock, Plus, Receipt, Search, TriangleAlert, Trash2 } from "lucide-react";
+import {
+  CalendarDays,
+  Car,
+  Clock,
+  HandHelping,
+  Plus,
+  Receipt,
+  Rows3,
+  Search,
+  TriangleAlert,
+  Trash2,
+} from "lucide-react";
 import {
   cancelVehicleBooking,
   createVehicleBooking,
   extendVehicleBooking,
+  requestVehicleSteal,
   returnVehicleBooking,
   type VehicleBookingState,
+  type VehicleConflict,
 } from "@/app/actions/vehicle-bookings";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -18,6 +31,7 @@ import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/page";
 import { Table, THead, TR, TD, SortableTH } from "@/components/ui/table";
 import { useTableSort } from "@/lib/use-table-sort";
+import { VehicleCalendar } from "./vehicle-calendar";
 import { brandFor } from "@/lib/brands";
 import { cn } from "@/lib/utils";
 import {
@@ -45,7 +59,9 @@ type FleetVehicle = {
   /** Whether this vehicle's returns have to carry odometer readings. */
   mileageRequired: boolean;
   lastMileage: number | null;
-  available: boolean;
+  /** Physically away right now. A label on the option, never a gate — a
+   *  vehicle that is out today can still be booked for next week. */
+  outNow: boolean;
 };
 
 type BookableUser = { id: number; name: string; email: string };
@@ -78,6 +94,7 @@ export type BookingRow = {
   /** Worked out on the server against its own clock — see the page query. */
   overdue: boolean;
   overdueFor: string | null;
+  barEndAt: string;
   canReturn: boolean;
   canCancel: boolean;
   canSeeReceipt: boolean;
@@ -176,17 +193,22 @@ function BookingForm({
   allUsers,
   currentUserId,
   onDone,
+  onAskFor,
 }: {
   fleet: FleetVehicle[];
   allUsers: BookableUser[];
   currentUserId: number;
   onDone: () => void;
+  /** The vehicle was taken — carry the attempt into a request for it. */
+  onAskFor: (intent: StealIntent) => void;
 }) {
   const [state, action] = useActionState<VehicleBookingState, FormData>(
     createVehicleBooking,
     {},
   );
-  const available = fleet.filter((v) => v.available);
+  // Every vehicle they may book is offered. Whether it is free for the times
+  // they picked is decided on submit, against the register.
+  const available = fleet;
   const [vehicleId, setVehicleId] = useState(available[0]?.id ?? 0);
   const [bookedForUserId, setBookedForUserId] = useState(0);
   const [forService, setForService] = useState(false);
@@ -235,6 +257,7 @@ function BookingForm({
             <option key={v.id} value={v.id}>
               {v.name}
               {v.nickname ? ` “${v.nickname}”` : ""} · {v.regNumber} · {v.companyName}
+              {v.outNow ? " · out now" : ""}
             </option>
           ))}
         </Select>
@@ -348,6 +371,48 @@ function BookingForm({
 
       {state.error && <ErrorLine message={state.error} />}
 
+      {/* Blocked, not refused. The conflict names who has it and turns into an
+          offer to ask them for it — which is the only useful next move, since
+          the alternative is guessing at another window. */}
+      {state.conflict && (
+        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+          <p className="flex items-start gap-2">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              <strong>{state.conflict.holderName}</strong>
+              {state.conflict.overdue
+                ? ` still has ${state.conflict.vehicleName} — it was due back ${state.conflict.toLabel}.`
+                : ` has ${state.conflict.vehicleName} booked from ${state.conflict.fromLabel} to ${state.conflict.toLabel}.`}
+            </span>
+          </p>
+          {state.conflict.isMine ? (
+            <p className="text-xs">
+              {`That's your own booking. Extend it from the list instead of booking it twice.`}
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() =>
+                  onAskFor({
+                    conflict: state.conflict!,
+                    vehicleId,
+                    takenOutAt: takenOn,
+                    expectedReturnAt: dueBack,
+                    bookedForUserId,
+                    forService,
+                  })
+                }
+              >
+                <HandHelping className="h-4 w-4" /> Ask {state.conflict.holderName} for it
+              </Button>
+              <span className="text-xs">Or change the times, or pick another vehicle.</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex justify-end gap-2 pt-1">
         <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
@@ -357,6 +422,84 @@ function BookingForm({
           busy="Saving…"
           disabled={!vehicleId || takenOn === "" || dueBack === "" || returnBeforeStart}
         />
+      </div>
+    </form>
+  );
+}
+
+/** Everything `requestVehicleSteal` needs, carried out of the booking form. */
+export type StealIntent = {
+  conflict: VehicleConflict;
+  vehicleId: number;
+  takenOutAt: string;
+  expectedReturnAt: string;
+  bookedForUserId: number;
+  forService: boolean;
+};
+
+/**
+ * "Can I have it?" — the message the holder will be deciding on.
+ *
+ * Deliberately a second step rather than a field on the booking form: the
+ * common case is that the vehicle is free and nobody has to write anything.
+ */
+function AskForVehicleForm({
+  intent,
+  onDone,
+}: {
+  intent: StealIntent;
+  onDone: () => void;
+}) {
+  const [state, action] = useActionState<VehicleBookingState, FormData>(
+    requestVehicleSteal,
+    {},
+  );
+
+  useEffect(() => {
+    if (state.ok) onDone();
+  }, [state.ok, onDone]);
+
+  return (
+    <form action={action} className="space-y-4">
+      <input type="hidden" name="bookingId" value={intent.conflict.bookingId} />
+      <input type="hidden" name="vehicleId" value={intent.vehicleId} />
+      <input type="hidden" name="takenOutAt" value={intent.takenOutAt} />
+      <input type="hidden" name="expectedReturnAt" value={intent.expectedReturnAt} />
+      <input type="hidden" name="bookedForUserId" value={intent.bookedForUserId} />
+      <input type="hidden" name="forService" value={intent.forService ? "yes" : "no"} />
+
+      <dl className="rounded-lg border border-line px-3 py-2.5 text-sm">
+        {[
+          ["Vehicle", intent.conflict.vehicleName],
+          ["Who has it", intent.conflict.holderName],
+          ["They have it", `${intent.conflict.fromLabel} – ${intent.conflict.toLabel}`],
+        ].map(([label, value]) => (
+          <div key={label} className="flex justify-between gap-4 py-0.5">
+            <dt className="text-muted">{label}</dt>
+            <dd className="text-right font-medium text-slate-900">{value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <Field
+        label="Why do you need it?"
+        hint={`${intent.conflict.holderName} sees this word for word, and decides on it.`}
+      >
+        <Textarea name="message" required rows={3} maxLength={500} autoFocus />
+      </Field>
+
+      <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-muted">
+        {`Nothing changes unless they agree. If they do, the vehicle is booked for you
+        automatically and their booking is shortened or given up — you'll be emailed either way.`}
+      </p>
+
+      {state.error && <ErrorLine message={state.error} />}
+
+      <div className="flex justify-end gap-2 pt-1">
+        <Button type="button" variant="ghost" onClick={onDone}>
+          Cancel
+        </Button>
+        <SubmitButton label="Send the request" busy="Sending…" />
       </div>
     </form>
   );
@@ -676,6 +819,7 @@ export function VehicleBookingsClient({
   allUsers,
   currentUserId,
   currentUserEmail,
+  todayKey,
   scope,
 }: {
   bookings: BookingRow[];
@@ -683,9 +827,14 @@ export function VehicleBookingsClient({
   allUsers: BookableUser[];
   currentUserId: number;
   currentUserEmail: string;
+  todayKey: string;
   scope: Scope;
 }) {
+  // The calendar leads, because "can I take a vehicle?" is what people open
+  // this page to find out. The list is the record, and it's one click away.
+  const [view, setView] = useState<"calendar" | "list">("calendar");
   const [booking, setBooking] = useState(false);
+  const [asking, setAsking] = useState<StealIntent | null>(null);
   const [returning, setReturning] = useState<BookingRow | null>(null);
   const [extending, setExtending] = useState<BookingRow | null>(null);
   const [viewing, setViewing] = useState<BookingRow | null>(null);
@@ -694,11 +843,33 @@ export function VehicleBookingsClient({
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
-  const anyAvailable = fleet.some((v) => v.available);
+  // Booking is never gated on the fleet being idle any more — a vehicle that is
+  // out today can be booked for next week. The only thing that stops the button
+  // is having no vehicles at all.
+  const anyAvailable = fleet.length > 0;
   const lastMileageFor = useMemo(
     () => new Map(fleet.map((v) => [v.id, v.lastMileage])),
     [fleet],
   );
+
+  // The calendar takes every trip, not the filtered list — the week it's
+  // showing is the filter, and hiding finished trips there would leave gaps
+  // that read as "the vehicle was free" when it wasn't.
+  const calendarTrips = useMemo(
+    () => bookings.map((b) => ({ ...b, startAt: b.takenOutAt, endAt: b.barEndAt })),
+    [bookings],
+  );
+
+  /**
+   * Clicking a bar does what clicking a row does: opens the return for the
+   * people who can fill it in, and the read-only detail for everyone else.
+   */
+  const openTrip = (id: number) => {
+    const found = bookings.find((b) => b.id === id);
+    if (!found) return;
+    if (found.canReturn) setReturning(found);
+    else setViewing(found);
+  };
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -777,7 +948,32 @@ export function VehicleBookingsClient({
       {cancelError && <ErrorLine message={cancelError} />}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {bookings.length > 0 && (
+        <div className="inline-flex rounded-lg border border-line p-0.5">
+          {[
+            { key: "calendar" as const, label: "Calendar", icon: CalendarDays },
+            { key: "list" as const, label: "List", icon: Rows3 },
+          ].map((v) => (
+            <button
+              key={v.key}
+              type="button"
+              onClick={() => setView(v.key)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                view === v.key
+                  ? "bg-brand-50 text-brand-700"
+                  : "text-slate-500 hover:bg-slate-50",
+              )}
+            >
+              <v.icon className="h-3.5 w-3.5" />
+              {v.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Searching and hiding finished trips belong to the list. On the
+            calendar the week is the filter, and a search box that quietly did
+            nothing would be worse than no search box. */}
+        {view === "list" && bookings.length > 0 && (
           <div className="relative max-w-xs flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
             <Input
@@ -788,22 +984,24 @@ export function VehicleBookingsClient({
             />
           </div>
         )}
-        <label className="flex items-center gap-2 text-xs text-muted">
-          <input
-            type="checkbox"
-            checked={showFinished}
-            onChange={(e) => setShowFinished(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-line text-brand-600 focus:ring-brand-100"
-          />
-          Show trips that are done
-        </label>
+        {view === "list" && (
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={showFinished}
+              onChange={(e) => setShowFinished(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-line text-brand-600 focus:ring-brand-100"
+            />
+            Show trips that are done
+          </label>
+        )}
         <Button
           className="ml-auto"
           disabled={!anyAvailable}
           title={
             anyAvailable
               ? undefined
-              : "Every vehicle you can book is already out — one has to be signed back in first."
+              : "There are no vehicles you can book."
           }
           onClick={() => setBooking(true)}
         >
@@ -811,7 +1009,22 @@ export function VehicleBookingsClient({
         </Button>
       </div>
 
-      {bookings.length === 0 ? (
+      {view === "calendar" ? (
+        fleet.length === 0 ? (
+          <EmptyState
+            icon={<Car className="h-8 w-8" />}
+            title="No vehicles to show"
+            description="There are no vehicles you can book, so there's nothing to put on a calendar."
+          />
+        ) : (
+          <VehicleCalendar
+            vehicles={fleet}
+            trips={calendarTrips}
+            todayKey={todayKey}
+            onOpen={openTrip}
+          />
+        )
+      ) : bookings.length === 0 ? (
         <EmptyState
           icon={<Car className="h-8 w-8" />}
           title="No vehicle has been booked yet"
@@ -1005,7 +1218,20 @@ export function VehicleBookingsClient({
             allUsers={allUsers}
             currentUserId={currentUserId}
             onDone={() => setBooking(false)}
+            onAskFor={(intent) => {
+              setBooking(false);
+              setAsking(intent);
+            }}
           />
+        </Modal>
+      )}
+      {asking && (
+        <Modal
+          title={`Ask ${asking.conflict.holderName} for ${asking.conflict.vehicleName}`}
+          open
+          onOpenChange={(o) => !o && setAsking(null)}
+        >
+          <AskForVehicleForm intent={asking} onDone={() => setAsking(null)} />
         </Modal>
       )}
       {returning && (

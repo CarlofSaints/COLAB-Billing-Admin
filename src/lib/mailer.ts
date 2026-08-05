@@ -25,6 +25,9 @@ export {
   vehicleBookedEmail,
   vehicleOverdueEmail,
   vehicleReturnedEmail,
+  vehicleStealApprovedEmail,
+  vehicleStealDeclinedEmail,
+  vehicleStealRequestEmail,
 } from "./email-templates";
 
 /**
