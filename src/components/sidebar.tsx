@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import {
+  Menu,
+  X,
   LayoutDashboard,
   SlidersHorizontal,
   Building2,
@@ -129,6 +132,20 @@ export function Sidebar({
   user: { name: string; email: string; roleKey: string; roleName: string; permissions: string[] };
 }) {
   const pathname = usePathname();
+  // On a phone the nav is a drawer. Closed on every navigation — otherwise
+  // tapping a link leaves the menu covering the page you just asked for.
+  //
+  // Adjusted during render rather than in an effect: this is state derived from
+  // where you are, not a side effect of arriving, and doing it in an effect
+  // renders the drawer open for a frame first. Catches the back button too,
+  // which closing it from the link's onClick would not.
+  const [open, setOpen] = useState(false);
+  const [lastPath, setLastPath] = useState(pathname);
+  if (lastPath !== pathname) {
+    setLastPath(pathname);
+    setOpen(false);
+  }
+
   const can = (perm?: string) =>
     !perm || user.roleKey === "super_admin" || user.permissions.includes(perm);
 
@@ -136,7 +153,84 @@ export function Sidebar({
     href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col bg-slate-900 text-slate-300">
+    <>
+      {/* Phone top bar. On a 390px screen a permanent 256px rail leaves 134px
+          for the page, so below `md` the nav has to get out of the way. */}
+      <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-slate-800 bg-slate-900 px-4 text-slate-300 md:hidden">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="Open the menu"
+          aria-expanded={open}
+          className="-ml-2 rounded-lg p-2 text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+        <Logo />
+        <Link
+          href="/account"
+          aria-label="My account"
+          className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-700 text-[11px] font-semibold text-white"
+        >
+          {initials(user.name)}
+        </Link>
+      </header>
+
+      {/* Tapping away closes it, which is what people expect of a drawer and is
+          the only exit on a phone with no visible close target. */}
+      {open && (
+        <div
+          className="fixed inset-0 z-40 bg-slate-900/60 md:hidden"
+          onClick={() => setOpen(false)}
+          aria-hidden
+        />
+      )}
+
+      <SidebarNav
+        user={user}
+        can={can}
+        isActive={isActive}
+        pathname={pathname}
+        open={open}
+        onClose={() => setOpen(false)}
+      />
+    </>
+  );
+}
+
+function SidebarNav({
+  user,
+  can,
+  isActive,
+  pathname,
+  open,
+  onClose,
+}: {
+  user: { name: string; roleName: string };
+  can: (perm?: string) => boolean;
+  isActive: (href: string) => boolean;
+  pathname: string;
+  open: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <aside
+      className={cn(
+        "z-50 flex w-64 shrink-0 flex-col bg-slate-900 text-slate-300",
+        // Below md it's a drawer sliding over the page; from md it's the
+        // ordinary rail the desktop layout has always had.
+        "fixed inset-y-0 left-0 transition-transform duration-200 md:static md:h-full md:translate-x-0",
+        open ? "translate-x-0" : "-translate-x-full",
+      )}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close the menu"
+        className="absolute right-2 top-4 rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white md:hidden"
+      >
+        <X className="h-5 w-5" />
+      </button>
       <div className="px-5 py-5">
         <Logo />
       </div>

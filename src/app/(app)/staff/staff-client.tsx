@@ -438,7 +438,7 @@ function StaffForm({
       <Field label="Name">
         <Input name="name" defaultValue={person?.name} required autoFocus />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Gender">
           {/* UPPERCASE to match what's stored — see normaliseGender. When
               these read "Male" they couldn't match an imported "MALE", so the
@@ -454,7 +454,7 @@ function StaffForm({
           <Input name="cellNumber" defaultValue={person?.cellNumber} />
         </Field>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Email address">
           <Input name="email" type="email" defaultValue={person?.email} />
         </Field>

@@ -860,7 +860,7 @@ function FixedItemForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field
           label={mode === "percent" ? "Total amount (excl. VAT)" : "Unit amount (excl. VAT)"}
           hint={mode === "percent" ? "The whole cost, before it's divided." : undefined}

@@ -78,7 +78,7 @@ function CompanyForm({ company, onDone }: { company?: CompanyRow; onDone: () => 
       <Field label="Company name">
         <Input name="name" defaultValue={company?.name} required autoFocus />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Registration number">
           <Input name="regNumber" defaultValue={company?.regNumber} />
         </Field>
@@ -89,7 +89,7 @@ function CompanyForm({ company, onDone }: { company?: CompanyRow; onDone: () => 
       <Field label="Registered address">
         <Textarea name="registeredAddress" defaultValue={company?.registeredAddress} />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Billing contact name">
           <Input name="contactName" defaultValue={company?.contactName} />
         </Field>
@@ -107,7 +107,7 @@ function CompanyForm({ company, onDone }: { company?: CompanyRow; onDone: () => 
           Scheduled reminders go to every contact listed here, each addressed by name.
         </p>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Second contact name">
               <Input name="contactName2" defaultValue={company?.contactName2} />
             </Field>
@@ -115,7 +115,7 @@ function CompanyForm({ company, onDone }: { company?: CompanyRow; onDone: () => 
               <Input name="contactEmail2" type="email" defaultValue={company?.contactEmail2} />
             </Field>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Third contact name">
               <Input name="contactName3" defaultValue={company?.contactName3} />
             </Field>

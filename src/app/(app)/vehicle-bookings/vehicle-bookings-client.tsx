@@ -593,11 +593,14 @@ function ReturnForm({
   booking,
   lastMileage,
   onDone,
+  onRemove,
 }: {
   booking: BookingRow;
   /** The last closing reading for this vehicle, as a sanity check. */
   lastMileage: number | null;
   onDone: () => void;
+  /** Booked by mistake — offered here so the calendar can reach it too. */
+  onRemove: (booking: BookingRow) => void;
 }) {
   const [state, action] = useActionState<VehicleBookingState, FormData>(
     returnVehicleBooking,
@@ -814,7 +817,19 @@ function ReturnForm({
 
       {state.error && <ErrorLine message={state.error} />}
 
-      <div className="flex justify-end gap-2 pt-1">
+      <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+        {/* The way to a booking made in error, for anyone who got here from the
+            calendar — where the bars are far too narrow to carry a button. */}
+        {booking.canCancel && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="mr-auto text-red-600 hover:bg-red-50"
+            onClick={() => onRemove(booking)}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Booked by mistake
+          </Button>
+        )}
         <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
         </Button>
@@ -888,6 +903,29 @@ export function VehicleBookingsClient({
     if (!found) return;
     if (found.canReturn) setReturning(found);
     else setViewing(found);
+  };
+
+  /**
+   * Removing a booking made in error. One path for all three entry points —
+   * the list's bin icon and both modals — so the confirmation and the error
+   * handling can't drift between them.
+   */
+  const removeBooking = (b: BookingRow) => {
+    if (
+      !confirm(
+        `Remove the booking of ${b.vehicleName}? Use this only if it was booked by mistake — it deletes the record rather than booking the vehicle in.`,
+      )
+    )
+      return;
+    setCancelError(null);
+    // Closing first: leaving the modal open over a row that no longer exists
+    // reads as the click having done nothing.
+    setReturning(null);
+    setViewing(null);
+    start(async () => {
+      const res = await cancelVehicleBooking(b.id);
+      if (res?.error) setCancelError(res.error);
+    });
   };
 
   const filtered = useMemo(() => {
@@ -1204,17 +1242,7 @@ export function VehicleBookingsClient({
                             title="Booked by mistake — remove it"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (
-                                !confirm(
-                                  `Remove the booking of ${b.vehicleName}? Use this only if it was booked by mistake — it deletes the record rather than booking the vehicle in.`,
-                                )
-                              )
-                                return;
-                              setCancelError(null);
-                              start(async () => {
-                                const res = await cancelVehicleBooking(b.id);
-                                if (res?.error) setCancelError(res.error);
-                              });
+                              removeBooking(b);
                             }}
                           >
                             <Trash2 className="h-3.5 w-3.5 text-slate-500" />
@@ -1263,6 +1291,7 @@ export function VehicleBookingsClient({
             booking={returning}
             lastMileage={lastMileageFor.get(returning.vehicleId) ?? null}
             onDone={() => setReturning(null)}
+            onRemove={removeBooking}
           />
         </Modal>
       )}
@@ -1281,7 +1310,11 @@ export function VehicleBookingsClient({
           open
           onOpenChange={(o) => !o && setViewing(null)}
         >
-          <TripDetail booking={viewing} onDone={() => setViewing(null)} />
+          <TripDetail
+            booking={viewing}
+            onDone={() => setViewing(null)}
+            onRemove={removeBooking}
+          />
         </Modal>
       )}
     </div>
@@ -1295,7 +1328,15 @@ export function VehicleBookingsClient({
  * becoming unreadable, so they live here — reachable by clicking any row that
  * isn't yours to fill in.
  */
-function TripDetail({ booking, onDone }: { booking: BookingRow; onDone: () => void }) {
+function TripDetail({
+  booking,
+  onDone,
+  onRemove,
+}: {
+  booking: BookingRow;
+  onDone: () => void;
+  onRemove: (booking: BookingRow) => void;
+}) {
   const diff = mileageDifference(booking.openingMileage, booking.closingMileage);
   const rows: [string, string][] = [
     ["Driver", booking.bookedForName ?? booking.bookedByName],
@@ -1389,7 +1430,17 @@ function TripDetail({ booking, onDone }: { booking: BookingRow; onDone: () => vo
           </p>
         ))}
 
-      <div className="flex justify-end pt-1">
+      <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+        {booking.canCancel && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="mr-auto text-red-600 hover:bg-red-50"
+            onClick={() => onRemove(booking)}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Booked by mistake
+          </Button>
+        )}
         <Button type="button" variant="ghost" onClick={onDone}>
           Close
         </Button>
