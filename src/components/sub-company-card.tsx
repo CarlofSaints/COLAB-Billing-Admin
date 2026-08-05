@@ -1,6 +1,21 @@
 import Link from "next/link";
 import { brandFor } from "@/lib/brands";
+import { percentLabel } from "@/lib/shares";
 import { cn, formatCurrency } from "@/lib/utils";
+
+/**
+ * The share of the whole this line represents, in brackets after the figure.
+ *
+ * Lighter and smaller than the number it follows: the figure is the fact, the
+ * percentage is the context, and a card with ten equally-weighted numbers on it
+ * is a card nobody reads. Renders nothing at all when there's no total to take
+ * a share of, rather than "(0%)" on every line of a quiet month.
+ */
+function Share({ of }: { of?: number | null }) {
+  const label = percentLabel(of);
+  if (!label) return null;
+  return <span className="ml-0.5 font-normal tabular-nums text-slate-400">{label}</span>;
+}
 
 /**
  * Branded tile for a sub-company — colour accent + name + tagline, matching the
@@ -14,6 +29,7 @@ export function SubCompanyCard({
   fixedItems,
   rent,
   otherExpenses,
+  shares,
   className,
 }: {
   name: string;
@@ -29,6 +45,19 @@ export function SubCompanyCard({
   rent?: number;
   /** Everything else billed monthly (currently the fixed line items). */
   otherExpenses?: number;
+  /**
+   * This company's share of each line across all the sub-companies, as whole
+   * percentages. Worked out together on the dashboard rather than per card,
+   * because they're only meaningful as a set — see `percentShares`, which makes
+   * the column add to exactly 100.
+   */
+  shares?: {
+    staff?: number | null;
+    sqm?: number | null;
+    rent?: number | null;
+    other?: number | null;
+    total?: number | null;
+  };
   className?: string;
 }) {
   const brand = brandFor(name);
@@ -72,7 +101,7 @@ export function SubCompanyCard({
           <div className="flex items-center justify-between">
             <span className="text-muted">Team</span>
             <span className="font-medium text-slate-700">
-              {staffCount} {staffCount === 1 ? "person" : "people"}
+              {staffCount} {staffCount === 1 ? "person" : "people"} <Share of={shares?.staff} />
             </span>
           </div>
         )}
@@ -80,7 +109,7 @@ export function SubCompanyCard({
           <div className="flex items-center justify-between">
             <span className="text-muted">Occupied space</span>
             <span className="font-medium text-slate-700">
-              {sqm.toLocaleString()} m²
+              {sqm.toLocaleString()} m² <Share of={shares?.sqm} />
             </span>
           </div>
         )}
@@ -92,7 +121,7 @@ export function SubCompanyCard({
             <div className="flex items-center justify-between">
               <span className="text-muted">Rent</span>
               <span className="font-semibold text-slate-900">
-                {rent > 0 ? formatCurrency(rent) : "—"}
+                {rent > 0 ? formatCurrency(rent) : "—"} <Share of={shares?.rent} />
               </span>
             </div>
           )}
@@ -101,7 +130,8 @@ export function SubCompanyCard({
               <div className="flex items-center justify-between">
                 <span className="text-muted">Other expenses</span>
                 <span className="font-semibold text-slate-900">
-                  {otherExpenses > 0 ? formatCurrency(otherExpenses) : "—"}
+                  {otherExpenses > 0 ? formatCurrency(otherExpenses) : "—"}{" "}
+                  <Share of={shares?.other} />
                 </span>
               </div>
               {fixedItems && fixedItems.length > 0 && (
@@ -132,7 +162,7 @@ export function SubCompanyCard({
             <div className="flex items-center justify-between border-t border-line pt-1.5">
               <span className="font-medium text-slate-700">Total for the month</span>
               <span className="font-bold text-slate-900">
-                {formatCurrency(rent + otherExpenses)}
+                {formatCurrency(rent + otherExpenses)} <Share of={shares?.total} />
               </span>
             </div>
           )}

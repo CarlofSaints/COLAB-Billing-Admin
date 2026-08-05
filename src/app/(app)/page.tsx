@@ -17,6 +17,7 @@ import { buildPreview } from "@/lib/invoice-engine";
 import { fixedAllocationAmount, fixedAllocationLabel } from "@/lib/billing-calc";
 import { loadFixedAllocations } from "@/lib/tag-billing";
 import { defaultPeriod, isPeriod, periodLabel, recentPeriods } from "@/lib/periods";
+import { percentShares } from "@/lib/shares";
 import { Card, CardContent } from "@/components/ui/card";
 import { SubCompanyCard } from "@/components/sub-company-card";
 import { MonthFilter } from "@/components/month-filter";
@@ -132,6 +133,26 @@ export default async function Dashboard({
     otherByCompany.set(c.companyId, (otherByCompany.get(c.companyId) ?? 0) + c.total);
   }
 
+  /*
+   * Each card's share of the whole, so the row can be read across at a glance.
+   *
+   * Worked out here rather than inside the card because a share only means
+   * anything against the others: `percentShares` hands out the leftover points
+   * by largest remainder, so the column adds to exactly 100 instead of to 99 or
+   * 101 — which is the first thing anyone notices on a billing dashboard.
+   *
+   * The denominator is the FOUR SUB-COMPANIES, not the whole business. COLAB
+   * itself has no card here, so including it would leave four cards that
+   * visibly don't add up.
+   */
+  const staffShares = percentShares(subCompanies.map((c) => staffByCompany.get(c.id) ?? 0));
+  const sqmShares = percentShares(subCompanies.map((c) => sqmByCompany.get(c.id) ?? 0));
+  const rentShares = percentShares(subCompanies.map((c) => rentByCompany.get(c.id) ?? 0));
+  const otherShares = percentShares(subCompanies.map((c) => otherByCompany.get(c.id) ?? 0));
+  const totalShares = percentShares(
+    subCompanies.map((c) => (rentByCompany.get(c.id) ?? 0) + (otherByCompany.get(c.id) ?? 0)),
+  );
+
   const stats = [
     { label: "Sub-Companies", value: companyCount?.n ?? 0, icon: Building2, href: "/companies", perm: "companies.view" },
     { label: "Team Members", value: staffCount?.n ?? 0, icon: Users, href: "/staff", perm: "staff.view" },
@@ -204,7 +225,7 @@ export default async function Dashboard({
             </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {subCompanies.map((c) => (
+            {subCompanies.map((c, i) => (
               <SubCompanyCard
                 key={c.id}
                 name={c.name}
@@ -214,6 +235,13 @@ export default async function Dashboard({
                 fixedItems={fixedByCompany.get(c.id) ?? []}
                 rent={rentByCompany.get(c.id) ?? 0}
                 otherExpenses={otherByCompany.get(c.id) ?? 0}
+                shares={{
+                  staff: staffShares[i],
+                  sqm: sqmShares[i],
+                  rent: rentShares[i],
+                  other: otherShares[i],
+                  total: totalShares[i],
+                }}
               />
             ))}
           </div>
