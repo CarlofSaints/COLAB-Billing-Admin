@@ -15,6 +15,7 @@ import {
   type MailProvider,
 } from "@/lib/mailer";
 import { storeIssuePhoto } from "@/lib/issue-photo";
+import { extraRecipients } from "@/lib/notifications";
 import { resolveCategory, resolvePlace } from "@/lib/issue-lists";
 
 /**
@@ -157,13 +158,19 @@ export async function reportIssuePublic(
     entityId: row.id,
   });
 
-  // Notify all active directors + admins, same as the signed-in path.
+  // Notify all active directors + admins, plus whoever the Notifications page
+  // says to copy — same as the signed-in path. An issue reported off a sticker
+  // has to reach exactly the same people as one reported from a desk, or the
+  // organiser hears about half of what happens in the office.
   if (mailConfigured()) {
-    const recipients = await db
+    const byRole = await db
       .select({ email: users.email })
       .from(users)
       .innerJoin(roles, eq(users.roleId, roles.id))
       .where(and(eq(users.active, true), inArray(roles.key, ["super_admin", "director", "admin"])));
+
+    const extra = await extraRecipients("issue_reported", byRole.map((r) => r.email));
+    const recipients = [...byRole, ...extra.map((e) => ({ email: e.email }))];
 
     if (recipients.length > 0) {
       const mail = issueReportedEmail({

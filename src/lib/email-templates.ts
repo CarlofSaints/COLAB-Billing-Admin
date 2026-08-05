@@ -1009,8 +1009,13 @@ function tripLines(trip: VehicleTrip): string[] {
 export function vehicleBookedEmail(
   input: VehicleTrip & {
     name: string;
-    /** True when this copy is going to the driver rather than the booker. */
-    forDriver: boolean;
+    /**
+     * Whose copy this is. "observer" is somebody copied in because of a
+     * notification setting — they neither booked it nor are driving it, so
+     * both of the other openings ("You've booked…", "X has booked it for you")
+     * would be plainly wrong.
+     */
+    audience: "booker" | "driver" | "observer";
     forService: boolean;
     /** Why the vehicle is being taken, if they said. */
     purpose: string | null;
@@ -1019,13 +1024,20 @@ export function vehicleBookedEmail(
   const title = tripTitle(input);
   const subject = `${input.vehicleName} is booked — due back ${input.expectedReturnLabel}`;
 
-  const opening = input.forDriver
-    ? `<strong>${escapeHtml(input.bookedByName)}</strong> has booked ${escapeHtml(title)} for you.`
-    : `You've booked ${escapeHtml(title)}${
-        input.bookedByName !== input.driverName
-          ? ` for <strong>${escapeHtml(input.driverName)}</strong>`
-          : ""
-      }.`;
+  const opening =
+    input.audience === "driver"
+      ? `<strong>${escapeHtml(input.bookedByName)}</strong> has booked ${escapeHtml(title)} for you.`
+      : input.audience === "observer"
+        ? `<strong>${escapeHtml(input.bookedByName)}</strong> has booked ${escapeHtml(title)}${
+            input.bookedByName !== input.driverName
+              ? ` for <strong>${escapeHtml(input.driverName)}</strong>`
+              : ""
+          }.`
+        : `You've booked ${escapeHtml(title)}${
+            input.bookedByName !== input.driverName
+              ? ` for <strong>${escapeHtml(input.driverName)}</strong>`
+              : ""
+          }.`;
 
   const html = emailShell({
     preheader: `Due back ${input.expectedReturnLabel}.`,
@@ -1040,32 +1052,52 @@ export function vehicleBookedEmail(
       ...(input.forService
         ? [note("This one is going in for a service, so it shows as being at the workshop.")]
         : []),
-      p(
-        "Nothing else is needed now — the mileage, the fuel and anything you spent are all filled in when the vehicle comes back.",
-      ),
+      ...(input.audience === "observer"
+        ? [
+            p(
+              "You're copied on this because of the notification settings — there's nothing for you to do.",
+            ),
+          ]
+        : [
+            p(
+              "Nothing else is needed now — the mileage, the fuel and anything you spent are all filled in when the vehicle comes back.",
+            ),
+          ]),
       button(input.bookingsUrl, "Open vehicle bookings"),
-      note(
-        "If you're going to be later than the time above, open the booking and extend it — otherwise you'll both get a reminder.",
-      ),
+      ...(input.audience === "observer"
+        ? []
+        : [
+            note(
+              "If you're going to be later than the time above, open the booking and extend it — otherwise you'll both get a reminder.",
+            ),
+          ]),
     ].join(""),
   });
 
   const text = [
     `Hi ${input.name},`,
     "",
-    input.forDriver
+    input.audience === "driver"
       ? `${input.bookedByName} has booked ${title} for you.`
-      : `You've booked ${title}${input.bookedByName !== input.driverName ? ` for ${input.driverName}` : ""}.`,
+      : input.audience === "observer"
+        ? `${input.bookedByName} has booked ${title}${input.bookedByName !== input.driverName ? ` for ${input.driverName}` : ""}.`
+        : `You've booked ${title}${input.bookedByName !== input.driverName ? ` for ${input.driverName}` : ""}.`,
     "",
     ...tripLines(input),
     ...(input.purpose ? ["", `What it's for: ${input.purpose}`] : []),
     ...(input.forService ? ["", "Going in for a service."] : []),
     "",
-    "Nothing else is needed now — the mileage, the fuel and anything you spent are filled in when the vehicle comes back.",
+    input.audience === "observer"
+      ? "You're copied on this because of the notification settings — there's nothing for you to do."
+      : "Nothing else is needed now — the mileage, the fuel and anything you spent are filled in when the vehicle comes back.",
     "",
     input.bookingsUrl,
-    "",
-    "If you're going to be later than the time above, open the booking and extend it — otherwise you'll both get a reminder.",
+    ...(input.audience === "observer"
+      ? []
+      : [
+          "",
+          "If you're going to be later than the time above, open the booking and extend it — otherwise you'll both get a reminder.",
+        ]),
   ].join("\n");
 
   return { subject, html, text };
@@ -1084,6 +1116,12 @@ export function vehicleOverdueEmail(
     name: string;
     /** "3 hours ago" — how late, in the words the reader would use. */
     overdueLabel: string;
+    /**
+     * Copied in by a notification setting rather than holding the vehicle. The
+     * two ways out ("sign it in", "extend it") are things only the holder can
+     * do, so telling an observer to do them would just be confusing.
+     */
+    forObserver?: boolean;
   },
 ) {
   const title = tripTitle(input);
@@ -1098,10 +1136,14 @@ export function vehicleOverdueEmail(
         `${escapeHtml(title)} was due back <strong>${escapeHtml(input.expectedReturnLabel)}</strong>, which was ${escapeHtml(input.overdueLabel)}, and it hasn't been signed in yet.`,
       ),
       detailTable(tripRows(input)),
-      p(
-        "Two ways to sort this out: sign the vehicle back in if it's back, or extend the booking if you still have it. Until one of those happens nobody else can book it.",
-      ),
-      button(input.bookingsUrl, "Sign it in or extend"),
+      input.forObserver
+        ? p(
+            `Until ${escapeHtml(input.driverName)} signs it back in or extends the booking, nobody else can book it. You're copied on this because of the notification settings.`,
+          )
+        : p(
+            "Two ways to sort this out: sign the vehicle back in if it's back, or extend the booking if you still have it. Until one of those happens nobody else can book it.",
+          ),
+      button(input.bookingsUrl, input.forObserver ? "Open vehicle bookings" : "Sign it in or extend"),
       note("You'll get one of these a day until the vehicle is signed back in."),
     ].join(""),
   });
@@ -1113,8 +1155,9 @@ export function vehicleOverdueEmail(
     "",
     ...tripLines(input),
     "",
-    "Sign the vehicle back in if it's back, or extend the booking if you still have it.",
-    "Until one of those happens nobody else can book it.",
+    input.forObserver
+      ? `Until ${input.driverName} signs it back in or extends the booking, nobody else can book it.`
+      : "Sign the vehicle back in if it's back, or extend the booking if you still have it.\nUntil one of those happens nobody else can book it.",
     "",
     input.bookingsUrl,
     "",

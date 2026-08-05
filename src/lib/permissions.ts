@@ -90,6 +90,16 @@ export const PERMISSIONS: PermissionDef[] = [
   // User tags
   { key: "tags.manage", label: "Manage user tags", category: "User Tags", sort: 146 },
 
+  // Who else gets told when something happens. Kept apart from groups.manage:
+  // that's the right to define a group, this is the right to point a
+  // notification at one, and the second is the more consequential of the two.
+  {
+    key: "notifications.manage",
+    label: "Choose who else is emailed about bookings and issues",
+    category: "Notifications",
+    sort: 147,
+  },
+
   // Reception rota. Viewing is for everyone — the desk rota is something the
   // whole office needs to be able to look up; editing it is not.
   { key: "reception.view", label: "View the reception rota", category: "Reception", sort: 146 },
@@ -224,6 +234,7 @@ const ADMIN_PERMISSIONS = [
   "tasks.view",
   "tasks.manage",
   "tags.manage",
+  "notifications.manage",
   "reception.view",
   "reception.manage",
   "issues.manage",

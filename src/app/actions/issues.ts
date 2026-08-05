@@ -15,6 +15,7 @@ import {
   type MailProvider,
 } from "@/lib/mailer";
 import { storeIssuePhoto } from "@/lib/issue-photo";
+import { extraRecipients } from "@/lib/notifications";
 import { resolveCategory, resolvePlace } from "@/lib/issue-lists";
 
 export type ReportState = { error?: string; ok?: boolean; note?: string };
@@ -62,10 +63,11 @@ export async function reportIssue(_prev: ReportState, formData: FormData): Promi
     entityId: row.id,
   });
 
-  // Notify all active directors + admins (super admins included).
+  // Notify all active directors + admins (super admins included), plus whoever
+  // the Notifications page says to copy.
   let note: string | undefined;
   if (mailConfigured()) {
-    const recipients = await db
+    const byRole = await db
       .select({ email: users.email })
       .from(users)
       .innerJoin(roles, eq(users.roleId, roles.id))
@@ -75,6 +77,12 @@ export async function reportIssue(_prev: ReportState, formData: FormData): Promi
           inArray(roles.key, ["super_admin", "director", "admin"]),
         ),
       );
+
+    // Added to the role-based list, never instead of it — an organiser who is
+    // also an admin still gets exactly one copy.
+    const extra = await extraRecipients("issue_reported", byRole.map((r) => r.email));
+    const recipients = [...byRole, ...extra.map((e) => ({ email: e.email }))];
+
     if (recipients.length > 0) {
       const mail = issueReportedEmail({
         category,

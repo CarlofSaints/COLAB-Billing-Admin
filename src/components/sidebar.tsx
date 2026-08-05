@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
+  Bell,
   Menu,
   X,
   LayoutDashboard,
@@ -112,6 +113,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { href: "/admin-tasks", label: "Admin Tasks", icon: ListChecks, perm: "tasks.view" },
       { href: "/tags", label: "Tags", icon: Tag, perm: "tags.manage" },
+      { href: "/notifications", label: "Notifications", icon: Bell, perm: "notifications.manage" },
       { href: "/users", label: "Users", icon: UserCog, perm: "users.view" },
       {
         href: "/signup-requests",

@@ -3,6 +3,7 @@ import { and, asc, eq, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { companies, vehicleBookings, vehicles } from "@/db/schema";
 import { appBaseUrl, mailConfigured, sendMail, vehicleOverdueEmail } from "@/lib/mailer";
+import { extraRecipients } from "@/lib/notifications";
 import { formatDateTime, overdueLabel } from "@/lib/vehicle-bookings";
 
 /**
@@ -104,6 +105,27 @@ export async function runVehicleOverdueReminders(
       const mail = vehicleOverdueEmail({ ...trip, name, overdueLabel: late });
       const res = await sendMail({
         to: email,
+        subject: mail.subject,
+        html: mail.html,
+        text: mail.text,
+      });
+      if (res.ok) {
+        sent += 1;
+        anySent = true;
+      }
+    }
+
+    // Whoever the Notifications page says to copy. Their version drops the
+    // "sign it in or extend it" instruction — only the holder can do either.
+    for (const extra of await extraRecipients("vehicle_overdue", [...recipients.keys()])) {
+      const mail = vehicleOverdueEmail({
+        ...trip,
+        name: extra.name,
+        overdueLabel: late,
+        forObserver: true,
+      });
+      const res = await sendMail({
+        to: extra.email,
         subject: mail.subject,
         html: mail.html,
         text: mail.text,

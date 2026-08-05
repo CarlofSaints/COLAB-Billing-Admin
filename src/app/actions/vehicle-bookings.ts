@@ -19,6 +19,7 @@ import {
   vehicleStealDeclinedEmail,
   vehicleStealRequestEmail,
 } from "@/lib/mailer";
+import { extraRecipients } from "@/lib/notifications";
 import { storePrivatePhoto } from "@/lib/private-photo";
 import {
   assertCanBookVehicle,
@@ -419,15 +420,29 @@ async function sendBookedEmails(booking: {
     bookingsUrl: `${base}/vehicle-bookings`,
   };
 
-  for (const party of bothParties(booking)) {
+  const parties = bothParties(booking);
+  for (const party of parties) {
     const mail = vehicleBookedEmail({
       ...trip,
       name: party.name,
-      forDriver: party.isDriver && booking.bookedForEmail != null,
+      audience: party.isDriver && booking.bookedForEmail != null ? "driver" : "booker",
       forService: booking.forService,
       purpose: booking.purpose,
     });
     await sendMail({ to: party.email, subject: mail.subject, html: mail.html, text: mail.text });
+  }
+
+  // Whoever the Notifications page says to copy — minus anyone above, so the
+  // organiser who booked the vehicle themselves gets one email, not two.
+  for (const extra of await extraRecipients("vehicle_booked", parties.map((p) => p.email))) {
+    const mail = vehicleBookedEmail({
+      ...trip,
+      name: extra.name,
+      audience: "observer",
+      forService: booking.forService,
+      purpose: booking.purpose,
+    });
+    await sendMail({ to: extra.email, subject: mail.subject, html: mail.html, text: mail.text });
   }
 }
 
@@ -1040,7 +1055,15 @@ async function sendReturnedEmails(
     bookingsUrl: `${base}/vehicle-bookings`,
   };
 
-  for (const party of bothParties(booking)) {
+  const parties = bothParties(booking);
+  // The return email is already a third-person report of what was recorded, so
+  // an observer's copy is word-for-word the same one.
+  const audience = [
+    ...parties,
+    ...(await extraRecipients("vehicle_returned", parties.map((p) => p.email))),
+  ];
+
+  for (const party of audience) {
     const mail = vehicleReturnedEmail({
       ...trip,
       name: party.name,
@@ -1118,7 +1141,12 @@ export async function cancelVehicleBooking(bookingId: number): Promise<VehicleBo
       expectedReturnLabel: formatDateTime(booking.expectedReturnAt),
       bookingsUrl: `${base}/vehicle-bookings`,
     };
-    for (const party of bothParties(booking)) {
+    const parties = bothParties(booking);
+    const audience = [
+      ...parties,
+      ...(await extraRecipients("vehicle_cancelled", parties.map((p) => p.email))),
+    ];
+    for (const party of audience) {
       const mail = vehicleBookingCancelledEmail({
         ...trip,
         name: party.name,
