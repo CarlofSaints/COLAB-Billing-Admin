@@ -946,75 +946,283 @@ export function roomStealDeclinedEmail(input: {
   return { subject, html, text };
 }
 
+
 /* ------------------------------------------------------------------ */
 /* Vehicle bookings                                                   */
 /* ------------------------------------------------------------------ */
 
 /**
- * The one-time code for signing a vehicle back in.
+ * Everything a vehicle email says about which trip it's about.
  *
- * Carries the readings it is about, so the code is never approving something
- * unseen — if the mileage in the email isn't what the person just typed, that
- * is the moment to notice. Deliberately has no button and no link: this email
- * is a code to type back into a page already open, and a link would train
- * people to click their way into a sign-in prompt from an email.
+ * Shared by all three, because the booking confirmation, the overdue nudge and
+ * the return confirmation are read as a set — the same trip described three
+ * different ways would make them hard to match up in an inbox.
  */
-export function vehicleReturnOtpEmail(input: {
-  name: string;
-  code: string;
+type VehicleTrip = {
   vehicleName: string;
   vehicleReg: string;
-  /** Null on a vehicle whose odometer readings are switched off. */
-  closingMileage: number | null;
-  closingFuelLabel: string;
-  distanceLabel: string | null;
-  minutesValid: number;
-}) {
-  const subject = `${input.code} is your code to sign in ${input.vehicleName}`;
+  vehicleNickname?: string | null;
+  /** Who is actually taking it. The booker, unless it was booked for someone. */
+  driverName: string;
+  bookedByName: string;
+  takenOnLabel: string;
+  expectedReturnLabel: string;
+  bookingsUrl: string;
+};
 
-  // The table is here so the reader can check the numbers they typed before
-  // spending the code. A row with no number in it can't be checked, so it's
-  // left out rather than filled with a dash.
-  const readings: [string, string][] = [
-    ...(input.closingMileage != null
-      ? ([["Closing mileage", escapeHtml(String(input.closingMileage))]] as [string, string][])
+function tripTitle(trip: VehicleTrip): string {
+  return `${trip.vehicleName}${trip.vehicleNickname ? ` “${trip.vehicleNickname}”` : ""} (${trip.vehicleReg})`;
+}
+
+/** The rows every vehicle email leads with, in the order they'd be said aloud. */
+function tripRows(trip: VehicleTrip): [string, string][] {
+  return [
+    ["Vehicle", escapeHtml(tripTitle(trip))],
+    ["Driver", escapeHtml(trip.driverName)],
+    // Only worth a row when it's news: "booked by Jane, driven by Jane" is noise.
+    ...(trip.bookedByName !== trip.driverName
+      ? ([["Booked by", escapeHtml(trip.bookedByName)]] as [string, string][])
       : []),
-    ...(input.distanceLabel
-      ? ([["Distance travelled", escapeHtml(input.distanceLabel)]] as [string, string][])
-      : []),
-    ["Fuel on return", escapeHtml(input.closingFuelLabel)],
+    ["Taken on", escapeHtml(trip.takenOnLabel)],
+    ["Due back", escapeHtml(trip.expectedReturnLabel)],
   ];
+}
+
+function tripLines(trip: VehicleTrip): string[] {
+  return [
+    `Vehicle: ${tripTitle(trip)}`,
+    `Driver: ${trip.driverName}`,
+    ...(trip.bookedByName !== trip.driverName ? [`Booked by: ${trip.bookedByName}`] : []),
+    `Taken on: ${trip.takenOnLabel}`,
+    `Due back: ${trip.expectedReturnLabel}`,
+  ];
+}
+
+/**
+ * "The vehicle is booked" — to whoever booked it and, when they're different
+ * people, to whoever is actually driving it.
+ *
+ * Addressed by name and led by the driver, because the common case for the
+ * second recipient is that somebody else arranged this on their behalf and this
+ * email is the first they've heard of it.
+ */
+export function vehicleBookedEmail(
+  input: VehicleTrip & {
+    name: string;
+    /** True when this copy is going to the driver rather than the booker. */
+    forDriver: boolean;
+    forService: boolean;
+  },
+) {
+  const title = tripTitle(input);
+  const subject = `${input.vehicleName} is booked — due back ${input.expectedReturnLabel}`;
+
+  const opening = input.forDriver
+    ? `<strong>${escapeHtml(input.bookedByName)}</strong> has booked ${escapeHtml(title)} for you.`
+    : `You've booked ${escapeHtml(title)}${
+        input.bookedByName !== input.driverName
+          ? ` for <strong>${escapeHtml(input.driverName)}</strong>`
+          : ""
+      }.`;
 
   const html = emailShell({
-    preheader: `Your code is ${input.code} — it expires in ${input.minutesValid} minutes.`,
-    eyebrow: "Vehicle sign-in",
+    preheader: `Due back ${input.expectedReturnLabel}.`,
+    eyebrow: "Vehicle booked",
     heading: `Hi ${input.name},`,
     content: [
+      p(opening),
+      detailTable(tripRows(input)),
+      ...(input.forService
+        ? [note("This one is going in for a service, so it shows as being at the workshop.")]
+        : []),
       p(
-        `You're signing <strong>${escapeHtml(input.vehicleName)}</strong> (${escapeHtml(input.vehicleReg)}) back in. Enter this code on the vehicle bookings page to finish:`,
+        "Nothing else is needed now — the mileage, the fuel and anything you spent are all filled in when the vehicle comes back.",
       ),
-      codeValue(input.code),
-      p(`The code expires in ${input.minutesValid} minutes.`),
-      detailTable(readings),
+      button(input.bookingsUrl, "Open vehicle bookings"),
       note(
-        "If those readings aren't the ones you entered, don't use the code — go back to the booking and check.",
+        "If you're going to be later than the time above, open the booking and extend it — otherwise you'll both get a reminder.",
       ),
-      note("If you weren't signing a vehicle in, ignore this email and tell the COLAB office."),
     ].join(""),
   });
 
   const text = [
     `Hi ${input.name},`,
     "",
-    `Your code to sign ${input.vehicleName} (${input.vehicleReg}) back in is: ${input.code}`,
-    `It expires in ${input.minutesValid} minutes.`,
+    input.forDriver
+      ? `${input.bookedByName} has booked ${title} for you.`
+      : `You've booked ${title}${input.bookedByName !== input.driverName ? ` for ${input.driverName}` : ""}.`,
     "",
-    ...(input.closingMileage != null ? [`Closing mileage: ${input.closingMileage}`] : []),
+    ...tripLines(input),
+    ...(input.forService ? ["", "Going in for a service."] : []),
+    "",
+    "Nothing else is needed now — the mileage, the fuel and anything you spent are filled in when the vehicle comes back.",
+    "",
+    input.bookingsUrl,
+    "",
+    "If you're going to be later than the time above, open the booking and extend it — otherwise you'll both get a reminder.",
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
+ * "It was due back and it isn't" — sent once the expected return time passes,
+ * then once a day while the vehicle is still out.
+ *
+ * Offers both answers, because being late is usually not the problem: the
+ * problem is that the vehicle reads as unavailable to everyone else, and
+ * extending the booking fixes that as well as returning it does.
+ */
+export function vehicleOverdueEmail(
+  input: VehicleTrip & {
+    name: string;
+    /** "3 hours ago" — how late, in the words the reader would use. */
+    overdueLabel: string;
+  },
+) {
+  const title = tripTitle(input);
+  const subject = `${input.vehicleName} was due back ${input.overdueLabel}`;
+
+  const html = emailShell({
+    preheader: "Sign it back in, or extend the booking.",
+    eyebrow: "Vehicle overdue",
+    heading: `Hi ${input.name},`,
+    content: [
+      p(
+        `${escapeHtml(title)} was due back <strong>${escapeHtml(input.expectedReturnLabel)}</strong>, which was ${escapeHtml(input.overdueLabel)}, and it hasn't been signed in yet.`,
+      ),
+      detailTable(tripRows(input)),
+      p(
+        "Two ways to sort this out: sign the vehicle back in if it's back, or extend the booking if you still have it. Until one of those happens nobody else can book it.",
+      ),
+      button(input.bookingsUrl, "Sign it in or extend"),
+      note("You'll get one of these a day until the vehicle is signed back in."),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.name},`,
+    "",
+    `${title} was due back ${input.expectedReturnLabel}, which was ${input.overdueLabel}, and it hasn't been signed in yet.`,
+    "",
+    ...tripLines(input),
+    "",
+    "Sign the vehicle back in if it's back, or extend the booking if you still have it.",
+    "Until one of those happens nobody else can book it.",
+    "",
+    input.bookingsUrl,
+    "",
+    "You'll get one of these a day until the vehicle is signed back in.",
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
+ * "It's back" — the receipt for a completed trip, to the same two people.
+ *
+ * Quotes what was recorded rather than just confirming, so a wrong reading gets
+ * spotted by the person who took it while they still remember the number.
+ */
+export function vehicleReturnedEmail(
+  input: VehicleTrip & {
+    name: string;
+    returnedLabel: string;
+    /** Pre-formatted so this file never has to know about km or rands. */
+    openingMileageLabel: string | null;
+    closingMileageLabel: string | null;
+    distanceLabel: string | null;
+    openingFuelLabel: string;
+    closingFuelLabel: string;
+    notes: string | null;
+    refuel: { paidByLabel: string; amountLabel: string; hasReceipt: boolean } | null;
+    signedInByName: string;
+  },
+) {
+  const title = tripTitle(input);
+  const subject = `${input.vehicleName} is back`;
+
+  const rows: [string, string][] = [
+    ["Vehicle", escapeHtml(title)],
+    ["Driver", escapeHtml(input.driverName)],
+    ["Taken on", escapeHtml(input.takenOnLabel)],
+    ["Returned", escapeHtml(input.returnedLabel)],
+    // The readings are left out entirely on a vehicle that doesn't track
+    // mileage, rather than shown as dashes.
+    ...(input.openingMileageLabel
+      ? ([["Opening mileage", escapeHtml(input.openingMileageLabel)]] as [string, string][])
+      : []),
+    ...(input.closingMileageLabel
+      ? ([["Closing mileage", escapeHtml(input.closingMileageLabel)]] as [string, string][])
+      : []),
+    ...(input.distanceLabel
+      ? ([["Distance travelled", escapeHtml(input.distanceLabel)]] as [string, string][])
+      : []),
+    ["Fuel out / back", escapeHtml(`${input.openingFuelLabel} → ${input.closingFuelLabel}`)],
+    ...(input.refuel
+      ? ([
+          ["Fuel bought", escapeHtml(`${input.refuel.amountLabel}, ${input.refuel.paidByLabel}`)],
+        ] as [string, string][])
+      : []),
+  ];
+
+  const html = emailShell({
+    preheader: `Signed back in ${input.returnedLabel}.`,
+    eyebrow: "Vehicle returned",
+    heading: `Hi ${input.name},`,
+    content: [
+      p(
+        `${escapeHtml(title)} has been signed back in${
+          input.signedInByName !== input.driverName
+            ? ` by <strong>${escapeHtml(input.signedInByName)}</strong>`
+            : ""
+        }. Here's what was recorded:`,
+      ),
+      detailTable(rows),
+      ...(input.notes ? [p("Notes left on the trip:"), quote(escapeHtml(input.notes))] : []),
+      ...(input.refuel
+        ? [
+            note(
+              input.refuel.hasReceipt
+                ? "A photo of the fuel receipt is on the booking."
+                : "No photo of the fuel receipt was attached.",
+            ),
+          ]
+        : []),
+      button(input.bookingsUrl, "Open vehicle bookings"),
+      note("If any of these figures look wrong, tell whoever looks after the fleet."),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${input.name},`,
+    "",
+    `${title} has been signed back in${input.signedInByName !== input.driverName ? ` by ${input.signedInByName}` : ""}.`,
+    "",
+    `Vehicle: ${title}`,
+    `Driver: ${input.driverName}`,
+    `Taken on: ${input.takenOnLabel}`,
+    `Returned: ${input.returnedLabel}`,
+    ...(input.openingMileageLabel ? [`Opening mileage: ${input.openingMileageLabel}`] : []),
+    ...(input.closingMileageLabel ? [`Closing mileage: ${input.closingMileageLabel}`] : []),
     ...(input.distanceLabel ? [`Distance travelled: ${input.distanceLabel}`] : []),
-    `Fuel on return: ${input.closingFuelLabel}`,
+    `Fuel out / back: ${input.openingFuelLabel} -> ${input.closingFuelLabel}`,
+    ...(input.refuel
+      ? [`Fuel bought: ${input.refuel.amountLabel}, ${input.refuel.paidByLabel}`]
+      : []),
+    ...(input.notes ? ["", `Notes: ${input.notes}`] : []),
+    ...(input.refuel
+      ? [
+          "",
+          input.refuel.hasReceipt
+            ? "A photo of the fuel receipt is on the booking."
+            : "No photo of the fuel receipt was attached.",
+        ]
+      : []),
     "",
-    "If those readings aren't the ones you entered, don't use the code — go back to the booking and check.",
-    "If you weren't signing a vehicle in, ignore this email and tell the COLAB office.",
+    input.bookingsUrl,
+    "",
+    "If any of these figures look wrong, tell whoever looks after the fleet.",
   ].join("\n");
 
   return { subject, html, text };

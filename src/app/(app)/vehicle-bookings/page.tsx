@@ -4,6 +4,7 @@ import { companies, users, vehicleBookings, vehicles } from "@/db/schema";
 import { getCurrentUser, hasPermission, requirePermission } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page";
 import { bookableVehicles, getBookerScope } from "@/lib/vehicle-access";
+import { isOverdue, overdueLabel } from "@/lib/vehicle-bookings";
 import { VehicleBookingsClient } from "./vehicle-bookings-client";
 
 export const metadata = { title: "Vehicle Bookings — COLAB" };
@@ -39,51 +40,65 @@ export default async function VehicleBookingsPage() {
       status: vehicleBookings.status,
       notes: vehicleBookings.notes,
       takenOutAt: vehicleBookings.takenOutAt,
+      expectedReturnAt: vehicleBookings.expectedReturnAt,
       returnedAt: vehicleBookings.returnedAt,
-      // Enough to tell the browser "you have a code waiting on this row", and
-      // deliberately not the hash or the code itself.
-      otpUserId: vehicleBookings.returnOtpUserId,
-      // Evaluated by Postgres rather than compared against Date.now() here:
-      // a render has to be pure, and the database's clock is the same one the
-      // action will check the code against.
-      otpLive: sql<boolean>`${vehicleBookings.returnOtpExpiresAt} > now()`,
-      pendingClosingMileage: vehicleBookings.pendingClosingMileage,
-      pendingClosingFuel: vehicleBookings.pendingClosingFuel,
+      refuelled: vehicleBookings.refuelled,
+      refuelPaidBy: vehicleBookings.refuelPaidBy,
+      refuelAmount: vehicleBookings.refuelAmount,
+      // The path itself never reaches the browser — the receipt is fetched from
+      // /api/vehicle-receipt/[id], which re-checks who's asking. All the grid
+      // needs to know is whether there is one.
+      hasReceipt: sql<boolean>`${vehicleBookings.refuelReceiptPath} is not null`,
     })
     .from(vehicleBookings)
     .innerJoin(vehicles, eq(vehicleBookings.vehicleId, vehicles.id))
     .innerJoin(companies, eq(vehicles.companyId, companies.id))
     // Open trips first — "who has what right now" is the question the page is
-    // opened to answer; history is what you scroll to.
+    // opened to answer; history is what you scroll to. Within those, the most
+    // overdue first, since that's the row someone needs to act on.
     .orderBy(
       sql`case when ${vehicleBookings.status} = 'home' then 1 else 0 end`,
+      asc(vehicleBookings.expectedReturnAt),
       desc(vehicleBookings.takenOutAt),
     );
 
   const canManageFleet = hasPermission(sessionUser, "vehicles.manage");
 
-  const bookings = bookingRows.map(({ otpUserId, otpLive, ...b }) => {
+  // Whether a trip is late is worked out here, on the server, rather than from
+  // a clock in the browser. The page is server-rendered on every request, so
+  // it's current when it loads — and a value derived from `new Date()` during a
+  // client render disagrees with the server pass and trips a hydration
+  // mismatch. The cron is what chases anyone who leaves the page open.
+  const now = new Date();
+
+  const bookings = bookingRows.map((b) => {
     const mine = b.bookedByUserId === sessionUser.id || b.bookedForUserId === sessionUser.id;
+    const late = isOverdue({ status: b.status, expectedReturnAt: b.expectedReturnAt }, now);
     return {
       ...b,
       takenOutAt: b.takenOutAt.toISOString(),
+      expectedReturnAt: b.expectedReturnAt.toISOString(),
       returnedAt: b.returnedAt?.toISOString() ?? null,
-      /** Who may open the return form. The code is what proves they're them. */
+      overdue: late,
+      /** "3 hours ago" — worded here so the grid never does date maths. */
+      overdueFor: late ? overdueLabel(b.expectedReturnAt, now) : null,
+      /** Who may fill in the return, and who may push the deadline out. */
       canReturn: b.status !== "home" && (mine || canManageFleet),
       canCancel: b.status !== "home" && (b.bookedByUserId === sessionUser.id || canManageFleet),
-      /**
-       * A code already sent to *this* user and still in date, so a refresh
-       * lands back on the "enter the code" step instead of silently starting
-       * over and emailing a second one.
-       */
-      hasLiveOtp: otpUserId === sessionUser.id && otpLive === true,
+      /** Same set as canReturn — the receipt route enforces this server-side. */
+      canSeeReceipt: mine || canManageFleet,
     };
   });
 
-  // Last recorded odometer reading per vehicle, so the next trip's opening
-  // mileage starts from the truth instead of an empty box. Computed here rather
-  // than exported from the actions file — every export in a "use server" module
-  // is a POST endpoint, and this one would be an unguarded read.
+  // Which vehicles are currently unavailable, so the form can grey them out
+  // rather than accept the booking and then refuse it.
+  const openTrips = new Set(
+    bookingRows.filter((b) => b.status !== "home").map((b) => b.vehicleId),
+  );
+
+  // Last recorded odometer reading per vehicle. No longer prefills anything at
+  // sign-out — nothing is asked at sign-out any more — but it's what the return
+  // form shows as a sanity check against the opening reading being typed in.
   const lastReadings = await db
     .select({
       vehicleId: vehicleBookings.vehicleId,
@@ -93,12 +108,6 @@ export default async function VehicleBookingsPage() {
     .where(eq(vehicleBookings.status, "home"))
     .groupBy(vehicleBookings.vehicleId);
   const lastMileage = new Map(lastReadings.map((r) => [r.vehicleId, r.closingMileage]));
-
-  // Which vehicles are currently unavailable, so the form can grey them out
-  // rather than accept the booking and then refuse it.
-  const openTrips = new Set(
-    bookingRows.filter((b) => b.status !== "home").map((b) => b.vehicleId),
-  );
 
   const fleet = canBook.map((v) => ({
     id: v.id,
@@ -113,7 +122,7 @@ export default async function VehicleBookingsPage() {
 
   // "Booking for someone else" has to be a login, not a team member: that
   // person becomes a holder, and a holder is someone who can sign the vehicle
-  // back in with a code sent to their own address.
+  // back in and who gets told it was booked for them.
   const bookableUsers = await db
     .select({ id: users.id, name: users.name, email: users.email })
     .from(users)
@@ -124,7 +133,7 @@ export default async function VehicleBookingsPage() {
     <div>
       <PageHeader
         title="Vehicle Bookings"
-        description="Sign a vehicle out, and sign it back in when you return it. Click a row to fill in the return."
+        description="Sign a vehicle out with the times you're taking it. The mileage, the fuel and anything you spent are filled in when you bring it back."
       />
       <VehicleBookingsClient
         bookings={bookings}

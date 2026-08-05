@@ -148,6 +148,7 @@ export async function assertCanBookVehicle(
       vehicle: {
         id: number;
         name: string;
+        nickname: string | null;
         regNumber: string;
         companyId: number;
         companyName: string;
@@ -165,6 +166,7 @@ export async function assertCanBookVehicle(
     .select({
       id: vehicles.id,
       name: vehicles.name,
+      nickname: vehicles.nickname,
       regNumber: vehicles.regNumber,
       active: vehicles.active,
       companyId: vehicles.companyId,
@@ -197,6 +199,7 @@ export async function assertCanBookVehicle(
     vehicle: {
       id: vehicle.id,
       name: vehicle.name,
+      nickname: vehicle.nickname,
       regNumber: vehicle.regNumber,
       companyId: vehicle.companyId,
       companyName: vehicle.companyName,

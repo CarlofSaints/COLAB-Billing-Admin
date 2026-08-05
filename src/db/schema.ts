@@ -1131,6 +1131,15 @@ export const vehicleBookingStatusEnum = pgEnum("vehicle_booking_status", [
 ]);
 
 /**
+ * Whose money paid for fuel bought mid-trip. The distinction is the whole
+ * reason the question is asked: own money means somebody is owed a refund.
+ */
+export const vehicleRefuelPayerEnum = pgEnum("vehicle_refuel_payer", [
+  "own_money",
+  "company_card",
+]);
+
+/**
  * One trip: a vehicle signed out, and — once it comes back — signed in again.
  *
  * The return half of the row is nullable because it's filled in later, by hand,
@@ -1168,45 +1177,54 @@ export const vehicleBookings = pgTable(
     bookedForEmail: text("booked_for_email"),
 
     /**
-     * Null only where the vehicle has `mileage_required` switched off. Not
-     * defaulted to 0: a trip that starts at zero kilometres is a claim, and the
-     * Difference column would then quietly report the whole odometer as
-     * distance travelled.
+     * ⚠️ EVERY READING IS TAKEN AT THE RETURN, INCLUDING THE OPENING ONES.
+     *
+     * Signing a vehicle out asks for nothing but times — the team found being
+     * made to read an odometer before they could drive off the worst part of the
+     * old flow. All four figures are therefore null while the trip is open, and
+     * `mileage_required` on the vehicle decides whether the two mileages have to
+     * be filled in at all.
      */
     openingMileage: integer("opening_mileage"),
     closingMileage: integer("closing_mileage"),
-    openingFuel: vehicleFuelLevelEnum("opening_fuel").notNull(),
+    openingFuel: vehicleFuelLevelEnum("opening_fuel"),
     closingFuel: vehicleFuelLevelEnum("closing_fuel"),
 
     status: vehicleBookingStatusEnum("status").notNull().default("out"),
+    /** Anything worth saying about the trip, written at the return. */
     notes: text("notes"),
 
+    /**
+     * Both entered by hand when the vehicle is signed out — "taking it on" is
+     * not necessarily now, and "expecting to return it" is what the overdue
+     * reminder fires against.
+     */
     takenOutAt: timestamp("taken_out_at", { withTimezone: true }).notNull().defaultNow(),
+    expectedReturnAt: timestamp("expected_return_at", { withTimezone: true }).notNull(),
     returnedAt: timestamp("returned_at", { withTimezone: true }),
 
     /**
-     * The closing figures as typed, held here until the OTP confirms them.
-     *
-     * Kept on the row rather than in the browser so the code approves *these*
-     * numbers and not whatever is posted second, and so a refresh mid-return
-     * doesn't lose what was already entered.
+     * When the last "this is overdue" email went out. Gates the reminder the
+     * same way `reception_slots.reminder_sent_at` does: null means never, and a
+     * value older than a day means it's time to nudge again. Cleared whenever
+     * the expected return moves, so extending a booking restarts the clock
+     * instead of silently costing the pair their next reminder.
      */
-    pendingClosingMileage: integer("pending_closing_mileage"),
-    pendingClosingFuel: vehicleFuelLevelEnum("pending_closing_fuel"),
+    overdueRemindedAt: timestamp("overdue_reminded_at", { withTimezone: true }),
 
     /**
-     * The one-time code proving the person signing the vehicle back in is who
-     * they say they are. Stored as a salted hash — a code readable straight out
-     * of the database would prove nothing.
+     * Fuel bought during the trip. `refuelled` is the answer to the question,
+     * not merely "is there an amount" — someone can say yes and not have the
+     * receipt to hand, and that's still a yes worth recording.
      */
-    returnOtpHash: text("return_otp_hash"),
-    returnOtpExpiresAt: timestamp("return_otp_expires_at", { withTimezone: true }),
-    returnOtpSentAt: timestamp("return_otp_sent_at", { withTimezone: true }),
-    returnOtpAttempts: integer("return_otp_attempts").notNull().default(0),
-    /** Who asked for the code — only they can spend it. */
-    returnOtpUserId: integer("return_otp_user_id").references(() => users.id, {
-      onDelete: "set null",
-    }),
+    refuelled: boolean("refuelled").notNull().default(false),
+    refuelPaidBy: vehicleRefuelPayerEnum("refuel_paid_by"),
+    // numeric, not float: this is money, and it's the figure someone gets paid
+    // back on. Comes out of Postgres as a string, which is the point.
+    refuelAmount: numeric("refuel_amount", { precision: 12, scale: 2 }),
+    /** PRIVATE Blob, served only via /api/vehicle-receipt/[id]. */
+    refuelReceiptPath: text("refuel_receipt_path"),
+    refuelReceiptContentType: text("refuel_receipt_content_type"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -8,6 +8,8 @@
  * ends up showing "Half" for something stored as "quarter".
  */
 
+import { SAST_OFFSET_MINUTES } from "@/lib/schedules";
+
 export type FuelLevel = "full" | "three_quarters" | "half" | "quarter" | "under_quarter";
 
 /** Ordered fullest-first, which is the order a gauge reads. */
@@ -65,18 +67,141 @@ export function formatMileage(value: number | null | undefined): string {
   return new Intl.NumberFormat("en-ZA").format(value);
 }
 
-/* ------------------------------------------------------------------ */
-/* Sign-in one-time code                                              */
-/* ------------------------------------------------------------------ */
-
-/** Long enough that guessing is hopeless against a 5-attempt cap. */
-export const OTP_LENGTH = 6;
-/** Long enough to fetch the phone, short enough that a stale code is useless. */
-export const OTP_TTL_MINUTES = 10;
-/** After this many wrong tries the code is dead and a new one must be sent. */
-export const OTP_MAX_ATTEMPTS = 5;
-/** Stops a stuck "Resend" button turning into a mail flood. */
-export const OTP_RESEND_SECONDS = 60;
-
 /** Upper bound on an odometer reading, to catch a hand slipping on the keypad. */
 export const MAX_MILEAGE = 9_999_999;
+
+/* ------------------------------------------------------------------ */
+/* Refuelling during the trip                                          */
+/* ------------------------------------------------------------------ */
+
+export type RefuelPayer = "own_money" | "company_card";
+
+/** Own money first — it's the answer that leads to someone being paid back. */
+export const REFUEL_PAYERS: { value: RefuelPayer; label: string }[] = [
+  { value: "own_money", label: "My own money" },
+  { value: "company_card", label: "Company card" },
+];
+
+const PAYER_LABELS = new Map(REFUEL_PAYERS.map((p) => [p.value, p.label]));
+
+export function refuelPayerLabel(value: RefuelPayer | null | undefined): string {
+  return value ? (PAYER_LABELS.get(value) ?? value) : "—";
+}
+
+/** A sane ceiling on a single fill-up, to catch cents typed as rands. */
+export const MAX_REFUEL_AMOUNT = 100_000;
+
+/**
+ * Rands, as they're written here. Amounts come back from Postgres `numeric` as
+ * strings — deliberately, since that's the only way to not lose the cents — so
+ * this takes either.
+ */
+export function formatRand(amount: string | number | null | undefined): string {
+  if (amount == null || amount === "") return "—";
+  const n = typeof amount === "string" ? Number(amount) : amount;
+  if (!Number.isFinite(n)) return "—";
+  return `R ${new Intl.NumberFormat("en-ZA", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n)}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Dates and times, in South African time                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A booking's times are wall-clock times in Johannesburg, and they have to mean
+ * the same thing in three places that do NOT share a timezone: the browser
+ * (whatever the laptop is set to), the server action (UTC on Vercel), and the
+ * cron that decides a vehicle is overdue.
+ *
+ * So nothing here ever goes through `new Date("2026-08-05T14:30")`, which
+ * silently reads the *runtime's* zone. The wall-clock parts are handled
+ * explicitly and SAST's fixed +02:00 is applied by hand — there is no DST to
+ * account for.
+ */
+
+const MINUTE = 60_000;
+
+/** The same instant, shifted so the getUTC* accessors read SAST wall-clock. */
+function toSast(date: Date): Date {
+  return new Date(date.getTime() + SAST_OFFSET_MINUTES * MINUTE);
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** An instant as the `YYYY-MM-DDTHH:mm` a `datetime-local` input expects. */
+export function toDateTimeInput(date: Date): string {
+  const d = toSast(date);
+  return (
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}` +
+    `T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
+  );
+}
+
+/**
+ * The reverse: `YYYY-MM-DDTHH:mm` typed by someone in Johannesburg, as a real
+ * instant. Returns null on anything that isn't a complete date and time, so a
+ * half-filled field is refused rather than becoming an Invalid Date that
+ * compares false against everything.
+ */
+export function fromDateTimeInput(value: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?$/.exec(value.trim());
+  if (!m) return null;
+  const [, y, mo, d, h, mi] = m.map(Number) as unknown as number[];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return null;
+  const utc = Date.UTC(y, mo - 1, d, h, mi) - SAST_OFFSET_MINUTES * MINUTE;
+  const parsed = new Date(utc);
+  // Catches the 31st of a 30-day month, which Date.UTC rolls over rather than
+  // rejecting.
+  if (toSast(parsed).getUTCDate() !== d) return null;
+  return parsed;
+}
+
+const DATE_TIME_FORMAT = new Intl.DateTimeFormat("en-ZA", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "Africa/Johannesburg",
+});
+
+/** How a booking's time is written on screen, in emails and in the log. */
+export function formatDateTime(date: Date | string | null | undefined): string {
+  if (!date) return "—";
+  const d = typeof date === "string" ? new Date(date) : date;
+  if (Number.isNaN(d.getTime())) return "—";
+  return DATE_TIME_FORMAT.format(d);
+}
+
+/**
+ * "2 hours late", "3 days late" — how overdue something is, in the words the
+ * reminder email uses. Deliberately coarse: to the minute would be noise.
+ */
+export function overdueLabel(due: Date, now: Date = new Date()): string {
+  const minutes = Math.max(0, Math.floor((now.getTime() - due.getTime()) / MINUTE));
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+/** Past its expected return and still not back. */
+export function isOverdue(
+  booking: { status: VehicleBookingStatus; expectedReturnAt: Date | string },
+  now: Date = new Date(),
+): boolean {
+  if (booking.status === "home") return false;
+  const due =
+    typeof booking.expectedReturnAt === "string"
+      ? new Date(booking.expectedReturnAt)
+      : booking.expectedReturnAt;
+  return due.getTime() < now.getTime();
+}

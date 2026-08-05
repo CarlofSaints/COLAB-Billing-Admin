@@ -2,13 +2,12 @@
 
 import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
-import { Car, KeyRound, Mail, Plus, Search, TriangleAlert, Trash2 } from "lucide-react";
+import { Car, Clock, Plus, Receipt, Search, TriangleAlert, Trash2 } from "lucide-react";
 import {
   cancelVehicleBooking,
-  cancelVehicleReturn,
-  confirmVehicleReturn,
   createVehicleBooking,
-  requestVehicleReturnOtp,
+  extendVehicleBooking,
+  returnVehicleBooking,
   type VehicleBookingState,
 } from "@/app/actions/vehicle-bookings";
 import { Button } from "@/components/ui/button";
@@ -23,12 +22,17 @@ import { brandFor } from "@/lib/brands";
 import { cn } from "@/lib/utils";
 import {
   FUEL_LEVELS,
-  OTP_TTL_MINUTES,
+  REFUEL_PAYERS,
   STATUS_LABELS,
+  formatDateTime,
   formatMileage,
+  formatRand,
   fuelLabel,
   mileageDifference,
+  refuelPayerLabel,
+  toDateTimeInput,
   type FuelLevel,
+  type RefuelPayer,
   type VehicleBookingStatus,
 } from "@/lib/vehicle-bookings";
 
@@ -38,7 +42,7 @@ type FleetVehicle = {
   nickname: string | null;
   regNumber: string;
   companyName: string;
-  /** Whether this vehicle's bookings have to carry odometer readings. */
+  /** Whether this vehicle's returns have to carry odometer readings. */
   mileageRequired: boolean;
   lastMileage: number | null;
   available: boolean;
@@ -60,17 +64,23 @@ export type BookingRow = {
   bookedForName: string | null;
   openingMileage: number | null;
   closingMileage: number | null;
-  openingFuel: FuelLevel;
+  openingFuel: FuelLevel | null;
   closingFuel: FuelLevel | null;
   status: VehicleBookingStatus;
   notes: string | null;
   takenOutAt: string;
+  expectedReturnAt: string;
   returnedAt: string | null;
+  refuelled: boolean;
+  refuelPaidBy: RefuelPayer | null;
+  refuelAmount: string | null;
+  hasReceipt: boolean;
+  /** Worked out on the server against its own clock — see the page query. */
+  overdue: boolean;
+  overdueFor: string | null;
   canReturn: boolean;
   canCancel: boolean;
-  hasLiveOtp: boolean;
-  pendingClosingMileage: number | null;
-  pendingClosingFuel: FuelLevel | null;
+  canSeeReceipt: boolean;
 };
 
 type Scope = {
@@ -85,6 +95,18 @@ const STATUS_TONE: Record<VehicleBookingStatus, "amber" | "green" | "violet"> = 
   home: "green",
   servicing: "violet",
 };
+
+/** Rounded up to the next quarter hour — nobody books a vehicle for 14:07. */
+function nextQuarterHour(from: Date = new Date()): Date {
+  const d = new Date(from);
+  d.setSeconds(0, 0);
+  d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15);
+  return d;
+}
+
+function hoursFrom(date: Date, hours: number): Date {
+  return new Date(date.getTime() + hours * 60 * 60 * 1000);
+}
 
 function SubmitButton({
   label,
@@ -146,7 +168,7 @@ function FuelPicker({
 }
 
 /* ------------------------------------------------------------------ */
-/* Signing a vehicle out                                              */
+/* Signing a vehicle out — times only                                 */
 /* ------------------------------------------------------------------ */
 
 function BookingForm({
@@ -166,46 +188,26 @@ function BookingForm({
   );
   const available = fleet.filter((v) => v.available);
   const [vehicleId, setVehicleId] = useState(available[0]?.id ?? 0);
-  const [openingFuel, setOpeningFuel] = useState<FuelLevel | "">("");
   const [bookedForUserId, setBookedForUserId] = useState(0);
   const [forService, setForService] = useState(false);
   const [search, setSearch] = useState("");
-  // Held against the vehicle it was typed for, so switching vehicle falls back
-  // to that vehicle's own last reading without an effect resetting the field
-  // (which would fight anyone mid-type).
-  const [typedMileage, setTypedMileage] = useState<{ vehicleId: number; value: string } | null>(
-    null,
-  );
 
-  const vehicle = available.find((v) => v.id === vehicleId) ?? null;
+  // Computed once on mount, not per render: a value derived from `new Date()`
+  // inside the render body would differ between the server pass and the client
+  // pass and trip a hydration mismatch.
+  const [takenOn, setTakenOn] = useState(() => toDateTimeInput(nextQuarterHour()));
+  const [dueBack, setDueBack] = useState(() =>
+    toDateTimeInput(hoursFrom(nextQuarterHour(), 2)),
+  );
 
   useEffect(() => {
     if (state.ok) onDone();
   }, [state.ok, onDone]);
 
-  // Start from the last reading rather than an empty box — most trips begin
-  // exactly where the previous one ended, and a prefilled number is one people
-  // correct rather than invent.
-  const mileage =
-    typedMileage?.vehicleId === vehicleId
-      ? typedMileage.value
-      : vehicle?.lastMileage != null
-        ? String(vehicle.lastMileage)
-        : "";
-  const setMileage = (value: string) => setTypedMileage({ vehicleId, value });
-
-  const entered = Number(mileage);
-  // A warning, not a block: odometers get replaced and readings get corrected,
-  // and refusing the truth because it disagrees with history is worse.
-  const belowLast =
-    vehicle?.lastMileage != null && mileage !== "" && Number.isFinite(entered)
-      ? entered < vehicle.lastMileage
-      : false;
-
-  // Switched off per vehicle on the register. Default to demanding it, so a
-  // vehicle that somehow isn't in the list can't quietly relax the rule — the
-  // server re-checks against the register either way.
-  const mileageRequired = vehicle?.mileageRequired ?? true;
+  // Compared as strings, which is safe precisely because the format is
+  // zero-padded `YYYY-MM-DDTHH:mm` — lexical order is chronological order, and
+  // no Date is constructed in the browser's timezone to get there.
+  const returnBeforeStart = takenOn !== "" && dueBack !== "" && dueBack <= takenOn;
 
   const term = search.trim().toLowerCase();
   const matches = term
@@ -238,41 +240,36 @@ function BookingForm({
         </Select>
       </Field>
 
-      <Field
-        label={mileageRequired ? "Opening mileage" : "Opening mileage (optional)"}
-        hint={
-          !mileageRequired
-            ? "This vehicle doesn't need a reading — fill it in if you have one, or leave it blank."
-            : vehicle?.lastMileage != null
-              ? `Last recorded reading for this vehicle: ${formatMileage(vehicle.lastMileage)} km.`
-              : "The odometer reading as you take the vehicle over."
-        }
-      >
-        <Input
-          name="openingMileage"
-          type="number"
-          inputMode="numeric"
-          min={0}
-          required={mileageRequired}
-          value={mileage}
-          onChange={(e) => setMileage(e.target.value)}
-          className="max-w-40"
-        />
-      </Field>
-      {belowLast && (
-        <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Taking the vehicle on" hint="Date and time.">
+          <Input
+            name="takenOutAt"
+            type="datetime-local"
+            required
+            value={takenOn}
+            onChange={(e) => setTakenOn(e.target.value)}
+          />
+        </Field>
+        <Field label="Expecting to return the vehicle on" hint="Date and time.">
+          <Input
+            name="expectedReturnAt"
+            type="datetime-local"
+            required
+            value={dueBack}
+            onChange={(e) => setDueBack(e.target.value)}
+          />
+        </Field>
+      </div>
+      {returnBeforeStart && (
+        <p className="-mt-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          {`That's lower than the last recorded reading of ${formatMileage(vehicle!.lastMileage)} km. Worth a second look at the odometer — it'll still save if it's right.`}
+          {`The expected return has to be after the time you're taking the vehicle.`}
         </p>
       )}
 
-      <Field label="Opening fuel level" hint="Roughly — whatever the gauge is showing.">
-        <FuelPicker name="openingFuel" value={openingFuel} onChange={setOpeningFuel} />
-      </Field>
-
       <Field
         label="Who is taking the vehicle?"
-        hint="Booking it for someone else? They can sign it back in too, with a code sent to their own address."
+        hint="Booking it for someone else? They'll be emailed about it, and they can sign it back in too."
       >
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted">Driver:</span>
@@ -329,10 +326,6 @@ function BookingForm({
         </div>
       </Field>
 
-      <Field label="Notes" hint="Optional — where it's going, or anything already wrong with it.">
-        <Textarea name="notes" maxLength={500} rows={2} />
-      </Field>
-
       <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-line px-3 py-2.5 text-sm text-slate-700 transition-colors hover:bg-slate-50">
         <input
           type="checkbox"
@@ -348,6 +341,11 @@ function BookingForm({
         </span>
       </label>
 
+      <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-muted">
+        {`That's everything. The mileage, the fuel and anything you spend are filled in when you
+        bring the vehicle back.`}
+      </p>
+
       {state.error && <ErrorLine message={state.error} />}
 
       <div className="flex justify-end gap-2 pt-1">
@@ -357,7 +355,7 @@ function BookingForm({
         <SubmitButton
           label="Take the vehicle"
           busy="Saving…"
-          disabled={!vehicleId || openingFuel === "" || (mileageRequired && mileage === "")}
+          disabled={!vehicleId || takenOn === "" || dueBack === "" || returnBeforeStart}
         />
       </div>
     </form>
@@ -365,178 +363,177 @@ function BookingForm({
 }
 
 /* ------------------------------------------------------------------ */
-/* Signing it back in                                                  */
+/* Pushing the deadline out                                            */
 /* ------------------------------------------------------------------ */
 
-/**
- * The return, in two steps: readings, then the code that proves who entered
- * them. The step is driven by what the server says has happened, not by a local
- * flag — so a refresh mid-return comes back to the code, and doesn't quietly
- * send a second one.
- */
-function ReturnForm({
-  booking,
-  onDone,
-}: {
-  booking: BookingRow;
-  onDone: () => void;
-}) {
-  const [otpState, sendOtp] = useActionState<VehicleBookingState, FormData>(
-    requestVehicleReturnOtp,
+function ExtendForm({ booking, onDone }: { booking: BookingRow; onDone: () => void }) {
+  const [state, action] = useActionState<VehicleBookingState, FormData>(
+    extendVehicleBooking,
     {},
   );
-  const [confirmState, confirm] = useActionState<VehicleBookingState, FormData>(
-    confirmVehicleReturn,
-    {},
+  const [dueBack, setDueBack] = useState(() =>
+    toDateTimeInput(hoursFrom(new Date(booking.expectedReturnAt), 2)),
   );
-  const [closingFuel, setClosingFuel] = useState<FuelLevel | "">(
-    booking.pendingClosingFuel ?? "",
-  );
-  const [closingMileage, setClosingMileage] = useState(
-    booking.pendingClosingMileage != null ? String(booking.pendingClosingMileage) : "",
-  );
-  const [pending, start] = useTransition();
-
-  // A code already in flight for this person survives a refresh; otherwise the
-  // second step only appears once the send actually succeeded.
-  const awaitingCode = booking.hasLiveOtp || otpState.otpSent === true;
+  const takenOn = toDateTimeInput(new Date(booking.takenOutAt));
 
   useEffect(() => {
-    if (confirmState.ok) onDone();
-  }, [confirmState.ok, onDone]);
+    if (state.ok) onDone();
+  }, [state.ok, onDone]);
 
-  const mileageRequired = booking.vehicleMileageRequired;
-  const entered = Number(closingMileage);
-  const valid = closingMileage !== "" && Number.isFinite(entered);
-  // Only comparable when the trip was signed out with a reading — on a vehicle
-  // whose mileage is switched off there may be nothing to compare against.
-  const belowOpening = valid && booking.openingMileage != null && entered < booking.openingMileage;
-  const distance =
-    valid && !belowOpening ? mileageDifference(booking.openingMileage, entered) : null;
-
-  if (awaitingCode) {
-    return (
-      <form action={confirm} className="space-y-4">
-        <input type="hidden" name="bookingId" value={booking.id} />
-
-        <div className="flex items-start gap-3 rounded-lg bg-brand-50 px-3 py-3 text-sm text-slate-700">
-          <Mail className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />
-          <div>
-            <p className="font-medium text-slate-900">Check your email for the code</p>
-            <p className="mt-0.5 text-xs text-muted">
-              {otpState.otpSentTo
-                ? `Sent to ${otpState.otpSentTo}. `
-                : "A code is waiting on this booking. "}
-              It expires {OTP_TTL_MINUTES} minutes after it was sent.
-            </p>
-          </div>
-        </div>
-
-        <dl className="rounded-lg border border-line px-3 py-2.5 text-sm">
-          {/* Whatever readings there are, so the code approves numbers that can
-              actually be checked. A vehicle with mileage switched off simply
-              shows the fuel line. */}
-          {booking.pendingClosingMileage != null && (
-            <div className="flex justify-between py-0.5">
-              <dt className="text-muted">Closing mileage</dt>
-              <dd className="font-medium text-slate-900">
-                {formatMileage(booking.pendingClosingMileage)} km
-              </dd>
-            </div>
-          )}
-          {mileageDifference(booking.openingMileage, booking.pendingClosingMileage) != null && (
-            <div className="flex justify-between py-0.5">
-              <dt className="text-muted">Distance travelled</dt>
-              <dd className="font-medium text-slate-900">
-                {formatMileage(
-                  mileageDifference(booking.openingMileage, booking.pendingClosingMileage),
-                )}{" "}
-                km
-              </dd>
-            </div>
-          )}
-          <div className="flex justify-between py-0.5">
-            <dt className="text-muted">Fuel on return</dt>
-            <dd className="font-medium text-slate-900">{fuelLabel(booking.pendingClosingFuel)}</dd>
-          </div>
-        </dl>
-
-        <Field label="Code from your email">
-          <Input
-            name="code"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            autoFocus
-            required
-            maxLength={9}
-            placeholder="000000"
-            className="max-w-40 text-center text-lg tracking-[0.3em]"
-          />
-        </Field>
-
-        {confirmState.error && <ErrorLine message={confirmState.error} />}
-        {otpState.error && <ErrorLine message={otpState.error} />}
-
-        <div className="flex flex-wrap justify-end gap-2 pt-1">
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={pending}
-            onClick={() =>
-              // Closing the form shouldn't leave a live code sitting on the row.
-              start(async () => {
-                await cancelVehicleReturn(booking.id);
-                onDone();
-              })
-            }
-          >
-            Start over
-          </Button>
-          <SubmitButton label="Sign the vehicle in" busy="Checking…" />
-        </div>
-      </form>
-    );
-  }
+  const beforeStart = dueBack !== "" && dueBack <= takenOn;
 
   return (
-    <form action={sendOtp} className="space-y-4">
+    <form action={action} className="space-y-4">
       <input type="hidden" name="bookingId" value={booking.id} />
 
       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
         <strong>{booking.vehicleName}</strong>
         {booking.vehicleNickname ? ` “${booking.vehicleNickname}”` : ""} · {booking.vehicleReg}
         <span className="mt-0.5 block text-xs text-muted">
-          {booking.openingMileage == null
-            ? "Taken out with no mileage recorded, tank "
-            : `Taken out at ${formatMileage(booking.openingMileage)} km, tank `}
-          {fuelLabel(booking.openingFuel).toLowerCase()}, by{" "}
-          {booking.bookedForName ?? booking.bookedByName}.
+          Taken on {formatDateTime(booking.takenOutAt)}, due back{" "}
+          {formatDateTime(booking.expectedReturnAt)}.
         </span>
       </div>
 
-      <Field
-        label={mileageRequired ? "Closing mileage" : "Closing mileage (optional)"}
-        hint={
-          mileageRequired
-            ? "The odometer reading now the trip is done."
-            : "This vehicle doesn't need a reading — fill it in if you have one, or leave it blank."
-        }
-      >
+      <Field label="New expected return" hint="Date and time.">
         <Input
-          name="closingMileage"
-          type="number"
-          inputMode="numeric"
-          min={0}
-          required={mileageRequired}
-          value={closingMileage}
-          onChange={(e) => setClosingMileage(e.target.value)}
-          className="max-w-40"
+          name="expectedReturnAt"
+          type="datetime-local"
+          required
+          autoFocus
+          value={dueBack}
+          onChange={(e) => setDueBack(e.target.value)}
         />
       </Field>
-      {belowOpening && (
-        <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+      {beforeStart && (
+        <p className="-mt-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          {`That's less than the opening mileage of ${formatMileage(booking.openingMileage)} km — an odometer doesn't run backwards, so check the reading.`}
+          {`That's before the vehicle was taken.`}
+        </p>
+      )}
+
+      {state.error && <ErrorLine message={state.error} />}
+
+      <div className="flex justify-end gap-2 pt-1">
+        <Button type="button" variant="ghost" onClick={onDone}>
+          Cancel
+        </Button>
+        <SubmitButton
+          label="Extend the booking"
+          busy="Saving…"
+          disabled={dueBack === "" || beforeStart}
+        />
+      </div>
+    </form>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Signing it back in — everything is recorded here                    */
+/* ------------------------------------------------------------------ */
+
+function ReturnForm({
+  booking,
+  lastMileage,
+  onDone,
+}: {
+  booking: BookingRow;
+  /** The last closing reading for this vehicle, as a sanity check. */
+  lastMileage: number | null;
+  onDone: () => void;
+}) {
+  const [state, action] = useActionState<VehicleBookingState, FormData>(
+    returnVehicleBooking,
+    {},
+  );
+  const mileageRequired = booking.vehicleMileageRequired;
+
+  const [openingMileage, setOpeningMileage] = useState(
+    lastMileage != null ? String(lastMileage) : "",
+  );
+  const [closingMileage, setClosingMileage] = useState("");
+  const [openingFuel, setOpeningFuel] = useState<FuelLevel | "">("");
+  const [closingFuel, setClosingFuel] = useState<FuelLevel | "">("");
+  const [refuelled, setRefuelled] = useState<boolean | null>(null);
+  const [paidBy, setPaidBy] = useState<RefuelPayer | "">("");
+  const [amount, setAmount] = useState("");
+
+  useEffect(() => {
+    if (state.ok) onDone();
+  }, [state.ok, onDone]);
+
+  const open = Number(openingMileage);
+  const close = Number(closingMileage);
+  const bothMileages =
+    openingMileage !== "" &&
+    closingMileage !== "" &&
+    Number.isFinite(open) &&
+    Number.isFinite(close);
+  const closingBelowOpening = bothMileages && close < open;
+  const distance = bothMileages && !closingBelowOpening ? close - open : null;
+
+  // Every question that has to be answered before this can be saved, in one
+  // place so the button and the server agree about what "complete" means.
+  const incomplete =
+    openingFuel === "" ||
+    closingFuel === "" ||
+    refuelled === null ||
+    (mileageRequired && (openingMileage === "" || closingMileage === "")) ||
+    (refuelled === true && (paidBy === "" || amount.trim() === ""));
+
+  return (
+    <form action={action} className="space-y-4">
+      <input type="hidden" name="bookingId" value={booking.id} />
+      <input type="hidden" name="refuelled" value={refuelled ? "yes" : "no"} />
+
+      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+        <strong>{booking.vehicleName}</strong>
+        {booking.vehicleNickname ? ` “${booking.vehicleNickname}”` : ""} · {booking.vehicleReg}
+        <span className="mt-0.5 block text-xs text-muted">
+          Taken on {formatDateTime(booking.takenOutAt)} by{" "}
+          {booking.bookedForName ?? booking.bookedByName}, due back{" "}
+          {formatDateTime(booking.expectedReturnAt)}.
+        </span>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field
+          label={mileageRequired ? "Opening mileage" : "Opening mileage (optional)"}
+          hint={
+            lastMileage != null
+              ? `Last recorded reading: ${formatMileage(lastMileage)} km.`
+              : "What the odometer read when you took the vehicle."
+          }
+        >
+          <Input
+            name="openingMileage"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            required={mileageRequired}
+            value={openingMileage}
+            onChange={(e) => setOpeningMileage(e.target.value)}
+          />
+        </Field>
+        <Field
+          label={mileageRequired ? "Closing mileage" : "Closing mileage (optional)"}
+          hint="What it reads now."
+        >
+          <Input
+            name="closingMileage"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            required={mileageRequired}
+            value={closingMileage}
+            onChange={(e) => setClosingMileage(e.target.value)}
+          />
+        </Field>
+      </div>
+      {closingBelowOpening && (
+        <p className="-mt-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          {`The closing reading is less than the opening one — an odometer doesn't run backwards, so check the numbers.`}
         </p>
       )}
       {distance != null && (
@@ -545,28 +542,124 @@ function ReturnForm({
         </p>
       )}
 
-      <Field label="Closing fuel level">
-        <FuelPicker name="closingFuel" value={closingFuel} onChange={setClosingFuel} />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Fuel when you took it">
+          <FuelPicker name="openingFuel" value={openingFuel} onChange={setOpeningFuel} />
+        </Field>
+        <Field label="Fuel now">
+          <FuelPicker name="closingFuel" value={closingFuel} onChange={setClosingFuel} />
+        </Field>
+      </div>
+
+      <Field
+        label="Notes"
+        hint="Optional — anything worth knowing, like a scratch or a warning light."
+      >
+        <Textarea name="notes" maxLength={1000} rows={2} />
       </Field>
 
-      <p className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-muted">
-        <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        When you submit, a one-time code is emailed to you. Enter it to confirm the vehicle is
-        back.
-      </p>
+      {/* The follow-up questions only exist once the answer is yes. Nothing
+          under here is rendered — and nothing under here is accepted by the
+          server — while the answer is no. */}
+      <Field label="Did you have to put fuel in the vehicle?">
+        <div className="flex gap-2">
+          {[
+            { on: true, label: "Yes" },
+            { on: false, label: "No" },
+          ].map((opt) => (
+            <button
+              key={opt.label}
+              type="button"
+              onClick={() => {
+                setRefuelled(opt.on);
+                if (!opt.on) {
+                  // Cleared, not just hidden: answering yes, filling it in and
+                  // then switching to no must not leave an amount behind.
+                  setPaidBy("");
+                  setAmount("");
+                }
+              }}
+              className={cn(
+                "rounded-full border px-4 py-1 text-sm font-medium transition-colors",
+                refuelled === opt.on
+                  ? "border-brand-600 bg-brand-50 text-brand-700"
+                  : "border-line text-slate-500 hover:bg-slate-50",
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </Field>
 
-      {otpState.error && <ErrorLine message={otpState.error} />}
+      {refuelled === true && (
+        <div className="space-y-4 rounded-lg border border-line bg-slate-50/60 px-3 py-3">
+          <Field label="Did you use your own money or a company card?">
+            <input type="hidden" name="refuelPaidBy" value={paidBy} />
+            <div className="flex flex-wrap gap-2">
+              {REFUEL_PAYERS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setPaidBy(opt.value)}
+                  className={cn(
+                    "rounded-full border px-4 py-1 text-sm font-medium transition-colors",
+                    paidBy === opt.value
+                      ? "border-brand-600 bg-brand-50 text-brand-700"
+                      : "border-line bg-white text-slate-500 hover:bg-slate-50",
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="What did the fuel cost?" hint="Rands, as it appears on the slip.">
+            <Input
+              name="refuelAmount"
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="0.01"
+              placeholder="0.00"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="max-w-40"
+            />
+          </Field>
+
+          <Field
+            label="Add a photo of the receipt"
+            hint={
+              paidBy === "own_money"
+                ? "Optional, but this is what gets you paid back — attach it if you have it."
+                : "Optional. JPG, PNG or HEIC, up to 6 MB."
+            }
+          >
+            <Input
+              name="refuelReceipt"
+              type="file"
+              accept="image/*"
+              // Opens the camera straight away on a phone, which is where the
+              // slip is most likely to be photographed.
+              capture="environment"
+              className="file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700"
+            />
+          </Field>
+        </div>
+      )}
+
+      {state.error && <ErrorLine message={state.error} />}
 
       <div className="flex justify-end gap-2 pt-1">
         <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
         </Button>
         <SubmitButton
-          label="Submit and email me a code"
-          busy="Sending…"
-          disabled={
-            closingFuel === "" || (mileageRequired && closingMileage === "") || belowOpening
-          }
+          label="Book the vehicle in"
+          busy="Saving…"
+          disabled={incomplete || closingBelowOpening}
         />
       </div>
     </form>
@@ -594,12 +687,18 @@ export function VehicleBookingsClient({
 }) {
   const [booking, setBooking] = useState(false);
   const [returning, setReturning] = useState<BookingRow | null>(null);
+  const [extending, setExtending] = useState<BookingRow | null>(null);
+  const [viewing, setViewing] = useState<BookingRow | null>(null);
   const [search, setSearch] = useState("");
   const [showFinished, setShowFinished] = useState(true);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
   const anyAvailable = fleet.some((v) => v.available);
+  const lastMileageFor = useMemo(
+    () => new Map(fleet.map((v) => [v.id, v.lastMileage])),
+    [fleet],
+  );
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -622,17 +721,17 @@ export function VehicleBookingsClient({
     filtered,
     {
       vehicle: (b) => b.vehicleName,
-      nickname: (b) => b.vehicleNickname,
       driver: (b) => b.bookedForName ?? b.bookedByName,
+      taken: (b) => b.takenOutAt,
+      due: (b) => b.expectedReturnAt,
       opening: (b) => b.openingMileage,
       closing: (b) => b.closingMileage,
       difference: (b) => mileageDifference(b.openingMileage, b.closingMileage),
-      openingFuel: (b) => fuelLabel(b.openingFuel),
-      closingFuel: (b) => (b.closingFuel ? fuelLabel(b.closingFuel) : null),
+      fuel: (b) => (b.closingFuel ? fuelLabel(b.closingFuel) : null),
+      spent: (b) => (b.refuelAmount == null ? null : Number(b.refuelAmount)),
       status: (b) => STATUS_LABELS[b.status],
-      taken: (b) => b.takenOutAt,
     },
-    { key: "taken", dir: "desc" },
+    { key: "due", dir: "asc" },
   );
 
   // Named in the order they'd be said out loud: own company first, then the
@@ -661,9 +760,20 @@ export function VehicleBookingsClient({
       </p>
     );
 
+  const overdueCount = bookings.filter((b) => b.overdue).length;
+
   return (
     <div className="space-y-4">
       {scopeNote}
+      {overdueCount > 0 && (
+        <Card className="border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <strong>
+            {overdueCount} {overdueCount === 1 ? "vehicle is" : "vehicles are"} past the expected
+            return time.
+          </strong>{" "}
+          {`Sign it back in if it's back, or extend the booking.`}
+        </Card>
+      )}
       {cancelError && <ErrorLine message={cancelError} />}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -705,7 +815,7 @@ export function VehicleBookingsClient({
         <EmptyState
           icon={<Car className="h-8 w-8" />}
           title="No vehicle has been booked yet"
-          description="Sign a vehicle out and it appears here, with its mileage and fuel, until it's signed back in."
+          description="Sign a vehicle out and it appears here until it's brought back and booked in."
           action={
             anyAvailable ? <Button onClick={() => setBooking(true)}>Book a vehicle</Button> : undefined
           }
@@ -722,11 +832,14 @@ export function VehicleBookingsClient({
                 <SortableTH sortKey="vehicle" sort={sort} onSort={toggle}>
                   Vehicle
                 </SortableTH>
-                <SortableTH sortKey="nickname" sort={sort} onSort={toggle}>
-                  Nickname
-                </SortableTH>
                 <SortableTH sortKey="driver" sort={sort} onSort={toggle}>
                   Taken by
+                </SortableTH>
+                <SortableTH sortKey="taken" sort={sort} onSort={toggle}>
+                  Taken on
+                </SortableTH>
+                <SortableTH sortKey="due" sort={sort} onSort={toggle}>
+                  Due back
                 </SortableTH>
                 <SortableTH sortKey="opening" sort={sort} onSort={toggle} className="text-right">
                   Opening km
@@ -737,11 +850,11 @@ export function VehicleBookingsClient({
                 <SortableTH sortKey="difference" sort={sort} onSort={toggle} className="text-right">
                   Difference
                 </SortableTH>
-                <SortableTH sortKey="openingFuel" sort={sort} onSort={toggle}>
-                  Opening fuel
+                <SortableTH sortKey="fuel" sort={sort} onSort={toggle}>
+                  Fuel
                 </SortableTH>
-                <SortableTH sortKey="closingFuel" sort={sort} onSort={toggle}>
-                  Closing fuel
+                <SortableTH sortKey="spent" sort={sort} onSort={toggle} className="text-right">
+                  Fuel bought
                 </SortableTH>
                 <SortableTH sortKey="status" sort={sort} onSort={toggle}>
                   Status
@@ -758,10 +871,12 @@ export function VehicleBookingsClient({
                     key={b.id}
                     // The whole row opens the return, which is what Carl asked
                     // for — but only for the people entitled to fill it in, so
-                    // it isn't a click that leads to a refusal.
-                    onClick={b.canReturn ? () => setReturning(b) : undefined}
-                    className={cn(b.canReturn && "cursor-pointer")}
-                    title={b.canReturn ? "Fill in the return" : undefined}
+                    // it isn't a click that leads to a refusal. A finished trip
+                    // opens its detail instead, which is where the notes and
+                    // the receipt live.
+                    onClick={b.canReturn ? () => setReturning(b) : () => setViewing(b)}
+                    className="cursor-pointer"
+                    title={b.canReturn ? "Book the vehicle in" : "See the trip"}
                   >
                     <TD>
                       <div className="flex items-center gap-2">
@@ -772,9 +887,11 @@ export function VehicleBookingsClient({
                         />
                         <span className="font-medium text-slate-900">{b.vehicleName}</span>
                       </div>
-                      <span className="text-xs text-muted">{b.vehicleReg}</span>
+                      <span className="text-xs text-muted">
+                        {b.vehicleNickname ? `“${b.vehicleNickname}” · ` : ""}
+                        {b.vehicleReg}
+                      </span>
                     </TD>
-                    <TD>{b.vehicleNickname ? `“${b.vehicleNickname}”` : "—"}</TD>
                     <TD>
                       {b.bookedForName ?? b.bookedByName}
                       {b.bookedForName && (
@@ -783,29 +900,69 @@ export function VehicleBookingsClient({
                         </span>
                       )}
                     </TD>
+                    <TD className="whitespace-nowrap">{formatDateTime(b.takenOutAt)}</TD>
+                    <TD className="whitespace-nowrap">
+                      {formatDateTime(b.expectedReturnAt)}
+                      {b.overdueFor && (
+                        <span className="mt-0.5 flex items-center gap-1 text-xs font-medium text-amber-700">
+                          <Clock className="h-3 w-3" />
+                          {b.overdueFor}
+                        </span>
+                      )}
+                    </TD>
                     <TD className="text-right tabular-nums">{formatMileage(b.openingMileage)}</TD>
                     <TD className="text-right tabular-nums">{formatMileage(b.closingMileage)}</TD>
                     <TD className="text-right tabular-nums font-medium text-slate-900">
                       {diff == null ? "—" : `${formatMileage(diff)} km`}
                     </TD>
-                    <TD>{fuelLabel(b.openingFuel)}</TD>
-                    <TD>{fuelLabel(b.closingFuel)}</TD>
+                    <TD className="whitespace-nowrap">
+                      {b.openingFuel || b.closingFuel
+                        ? `${fuelLabel(b.openingFuel)} → ${fuelLabel(b.closingFuel)}`
+                        : "—"}
+                    </TD>
+                    <TD className="text-right tabular-nums">
+                      {b.refuelled ? (
+                        <span className="inline-flex items-center gap-1">
+                          {formatRand(b.refuelAmount)}
+                          {b.hasReceipt && (
+                            <Receipt className="h-3 w-3 text-muted" aria-label="receipt attached" />
+                          )}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </TD>
                     <TD>
-                      <Badge tone={STATUS_TONE[b.status]}>{STATUS_LABELS[b.status]}</Badge>
+                      <Badge tone={b.overdue ? "red" : STATUS_TONE[b.status]}>
+                        {b.overdue ? "Overdue" : STATUS_LABELS[b.status]}
+                      </Badge>
                     </TD>
                     <TD className="text-right">
                       <div className="flex items-center justify-end gap-1">
                         {b.canReturn && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setReturning(b);
-                            }}
-                          >
-                            {b.hasLiveOtp ? "Enter code" : "Book in"}
-                          </Button>
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setReturning(b);
+                              }}
+                            >
+                              Book in
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title="Keeping it longer — push the expected return out"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExtending(b);
+                              }}
+                            >
+                              Extend
+                            </Button>
+                          </>
                         )}
                         {b.canCancel && (
                           <Button
@@ -817,7 +974,7 @@ export function VehicleBookingsClient({
                               e.stopPropagation();
                               if (
                                 !confirm(
-                                  `Remove the booking of ${b.vehicleName}? Use this only if it was booked by mistake — it deletes the record rather than signing the vehicle in.`,
+                                  `Remove the booking of ${b.vehicleName}? Use this only if it was booked by mistake — it deletes the record rather than booking the vehicle in.`,
                                 )
                               )
                                 return;
@@ -853,13 +1010,130 @@ export function VehicleBookingsClient({
       )}
       {returning && (
         <Modal
-          title={`Sign in ${returning.vehicleName}`}
+          title={`Book in ${returning.vehicleName}`}
           open
           onOpenChange={(o) => !o && setReturning(null)}
         >
-          <ReturnForm booking={returning} onDone={() => setReturning(null)} />
+          <ReturnForm
+            booking={returning}
+            lastMileage={lastMileageFor.get(returning.vehicleId) ?? null}
+            onDone={() => setReturning(null)}
+          />
         </Modal>
       )}
+      {extending && (
+        <Modal
+          title={`Extend ${extending.vehicleName}`}
+          open
+          onOpenChange={(o) => !o && setExtending(null)}
+        >
+          <ExtendForm booking={extending} onDone={() => setExtending(null)} />
+        </Modal>
+      )}
+      {viewing && (
+        <Modal
+          title={`${viewing.vehicleName} · ${viewing.vehicleReg}`}
+          open
+          onOpenChange={(o) => !o && setViewing(null)}
+        >
+          <TripDetail booking={viewing} onDone={() => setViewing(null)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * A finished trip, read-only. The grid can't show notes or a receipt without
+ * becoming unreadable, so they live here — reachable by clicking any row that
+ * isn't yours to fill in.
+ */
+function TripDetail({ booking, onDone }: { booking: BookingRow; onDone: () => void }) {
+  const diff = mileageDifference(booking.openingMileage, booking.closingMileage);
+  const rows: [string, string][] = [
+    ["Driver", booking.bookedForName ?? booking.bookedByName],
+    ...(booking.bookedForName
+      ? ([["Booked by", booking.bookedByName]] as [string, string][])
+      : []),
+    ["Taken on", formatDateTime(booking.takenOutAt)],
+    ["Due back", formatDateTime(booking.expectedReturnAt)],
+    ...(booking.returnedAt
+      ? ([["Returned", formatDateTime(booking.returnedAt)]] as [string, string][])
+      : []),
+    ...(booking.openingMileage != null
+      ? ([["Opening mileage", `${formatMileage(booking.openingMileage)} km`]] as [string, string][])
+      : []),
+    ...(booking.closingMileage != null
+      ? ([["Closing mileage", `${formatMileage(booking.closingMileage)} km`]] as [string, string][])
+      : []),
+    ...(diff != null
+      ? ([["Distance travelled", `${formatMileage(diff)} km`]] as [string, string][])
+      : []),
+    ...(booking.openingFuel || booking.closingFuel
+      ? ([
+          ["Fuel out / back", `${fuelLabel(booking.openingFuel)} → ${fuelLabel(booking.closingFuel)}`],
+        ] as [string, string][])
+      : []),
+    ...(booking.refuelled
+      ? ([
+          [
+            "Fuel bought",
+            `${formatRand(booking.refuelAmount)}, ${refuelPayerLabel(booking.refuelPaidBy).toLowerCase()}`,
+          ],
+        ] as [string, string][])
+      : []),
+  ];
+
+  return (
+    <div className="space-y-4">
+      <dl className="rounded-lg border border-line px-3 py-2.5 text-sm">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex justify-between gap-4 py-0.5">
+            <dt className="text-muted">{label}</dt>
+            <dd className="text-right font-medium text-slate-900">{value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {booking.notes && (
+        <div>
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Notes</p>
+          <p className="whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            {booking.notes}
+          </p>
+        </div>
+      )}
+
+      {booking.hasReceipt &&
+        (booking.canSeeReceipt ? (
+          <div>
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
+              Fuel receipt
+            </p>
+            {/* Served from the private Blob store through an authenticated
+                route, which re-checks entitlement — this flag only decides
+                whether it's worth showing the image at all. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`/api/vehicle-receipt/${booking.id}`}
+              alt="Fuel receipt"
+              className="max-h-96 w-full rounded-lg border border-line object-contain"
+            />
+          </div>
+        ) : (
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-muted">
+            A photo of the fuel receipt is attached. Only the driver and whoever looks after the
+            fleet can open it.
+          </p>
+        ))}
+
+      <div className="flex justify-end pt-1">
+        <Button type="button" variant="ghost" onClick={onDone}>
+          Close
+        </Button>
+      </div>
     </div>
   );
 }

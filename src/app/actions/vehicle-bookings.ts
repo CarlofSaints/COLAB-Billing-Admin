@@ -1,14 +1,20 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createHash, randomInt, timingSafeEqual } from "node:crypto";
 import { and, eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { users, vehicleBookings, vehicles } from "@/db/schema";
-import { hasPermission, requirePermission } from "@/lib/auth";
+import { hasPermission, requirePermission, type SessionUser } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
-import { mailConfigured, sendMail, vehicleReturnOtpEmail } from "@/lib/mailer";
+import {
+  appBaseUrl,
+  mailConfigured,
+  sendMail,
+  vehicleBookedEmail,
+  vehicleReturnedEmail,
+} from "@/lib/mailer";
+import { storePrivatePhoto } from "@/lib/private-photo";
 import {
   assertCanBookVehicle,
   canReturnBooking,
@@ -17,25 +23,23 @@ import {
 import {
   FUEL_LEVELS,
   MAX_MILEAGE,
-  OTP_MAX_ATTEMPTS,
-  OTP_RESEND_SECONDS,
-  OTP_TTL_MINUTES,
+  MAX_REFUEL_AMOUNT,
+  REFUEL_PAYERS,
+  formatDateTime,
   formatMileage,
+  formatRand,
+  fromDateTimeInput,
   fuelLabel,
   mileageDifference,
+  refuelPayerLabel,
   type FuelLevel,
+  type RefuelPayer,
 } from "@/lib/vehicle-bookings";
 
-export type VehicleBookingState = {
-  error?: string;
-  ok?: boolean;
-  /** Set when the sign-in code has just gone out, so the form can ask for it. */
-  otpSent?: boolean;
-  /** Where the code went, so the person knows which inbox to open. */
-  otpSentTo?: string;
-};
+export type VehicleBookingState = { error?: string; ok?: boolean };
 
 const fuelValues = FUEL_LEVELS.map((f) => f.value) as [FuelLevel, ...FuelLevel[]];
+const payerValues = REFUEL_PAYERS.map((p) => p.value) as [RefuelPayer, ...RefuelPayer[]];
 
 const mileage = z
   .number({ message: "Enter the mileage as a number" })
@@ -57,66 +61,121 @@ function readMileage(raw: FormDataEntryValue | null): number | null {
   return Number(text);
 }
 
-const createSchema = z.object({
-  vehicleId: z.number().int().positive("Pick a vehicle"),
-  openingMileage: optionalMileage,
-  openingFuel: z.enum(fuelValues, { message: "Say how full the tank is" }),
-  bookedForUserId: z.number().int().nonnegative(),
-  forService: z.boolean(),
-  notes: z.string().trim().max(500).optional(),
-});
-
-const returnSchema = z.object({
-  bookingId: z.number().int().positive(),
-  closingMileage: optionalMileage,
-  closingFuel: z.enum(fuelValues, { message: "Say how full the tank is" }),
-});
-
-/* ------------------------------------------------------------------ */
-/* One-time code                                                      */
-/* ------------------------------------------------------------------ */
-
 /**
- * Salted with AUTH_SECRET and bound to the booking, so a hash lifted from one
- * row can't be replayed against another and a database read yields no usable
- * codes at all.
+ * A wall-clock date and time typed in Johannesburg. Parsed by
+ * `fromDateTimeInput` rather than by `new Date(...)`, which would read the
+ * timezone of whatever machine happened to run it.
  */
-function hashOtp(bookingId: number, code: string): string {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) throw new Error("AUTH_SECRET is not set.");
-  return createHash("sha256").update(`${secret}:${bookingId}:${code}`).digest("hex");
-}
+const dateTime = z
+  .string()
+  .trim()
+  .min(1, "Pick a date and time")
+  .transform((v, ctx) => {
+    const parsed = fromDateTimeInput(v);
+    if (!parsed) {
+      ctx.addIssue({ code: "custom", message: "That isn't a valid date and time" });
+      return z.NEVER;
+    }
+    return parsed;
+  });
 
-/** Digits only, so "418 302" and "418302" are the same answer. */
-function normaliseCode(raw: string): string {
-  return raw.replace(/\D/g, "");
-}
+const createSchema = z
+  .object({
+    vehicleId: z.number().int().positive("Pick a vehicle"),
+    takenOutAt: dateTime,
+    expectedReturnAt: dateTime,
+    bookedForUserId: z.number().int().nonnegative(),
+    forService: z.boolean(),
+  })
+  .refine((v) => v.expectedReturnAt.getTime() > v.takenOutAt.getTime(), {
+    message: "The expected return has to be after the time the vehicle is taken",
+    path: ["expectedReturnAt"],
+  });
 
-function generateCode(): string {
-  return String(randomInt(0, 1_000_000)).padStart(6, "0");
-}
+const returnSchema = z
+  .object({
+    bookingId: z.number().int().positive(),
+    openingMileage: optionalMileage,
+    closingMileage: optionalMileage,
+    openingFuel: z.enum(fuelValues, { message: "Say how full the tank was when you took it" }),
+    closingFuel: z.enum(fuelValues, { message: "Say how full the tank is now" }),
+    notes: z.string().trim().max(1000).optional(),
+    refuelled: z.boolean(),
+    refuelPaidBy: z.enum(payerValues).nullable(),
+    refuelAmount: z
+      .number({ message: "Enter what the fuel cost as a number" })
+      .positive("The fuel amount has to be more than zero")
+      .max(MAX_REFUEL_AMOUNT, "That looks like a typo — check the amount")
+      .nullable(),
+  })
+  .superRefine((v, ctx) => {
+    // The follow-up questions are only asked when the answer was yes, so they're
+    // only required when the answer was yes. Enforced here as well as hidden in
+    // the form: an unasked question must not become a missing required field,
+    // and an answered-then-unticked one must not survive.
+    if (!v.refuelled) return;
+    if (!v.refuelPaidBy) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Say whether you paid for the fuel yourself or used the company card",
+        path: ["refuelPaidBy"],
+      });
+    }
+    if (v.refuelAmount == null) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Enter the rand value of the fuel you bought",
+        path: ["refuelAmount"],
+      });
+    }
+  });
 
-function codesMatch(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
-}
-
-/** Clears every trace of an in-flight sign-in attempt. */
-const CLEARED_OTP = {
-  pendingClosingMileage: null,
-  pendingClosingFuel: null,
-  returnOtpHash: null,
-  returnOtpExpiresAt: null,
-  returnOtpSentAt: null,
-  returnOtpAttempts: 0,
-  returnOtpUserId: null,
-} as const;
+const extendSchema = z.object({
+  bookingId: z.number().int().positive(),
+  expectedReturnAt: dateTime,
+});
 
 function revalidate() {
   revalidatePath("/vehicle-bookings");
   revalidatePath("/vehicles");
+}
+
+/* ------------------------------------------------------------------ */
+/* Telling both people                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The booker and the driver, deduplicated by address.
+ *
+ * Carl's rule is that both are told, including when the booker booked it for
+ * themselves — unlike the room-handover emails, where nobody is told about
+ * their own edit. A vehicle going out is a thing worth a receipt even when you
+ * arranged it yourself. Deduplicated because two names can share one address.
+ */
+function bothParties(booking: {
+  bookedByName: string;
+  bookedByEmail: string;
+  bookedForName: string | null;
+  bookedForEmail: string | null;
+}): { email: string; name: string; isDriver: boolean }[] {
+  const out = new Map<string, { email: string; name: string; isDriver: boolean }>();
+  out.set(booking.bookedByEmail.toLowerCase(), {
+    email: booking.bookedByEmail,
+    name: booking.bookedByName,
+    isDriver: !booking.bookedForEmail,
+  });
+  if (booking.bookedForEmail) {
+    const key = booking.bookedForEmail.toLowerCase();
+    // If the driver is also the booker, the existing entry already covers them —
+    // but it's the driver's copy that should win, since it's the more specific
+    // description of their part in it.
+    out.set(key, {
+      email: booking.bookedForEmail,
+      name: booking.bookedForName ?? booking.bookedByName,
+      isDriver: true,
+    });
+  }
+  return [...out.values()];
 }
 
 /* ------------------------------------------------------------------ */
@@ -133,15 +192,13 @@ export async function createVehicleBooking(
 
   const parsed = createSchema.safeParse({
     vehicleId: Number(formData.get("vehicleId") || 0),
-    openingMileage: readMileage(formData.get("openingMileage")),
-    openingFuel: formData.get("openingFuel"),
+    takenOutAt: String(formData.get("takenOutAt") ?? ""),
+    expectedReturnAt: String(formData.get("expectedReturnAt") ?? ""),
     bookedForUserId: Number(formData.get("bookedForUserId") || 0),
     forService: formData.get("forService") === "yes",
-    notes: String(formData.get("notes") ?? "").trim() || undefined,
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
-  const { vehicleId, openingMileage, openingFuel, bookedForUserId, forService, notes } =
-    parsed.data;
+  const { vehicleId, takenOutAt, expectedReturnAt, bookedForUserId, forService } = parsed.data;
 
   // The company rule, checked against the database and not against whatever the
   // browser was given — a filtered dropdown is a convenience, not a control.
@@ -149,15 +206,6 @@ export async function createVehicleBooking(
   const allowed = await assertCanBookVehicle(scope, vehicleId);
   if (!allowed.ok) return { error: allowed.error };
   const vehicle = allowed.vehicle;
-
-  // Whether the reading may be left out is the VEHICLE's setting, re-read from
-  // the register on submit — a form told not to mark the box required is a
-  // convenience, exactly like the filtered dropdown above it.
-  if (vehicle.mileageRequired && openingMileage == null) {
-    return {
-      error: `${vehicle.name} needs its opening mileage. Read it off the odometer before you drive off — someone who looks after the fleet can switch this off for this vehicle if it genuinely has no reading.`,
-    };
-  }
 
   // A vehicle can only be in one place. Checked here so the message can say who
   // has it; the partial unique index is what actually holds the line when two
@@ -208,12 +256,11 @@ export async function createVehicleBooking(
       bookedForUserId: bookedFor?.id ?? null,
       bookedForName: bookedFor?.name ?? null,
       bookedForEmail: bookedFor?.email ?? null,
-      openingMileage,
-      openingFuel,
+      takenOutAt,
+      expectedReturnAt,
       // Both mean "not here"; they're separate so the grid can answer "where is
       // it?" rather than only "is it available?".
       status: forService ? "servicing" : "out",
-      notes: notes ?? null,
     })
     .returning({ id: vehicleBookings.id });
 
@@ -222,13 +269,122 @@ export async function createVehicleBooking(
     summary:
       `Took out ${vehicle.name} (${vehicle.regNumber})` +
       (bookedFor ? ` for ${bookedFor.name}` : "") +
-      (openingMileage == null
-        ? ` with no mileage recorded, tank ${fuelLabel(openingFuel).toLowerCase()}`
-        : ` at ${formatMileage(openingMileage)} km, tank ${fuelLabel(openingFuel).toLowerCase()}`) +
+      ` from ${formatDateTime(takenOutAt)}, due back ${formatDateTime(expectedReturnAt)}` +
       (forService ? " — going in for a service" : ""),
     actor: user,
     entityType: "vehicle_booking",
     entityId: row.id,
+  });
+
+  await sendBookedEmails({
+    bookedByName: user.name,
+    bookedByEmail: user.email,
+    bookedForName: bookedFor?.name ?? null,
+    bookedForEmail: bookedFor?.email ?? null,
+    vehicleName: vehicle.name,
+    vehicleReg: vehicle.regNumber,
+    vehicleNickname: vehicle.nickname,
+    takenOutAt,
+    expectedReturnAt,
+    forService,
+  });
+
+  revalidate();
+  return { ok: true };
+}
+
+async function sendBookedEmails(booking: {
+  bookedByName: string;
+  bookedByEmail: string;
+  bookedForName: string | null;
+  bookedForEmail: string | null;
+  vehicleName: string;
+  vehicleReg: string;
+  vehicleNickname: string | null;
+  takenOutAt: Date;
+  expectedReturnAt: Date;
+  forService: boolean;
+}) {
+  // A booking that saved is a booking that happened. Mail is best-effort on top
+  // of it, never a reason to fail the action after the row is committed.
+  if (!mailConfigured()) return;
+
+  const base = await appBaseUrl();
+  const trip = {
+    vehicleName: booking.vehicleName,
+    vehicleReg: booking.vehicleReg,
+    vehicleNickname: booking.vehicleNickname,
+    driverName: booking.bookedForName ?? booking.bookedByName,
+    bookedByName: booking.bookedByName,
+    takenOnLabel: formatDateTime(booking.takenOutAt),
+    expectedReturnLabel: formatDateTime(booking.expectedReturnAt),
+    bookingsUrl: `${base}/vehicle-bookings`,
+  };
+
+  for (const party of bothParties(booking)) {
+    const mail = vehicleBookedEmail({
+      ...trip,
+      name: party.name,
+      forDriver: party.isDriver && booking.bookedForEmail != null,
+      forService: booking.forService,
+    });
+    await sendMail({ to: party.email, subject: mail.subject, html: mail.html, text: mail.text });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Extending an open booking                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pushes out the expected return time.
+ *
+ * The overdue email offers this as the alternative to signing the vehicle in,
+ * so it has to exist for that advice to be honest. Clears
+ * `overdueRemindedAt` — same discipline as clearing a reception slot's
+ * reminder when it changes hands, so the new deadline gets its own nudge
+ * rather than the pair silently losing one.
+ */
+export async function extendVehicleBooking(
+  _prev: VehicleBookingState,
+  formData: FormData,
+): Promise<VehicleBookingState> {
+  const user = await requirePermission("hub.view");
+
+  const parsed = extendSchema.safeParse({
+    bookingId: Number(formData.get("bookingId") || 0),
+    expectedReturnAt: String(formData.get("expectedReturnAt") ?? ""),
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const { bookingId, expectedReturnAt } = parsed.data;
+
+  const booking = await loadBooking(bookingId);
+  if (!booking) return { error: "That booking no longer exists." };
+  if (booking.status === "home") {
+    return { error: `${booking.vehicleName} is already back — there's nothing to extend.` };
+  }
+  if (!canReturnBooking(user, booking)) {
+    return {
+      error: "Only the person who took the vehicle — or whoever looks after the fleet — can extend it.",
+    };
+  }
+  if (expectedReturnAt.getTime() <= booking.takenOutAt.getTime()) {
+    return { error: "The expected return has to be after the time the vehicle was taken." };
+  }
+
+  await db
+    .update(vehicleBookings)
+    .set({ expectedReturnAt, overdueRemindedAt: null, updatedAt: new Date() })
+    .where(eq(vehicleBookings.id, bookingId));
+
+  await logEvent({
+    action: "vehicle_booking.extend",
+    summary:
+      `Extended ${booking.vehicleName} (${booking.vehicleReg}) — due back ` +
+      `${formatDateTime(expectedReturnAt)}, was ${formatDateTime(booking.expectedReturnAt)}`,
+    actor: user,
+    entityType: "vehicle_booking",
+    entityId: bookingId,
   });
 
   revalidate();
@@ -236,29 +392,51 @@ export async function createVehicleBooking(
 }
 
 /* ------------------------------------------------------------------ */
-/* Signing it back in — step 1, send the code                         */
+/* Signing it back in                                                 */
 /* ------------------------------------------------------------------ */
 
 /**
- * Validates the closing readings, parks them on the row, and emails a code.
+ * The whole return, in one submit.
  *
- * The readings are stored now rather than posted again with the code, so that
- * the code approves the numbers that were on screen when it was asked for — and
- * so that refreshing the page mid-return doesn't lose them.
+ * Everything is recorded here rather than at sign-out: opening and closing
+ * mileage, opening and closing fuel, notes, and whatever was spent on fuel.
+ * That's deliberate — being made to read an odometer before you could drive
+ * away was the part of the old flow the team disliked most.
  */
-export async function requestVehicleReturnOtp(
+export async function returnVehicleBooking(
   _prev: VehicleBookingState,
   formData: FormData,
 ): Promise<VehicleBookingState> {
   const user = await requirePermission("hub.view");
 
+  const refuelled = formData.get("refuelled") === "yes";
+  const rawAmount = String(formData.get("refuelAmount") ?? "").trim();
+
   const parsed = returnSchema.safeParse({
     bookingId: Number(formData.get("bookingId") || 0),
+    openingMileage: readMileage(formData.get("openingMileage")),
     closingMileage: readMileage(formData.get("closingMileage")),
+    openingFuel: formData.get("openingFuel"),
     closingFuel: formData.get("closingFuel"),
+    notes: String(formData.get("notes") ?? "").trim() || undefined,
+    refuelled,
+    // Everything under the question is discarded when the answer is no, rather
+    // than merely hidden — a "yes" filled in, then changed to "no", must not
+    // leave a rand value on the record.
+    refuelPaidBy: refuelled ? (formData.get("refuelPaidBy") || null) : null,
+    refuelAmount: refuelled && rawAmount !== "" ? Number(rawAmount) : null,
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
-  const { bookingId, closingMileage, closingFuel } = parsed.data;
+  const {
+    bookingId,
+    openingMileage,
+    closingMileage,
+    openingFuel,
+    closingFuel,
+    notes,
+    refuelPaidBy,
+    refuelAmount,
+  } = parsed.data;
 
   const booking = await loadBooking(bookingId);
   if (!booking) return { error: "That booking no longer exists." };
@@ -271,213 +449,148 @@ export async function requestVehicleReturnOtp(
     };
   }
 
-  // Same rule as signing it out, applied to the other end of the trip.
-  if (booking.vehicleMileageRequired && closingMileage == null) {
+  // Whether the readings may be left out is the VEHICLE's setting, re-read from
+  // the register — a form that doesn't mark the box required is a convenience,
+  // exactly like the filtered dropdown on the way out.
+  if (booking.vehicleMileageRequired && (openingMileage == null || closingMileage == null)) {
     return {
-      error: `${booking.vehicleName} needs its closing mileage before it can be signed back in.`,
+      error:
+        `${booking.vehicleName} needs both its opening and closing mileage. Someone who looks after ` +
+        `the fleet can switch this off for this vehicle if it genuinely has no reading.`,
     };
   }
 
   // The one check that has to be a refusal rather than a warning: an odometer
   // doesn't run backwards, so this is either a typo or the wrong vehicle, and
-  // both make the distance meaningless. Only comparable when both ends of the
-  // trip actually have a reading.
-  if (closingMileage != null && booking.openingMileage != null && closingMileage < booking.openingMileage) {
+  // both make the distance meaningless.
+  if (openingMileage != null && closingMileage != null && closingMileage < openingMileage) {
     return {
       error:
         `The closing mileage (${formatMileage(closingMileage)}) is less than the opening mileage ` +
-        `(${formatMileage(booking.openingMileage)}). Check the odometer.`,
+        `(${formatMileage(openingMileage)}). Check the odometer.`,
     };
   }
 
-  if (!mailConfigured()) {
-    return {
-      error:
-        "Email isn't configured, so a sign-in code can't be sent. Ask an admin to sort this out before signing the vehicle in.",
-    };
-  }
+  // Uploaded before the row is written, so a rejected photo doesn't come back
+  // as an error on a trip that has already been closed off.
+  const receipt = await storePrivatePhoto("vehicle-receipts", formData.get("refuelReceipt"), "receipt");
+  if (!receipt.ok) return { error: receipt.error };
 
-  // Stops a stuck button turning into a mail flood, and makes the "Resend"
-  // link honest about why nothing happened.
-  if (booking.returnOtpSentAt && booking.returnOtpUserId === user.id) {
-    const secondsSince = (Date.now() - booking.returnOtpSentAt.getTime()) / 1000;
-    if (secondsSince < OTP_RESEND_SECONDS) {
-      return {
-        error: `A code was just sent to ${user.email}. Wait ${Math.ceil(OTP_RESEND_SECONDS - secondsSince)} seconds before asking for another.`,
-      };
-    }
-  }
-
-  const code = generateCode();
-  const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+  const returnedAt = new Date();
 
   await db
     .update(vehicleBookings)
     .set({
-      pendingClosingMileage: closingMileage,
-      pendingClosingFuel: closingFuel,
-      returnOtpHash: hashOtp(bookingId, code),
-      returnOtpExpiresAt: expiresAt,
-      returnOtpSentAt: new Date(),
-      returnOtpAttempts: 0,
-      // Bound to the person who asked, so a code can't be requested by one
-      // person and spent by another.
-      returnOtpUserId: user.id,
-      updatedAt: new Date(),
-    })
-    .where(eq(vehicleBookings.id, bookingId));
-
-  const distance = mileageDifference(booking.openingMileage, closingMileage);
-  const mail = vehicleReturnOtpEmail({
-    name: user.name,
-    // Grouped for reading off a phone; the check strips everything but digits.
-    code: `${code.slice(0, 3)} ${code.slice(3)}`,
-    vehicleName: booking.vehicleName,
-    vehicleReg: booking.vehicleReg,
-    // Null where this vehicle doesn't track mileage. The email drops the row
-    // rather than printing a dash — it exists so the reader can check the
-    // figures they typed, and a row with nothing in it isn't a figure.
-    closingMileage,
-    closingFuelLabel: fuelLabel(closingFuel),
-    distanceLabel: distance == null ? null : `${formatMileage(distance)} km`,
-    minutesValid: OTP_TTL_MINUTES,
-  });
-
-  const sent = await sendMail({
-    to: user.email,
-    subject: mail.subject,
-    html: mail.html,
-    text: mail.text,
-  });
-
-  if (!sent.ok) {
-    // Don't leave a live code against a booking whose owner never received it.
-    await db
-      .update(vehicleBookings)
-      .set({ ...CLEARED_OTP, updatedAt: new Date() })
-      .where(eq(vehicleBookings.id, bookingId));
-    return { error: `The sign-in code couldn't be emailed: ${sent.error}` };
-  }
-
-  await logEvent({
-    action: "vehicle_booking.otp_sent",
-    summary: `Sent a sign-in code for ${booking.vehicleName} (${booking.vehicleReg}) to ${user.email}`,
-    actor: user,
-    entityType: "vehicle_booking",
-    entityId: bookingId,
-  });
-
-  revalidate();
-  return { ok: true, otpSent: true, otpSentTo: user.email };
-}
-
-/* ------------------------------------------------------------------ */
-/* Signing it back in — step 2, spend the code                        */
-/* ------------------------------------------------------------------ */
-
-export async function confirmVehicleReturn(
-  _prev: VehicleBookingState,
-  formData: FormData,
-): Promise<VehicleBookingState> {
-  const user = await requirePermission("hub.view");
-  const bookingId = Number(formData.get("bookingId") || 0);
-  const code = normaliseCode(String(formData.get("code") ?? ""));
-  if (!bookingId) return { error: "Missing booking." };
-  if (!code) return { error: "Enter the code from your email." };
-
-  const booking = await loadBooking(bookingId);
-  if (!booking) return { error: "That booking no longer exists." };
-  if (booking.status === "home") {
-    return { error: `${booking.vehicleName} has already been signed back in.` };
-  }
-  if (!canReturnBooking(user, booking)) {
-    return { error: "Only the person who took the vehicle can sign it back in." };
-  }
-  // The hash and the fuel level are what prove a return is in flight. The
-  // mileage deliberately isn't in this test any more: on a vehicle with mileage
-  // switched off, null is a completed answer, not a missing one.
-  if (!booking.returnOtpHash || !booking.pendingClosingFuel) {
-    return { error: "There's no code waiting. Fill in the return details and ask for a new one." };
-  }
-  if (booking.returnOtpUserId !== user.id) {
-    return { error: "That code was sent to somebody else. Ask for your own." };
-  }
-  if (!booking.returnOtpExpiresAt || booking.returnOtpExpiresAt.getTime() < Date.now()) {
-    await db
-      .update(vehicleBookings)
-      .set({ ...CLEARED_OTP, updatedAt: new Date() })
-      .where(eq(vehicleBookings.id, bookingId));
-    return { error: "That code has expired. Ask for a new one." };
-  }
-  if (booking.returnOtpAttempts >= OTP_MAX_ATTEMPTS) {
-    await db
-      .update(vehicleBookings)
-      .set({ ...CLEARED_OTP, updatedAt: new Date() })
-      .where(eq(vehicleBookings.id, bookingId));
-    return { error: "Too many wrong codes. Ask for a new one." };
-  }
-
-  if (!codesMatch(hashOtp(bookingId, code), booking.returnOtpHash)) {
-    const attempts = booking.returnOtpAttempts + 1;
-    await db
-      .update(vehicleBookings)
-      .set({ returnOtpAttempts: attempts, updatedAt: new Date() })
-      .where(eq(vehicleBookings.id, bookingId));
-    const left = OTP_MAX_ATTEMPTS - attempts;
-    return {
-      error:
-        left > 0
-          ? `That code isn't right. ${left} ${left === 1 ? "try" : "tries"} left.`
-          : "That code isn't right, and that was the last try. Ask for a new one.",
-    };
-  }
-
-  const closingMileage = booking.pendingClosingMileage;
-  const closingFuel = booking.pendingClosingFuel;
-  const distance = mileageDifference(booking.openingMileage, closingMileage);
-
-  await db
-    .update(vehicleBookings)
-    .set({
+      openingMileage,
       closingMileage,
+      openingFuel,
       closingFuel,
+      notes: notes ?? null,
+      refuelled: parsed.data.refuelled,
+      refuelPaidBy,
+      // numeric wants a string; sending a float here is how cents go missing.
+      refuelAmount: refuelAmount == null ? null : refuelAmount.toFixed(2),
+      refuelReceiptPath: receipt.pathname,
+      refuelReceiptContentType: receipt.contentType,
       status: "home",
-      returnedAt: new Date(),
-      ...CLEARED_OTP,
+      returnedAt,
+      // The trip is over, so there is nothing left to be late for.
+      overdueRemindedAt: null,
       updatedAt: new Date(),
     })
     .where(eq(vehicleBookings.id, bookingId));
+
+  const distance = mileageDifference(openingMileage, closingMileage);
 
   await logEvent({
     action: "vehicle_booking.return",
     summary:
       `Signed ${booking.vehicleName} (${booking.vehicleReg}) back in` +
-      (closingMileage == null
+      (distance == null
         ? " with no mileage recorded"
-        : ` at ${formatMileage(closingMileage)} km` +
-          (distance == null ? "" : ` — ${formatMileage(distance)} km travelled`)) +
-      `, tank ${fuelLabel(closingFuel).toLowerCase()}`,
+        : ` at ${formatMileage(closingMileage)} km — ${formatMileage(distance)} km travelled`) +
+      `, tank ${fuelLabel(openingFuel).toLowerCase()} → ${fuelLabel(closingFuel).toLowerCase()}` +
+      (parsed.data.refuelled
+        ? `, ${formatRand(refuelAmount)} of fuel on ${refuelPayerLabel(refuelPaidBy).toLowerCase()}` +
+          (receipt.pathname ? " with a receipt" : " with no receipt")
+        : ""),
     actor: user,
     entityType: "vehicle_booking",
     entityId: bookingId,
+  });
+
+  await sendReturnedEmails(user, booking, {
+    openingMileage,
+    closingMileage,
+    openingFuel,
+    closingFuel,
+    notes: notes ?? null,
+    refuelled: parsed.data.refuelled,
+    refuelPaidBy,
+    refuelAmount,
+    hasReceipt: receipt.pathname != null,
+    returnedAt,
   });
 
   revalidate();
   return { ok: true };
 }
 
-/** Abandons a half-finished sign-in — closing the form shouldn't leave a live code. */
-export async function cancelVehicleReturn(bookingId: number) {
-  const user = await requirePermission("hub.view");
-  const booking = await loadBooking(bookingId);
-  if (!booking || !canReturnBooking(user, booking)) return;
-  if (booking.returnOtpUserId !== user.id) return;
+async function sendReturnedEmails(
+  actor: SessionUser,
+  booking: Awaited<ReturnType<typeof loadBooking>> & object,
+  filled: {
+    openingMileage: number | null;
+    closingMileage: number | null;
+    openingFuel: FuelLevel;
+    closingFuel: FuelLevel;
+    notes: string | null;
+    refuelled: boolean;
+    refuelPaidBy: RefuelPayer | null;
+    refuelAmount: number | null;
+    hasReceipt: boolean;
+    returnedAt: Date;
+  },
+) {
+  if (!mailConfigured()) return;
 
-  await db
-    .update(vehicleBookings)
-    .set({ ...CLEARED_OTP, updatedAt: new Date() })
-    .where(eq(vehicleBookings.id, bookingId));
-  revalidate();
+  const base = await appBaseUrl();
+  const distance = mileageDifference(filled.openingMileage, filled.closingMileage);
+  const trip = {
+    vehicleName: booking.vehicleName,
+    vehicleReg: booking.vehicleReg,
+    vehicleNickname: booking.vehicleNickname,
+    driverName: booking.bookedForName ?? booking.bookedByName,
+    bookedByName: booking.bookedByName,
+    takenOnLabel: formatDateTime(booking.takenOutAt),
+    expectedReturnLabel: formatDateTime(booking.expectedReturnAt),
+    bookingsUrl: `${base}/vehicle-bookings`,
+  };
+
+  for (const party of bothParties(booking)) {
+    const mail = vehicleReturnedEmail({
+      ...trip,
+      name: party.name,
+      returnedLabel: formatDateTime(filled.returnedAt),
+      openingMileageLabel:
+        filled.openingMileage == null ? null : `${formatMileage(filled.openingMileage)} km`,
+      closingMileageLabel:
+        filled.closingMileage == null ? null : `${formatMileage(filled.closingMileage)} km`,
+      distanceLabel: distance == null ? null : `${formatMileage(distance)} km`,
+      openingFuelLabel: fuelLabel(filled.openingFuel),
+      closingFuelLabel: fuelLabel(filled.closingFuel),
+      notes: filled.notes,
+      refuel: filled.refuelled
+        ? {
+            paidByLabel: refuelPayerLabel(filled.refuelPaidBy).toLowerCase(),
+            amountLabel: formatRand(filled.refuelAmount),
+            hasReceipt: filled.hasReceipt,
+          }
+        : null,
+      signedInByName: actor.name,
+    });
+    await sendMail({ to: party.email, subject: mail.subject, html: mail.html, text: mail.text });
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -487,11 +600,11 @@ export async function cancelVehicleReturn(bookingId: number) {
 /**
  * Deletes a booking made in error.
  *
- * Not part of the brief, but without it a wrong vehicle picked from the
- * dropdown blocks that vehicle until someone invents an odometer reading to
- * "return" it. Restricted to the booker and to whoever looks after the fleet,
- * and refused once the vehicle has actually been signed back in — at that point
- * the row is a mileage record, not a mistake.
+ * Without it a wrong vehicle picked from the dropdown blocks that vehicle until
+ * someone invents an odometer reading to "return" it. Restricted to the booker
+ * and to whoever looks after the fleet, and refused once the vehicle has
+ * actually been signed back in — at that point the row is a mileage record, not
+ * a mistake.
  */
 export async function cancelVehicleBooking(bookingId: number): Promise<VehicleBookingState> {
   const user = await requirePermission("hub.view");
@@ -530,22 +643,20 @@ async function loadBooking(id: number) {
       id: vehicleBookings.id,
       vehicleId: vehicleBookings.vehicleId,
       vehicleName: vehicles.name,
+      vehicleNickname: vehicles.nickname,
       vehicleReg: vehicles.regNumber,
       // Read off the vehicle, not off the booking: unticking the box should
       // release the trips already open, not only the ones started afterwards.
       vehicleMileageRequired: vehicles.mileageRequired,
       bookedByUserId: vehicleBookings.bookedByUserId,
       bookedByName: vehicleBookings.bookedByName,
+      bookedByEmail: vehicleBookings.bookedByEmail,
       bookedForUserId: vehicleBookings.bookedForUserId,
-      openingMileage: vehicleBookings.openingMileage,
+      bookedForName: vehicleBookings.bookedForName,
+      bookedForEmail: vehicleBookings.bookedForEmail,
+      takenOutAt: vehicleBookings.takenOutAt,
+      expectedReturnAt: vehicleBookings.expectedReturnAt,
       status: vehicleBookings.status,
-      pendingClosingMileage: vehicleBookings.pendingClosingMileage,
-      pendingClosingFuel: vehicleBookings.pendingClosingFuel,
-      returnOtpHash: vehicleBookings.returnOtpHash,
-      returnOtpExpiresAt: vehicleBookings.returnOtpExpiresAt,
-      returnOtpSentAt: vehicleBookings.returnOtpSentAt,
-      returnOtpAttempts: vehicleBookings.returnOtpAttempts,
-      returnOtpUserId: vehicleBookings.returnOtpUserId,
     })
     .from(vehicleBookings)
     .innerJoin(vehicles, eq(vehicleBookings.vehicleId, vehicles.id))
