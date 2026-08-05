@@ -28,6 +28,8 @@ type VehicleRow = {
   branded: boolean;
   companyId: number;
   companyName: string;
+  /** Whether booking it demands opening and closing odometer readings. */
+  mileageRequired: boolean;
   active: boolean;
   /** Trips on record. Nonzero means it can be retired but never deleted. */
   bookingCount: number;
@@ -56,6 +58,9 @@ function VehicleForm({
   const editing = !!vehicle;
   const [state, action] = useActionState<VehicleState, FormData>(saveVehicle, {});
   const [branded, setBranded] = useState(vehicle?.branded ?? false);
+  // On for anything new: mileage is the norm, and a vehicle added without a
+  // thought about it should behave like the rest of the fleet.
+  const [mileageRequired, setMileageRequired] = useState(vehicle?.mileageRequired ?? true);
 
   useEffect(() => {
     if (state.ok) onDone();
@@ -137,6 +142,27 @@ function VehicleForm({
           ))}
         </div>
       </Field>
+
+      {/* A bare checkbox posts nothing at all when it's off, which is exactly how
+          a field gets rendered, submitted and then silently dropped on the edit
+          path. The hidden input is what the server reads. */}
+      <input type="hidden" name="mileageRequired" value={mileageRequired ? "yes" : "no"} />
+      <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-line px-3 py-2.5 text-sm text-slate-700 transition-colors hover:bg-slate-50">
+        <input
+          type="checkbox"
+          checked={mileageRequired}
+          onChange={(e) => setMileageRequired(e.target.checked)}
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-line text-brand-600 focus:ring-brand-100"
+        />
+        <span>
+          Make opening/closing mileage mandatory
+          <span className="mt-0.5 block text-xs text-muted">
+            {mileageRequired
+              ? "Whoever books it must enter the odometer reading when they take it and when they bring it back."
+              : "The mileage boxes still appear, but can be left blank — the trip's distance will simply show as “—”."}
+          </span>
+        </span>
+      </label>
 
       {state.error && (
         <p className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -252,6 +278,10 @@ export function VehiclesClient({
                           a live vehicle read as a retired one at a glance. */}
                       <Badge tone="neutral">{v.regNumber}</Badge>
                       {v.branded && <Badge tone="brand">Branded</Badge>}
+                      {/* Only the exception is badged. Mileage is mandatory on
+                          almost everything, so a badge on every row would say
+                          nothing; a badge on the odd one out says all of it. */}
+                      {!v.mileageRequired && <Badge tone="amber">No mileage</Badge>}
                       {!v.active && <Badge tone="slate">Retired</Badge>}
                     </div>
                     <p className="truncate text-xs text-muted">

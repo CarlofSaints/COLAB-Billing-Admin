@@ -22,6 +22,7 @@ import {
   OTP_TTL_MINUTES,
   formatMileage,
   fuelLabel,
+  mileageDifference,
   type FuelLevel,
 } from "@/lib/vehicle-bookings";
 
@@ -42,9 +43,23 @@ const mileage = z
   .min(0, "Mileage can't be negative")
   .max(MAX_MILEAGE, "That mileage looks like a typo — check the odometer");
 
+/**
+ * A reading that may be left out — but is still a real odometer reading if it's
+ * there. Whether blank is *allowed* is the vehicle's business (see
+ * `vehicles.mileage_required`) and is checked against the database, not here.
+ */
+const optionalMileage = mileage.nullable();
+
+/** Blank, whitespace or a non-number all mean "not given"; anything else parses. */
+function readMileage(raw: FormDataEntryValue | null): number | null {
+  const text = String(raw ?? "").trim();
+  if (text === "") return null;
+  return Number(text);
+}
+
 const createSchema = z.object({
   vehicleId: z.number().int().positive("Pick a vehicle"),
-  openingMileage: mileage,
+  openingMileage: optionalMileage,
   openingFuel: z.enum(fuelValues, { message: "Say how full the tank is" }),
   bookedForUserId: z.number().int().nonnegative(),
   forService: z.boolean(),
@@ -53,7 +68,7 @@ const createSchema = z.object({
 
 const returnSchema = z.object({
   bookingId: z.number().int().positive(),
-  closingMileage: mileage,
+  closingMileage: optionalMileage,
   closingFuel: z.enum(fuelValues, { message: "Say how full the tank is" }),
 });
 
@@ -118,7 +133,7 @@ export async function createVehicleBooking(
 
   const parsed = createSchema.safeParse({
     vehicleId: Number(formData.get("vehicleId") || 0),
-    openingMileage: Number(formData.get("openingMileage")),
+    openingMileage: readMileage(formData.get("openingMileage")),
     openingFuel: formData.get("openingFuel"),
     bookedForUserId: Number(formData.get("bookedForUserId") || 0),
     forService: formData.get("forService") === "yes",
@@ -134,6 +149,15 @@ export async function createVehicleBooking(
   const allowed = await assertCanBookVehicle(scope, vehicleId);
   if (!allowed.ok) return { error: allowed.error };
   const vehicle = allowed.vehicle;
+
+  // Whether the reading may be left out is the VEHICLE's setting, re-read from
+  // the register on submit — a form told not to mark the box required is a
+  // convenience, exactly like the filtered dropdown above it.
+  if (vehicle.mileageRequired && openingMileage == null) {
+    return {
+      error: `${vehicle.name} needs its opening mileage. Read it off the odometer before you drive off — someone who looks after the fleet can switch this off for this vehicle if it genuinely has no reading.`,
+    };
+  }
 
   // A vehicle can only be in one place. Checked here so the message can say who
   // has it; the partial unique index is what actually holds the line when two
@@ -198,7 +222,9 @@ export async function createVehicleBooking(
     summary:
       `Took out ${vehicle.name} (${vehicle.regNumber})` +
       (bookedFor ? ` for ${bookedFor.name}` : "") +
-      ` at ${formatMileage(openingMileage)} km, tank ${fuelLabel(openingFuel).toLowerCase()}` +
+      (openingMileage == null
+        ? ` with no mileage recorded, tank ${fuelLabel(openingFuel).toLowerCase()}`
+        : ` at ${formatMileage(openingMileage)} km, tank ${fuelLabel(openingFuel).toLowerCase()}`) +
       (forService ? " — going in for a service" : ""),
     actor: user,
     entityType: "vehicle_booking",
@@ -228,7 +254,7 @@ export async function requestVehicleReturnOtp(
 
   const parsed = returnSchema.safeParse({
     bookingId: Number(formData.get("bookingId") || 0),
-    closingMileage: Number(formData.get("closingMileage")),
+    closingMileage: readMileage(formData.get("closingMileage")),
     closingFuel: formData.get("closingFuel"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
@@ -245,10 +271,18 @@ export async function requestVehicleReturnOtp(
     };
   }
 
+  // Same rule as signing it out, applied to the other end of the trip.
+  if (booking.vehicleMileageRequired && closingMileage == null) {
+    return {
+      error: `${booking.vehicleName} needs its closing mileage before it can be signed back in.`,
+    };
+  }
+
   // The one check that has to be a refusal rather than a warning: an odometer
   // doesn't run backwards, so this is either a typo or the wrong vehicle, and
-  // both make the distance meaningless.
-  if (closingMileage < booking.openingMileage) {
+  // both make the distance meaningless. Only comparable when both ends of the
+  // trip actually have a reading.
+  if (closingMileage != null && booking.openingMileage != null && closingMileage < booking.openingMileage) {
     return {
       error:
         `The closing mileage (${formatMileage(closingMileage)}) is less than the opening mileage ` +
@@ -293,16 +327,19 @@ export async function requestVehicleReturnOtp(
     })
     .where(eq(vehicleBookings.id, bookingId));
 
-  const distance = closingMileage - booking.openingMileage;
+  const distance = mileageDifference(booking.openingMileage, closingMileage);
   const mail = vehicleReturnOtpEmail({
     name: user.name,
     // Grouped for reading off a phone; the check strips everything but digits.
     code: `${code.slice(0, 3)} ${code.slice(3)}`,
     vehicleName: booking.vehicleName,
     vehicleReg: booking.vehicleReg,
+    // Null where this vehicle doesn't track mileage. The email drops the row
+    // rather than printing a dash — it exists so the reader can check the
+    // figures they typed, and a row with nothing in it isn't a figure.
     closingMileage,
     closingFuelLabel: fuelLabel(closingFuel),
-    distanceLabel: `${formatMileage(distance)} km`,
+    distanceLabel: distance == null ? null : `${formatMileage(distance)} km`,
     minutesValid: OTP_TTL_MINUTES,
   });
 
@@ -356,7 +393,10 @@ export async function confirmVehicleReturn(
   if (!canReturnBooking(user, booking)) {
     return { error: "Only the person who took the vehicle can sign it back in." };
   }
-  if (!booking.returnOtpHash || booking.pendingClosingMileage == null || !booking.pendingClosingFuel) {
+  // The hash and the fuel level are what prove a return is in flight. The
+  // mileage deliberately isn't in this test any more: on a vehicle with mileage
+  // switched off, null is a completed answer, not a missing one.
+  if (!booking.returnOtpHash || !booking.pendingClosingFuel) {
     return { error: "There's no code waiting. Fill in the return details and ask for a new one." };
   }
   if (booking.returnOtpUserId !== user.id) {
@@ -394,7 +434,7 @@ export async function confirmVehicleReturn(
 
   const closingMileage = booking.pendingClosingMileage;
   const closingFuel = booking.pendingClosingFuel;
-  const distance = closingMileage - booking.openingMileage;
+  const distance = mileageDifference(booking.openingMileage, closingMileage);
 
   await db
     .update(vehicleBookings)
@@ -411,9 +451,12 @@ export async function confirmVehicleReturn(
   await logEvent({
     action: "vehicle_booking.return",
     summary:
-      `Signed ${booking.vehicleName} (${booking.vehicleReg}) back in at ` +
-      `${formatMileage(closingMileage)} km — ${formatMileage(distance)} km travelled, ` +
-      `tank ${fuelLabel(closingFuel).toLowerCase()}`,
+      `Signed ${booking.vehicleName} (${booking.vehicleReg}) back in` +
+      (closingMileage == null
+        ? " with no mileage recorded"
+        : ` at ${formatMileage(closingMileage)} km` +
+          (distance == null ? "" : ` — ${formatMileage(distance)} km travelled`)) +
+      `, tank ${fuelLabel(closingFuel).toLowerCase()}`,
     actor: user,
     entityType: "vehicle_booking",
     entityId: bookingId,
@@ -488,6 +531,9 @@ async function loadBooking(id: number) {
       vehicleId: vehicleBookings.vehicleId,
       vehicleName: vehicles.name,
       vehicleReg: vehicles.regNumber,
+      // Read off the vehicle, not off the booking: unticking the box should
+      // release the trips already open, not only the ones started afterwards.
+      vehicleMileageRequired: vehicles.mileageRequired,
       bookedByUserId: vehicleBookings.bookedByUserId,
       bookedByName: vehicleBookings.bookedByName,
       bookedForUserId: vehicleBookings.bookedForUserId,

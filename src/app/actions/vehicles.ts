@@ -25,6 +25,9 @@ const vehicleSchema = z.object({
     .number()
     .int()
     .positive("Say which sub-company the vehicle belongs to"),
+  // Whether a booking of this vehicle has to carry odometer readings. On for
+  // anything new; unticked for the vehicles nobody reads a reading off.
+  mileageRequired: z.boolean(),
 });
 
 function parse(formData: FormData) {
@@ -39,6 +42,7 @@ function parse(formData: FormData) {
     colour: String(formData.get("colour") ?? "").trim() || undefined,
     branded: formData.get("branded") === "yes",
     companyId: Number(formData.get("companyId") || 0),
+    mileageRequired: formData.get("mileageRequired") === "yes",
   });
 }
 
@@ -55,7 +59,8 @@ export async function saveVehicle(
 
   const parsed = parse(formData);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
-  const { name, nickname, vin, regNumber, colour, branded, companyId } = parsed.data;
+  const { name, nickname, vin, regNumber, colour, branded, companyId, mileageRequired } =
+    parsed.data;
 
   const [company] = await db
     .select({ id: companies.id, name: companies.name })
@@ -95,6 +100,7 @@ export async function saveVehicle(
     colour: colour ?? null,
     branded,
     companyId,
+    mileageRequired,
   };
 
   if (id) {
@@ -110,7 +116,10 @@ export async function saveVehicle(
     action: id ? "vehicle.update" : "vehicle.create",
     summary:
       `${id ? "Updated" : "Added"} vehicle "${name}"${nickname ? ` (${nickname})` : ""} ` +
-      `${regNumber} — ${company.name}${branded ? ", branded" : ""}`,
+      `${regNumber} — ${company.name}${branded ? ", branded" : ""}` +
+      // Worth logging only when it's off: it's the state that changes what the
+      // booking form asks for, and it's the one someone will later query.
+      (mileageRequired ? "" : ", mileage readings not required"),
     actor,
     entityType: "vehicle",
     entityId: id ?? undefined,

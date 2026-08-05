@@ -26,6 +26,9 @@ const statements: [string, string][] = [
        "colour" text,
        "branded" boolean not null default false,
        "company_id" integer not null references "companies"("id") on delete restrict,
+       -- Added later by scripts/add-vehicle-mileage-optional.ts; carried here so
+       -- a database built from scratch matches the live one either way round.
+       "mileage_required" boolean not null default true,
        "active" boolean not null default true,
        "created_at" timestamp with time zone not null default now(),
        "updated_at" timestamp with time zone not null default now()

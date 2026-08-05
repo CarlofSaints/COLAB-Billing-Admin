@@ -38,6 +38,8 @@ type FleetVehicle = {
   nickname: string | null;
   regNumber: string;
   companyName: string;
+  /** Whether this vehicle's bookings have to carry odometer readings. */
+  mileageRequired: boolean;
   lastMileage: number | null;
   available: boolean;
 };
@@ -51,11 +53,12 @@ export type BookingRow = {
   vehicleNickname: string | null;
   vehicleReg: string;
   vehicleCompanyName: string;
+  vehicleMileageRequired: boolean;
   bookedByUserId: number | null;
   bookedByName: string;
   bookedForUserId: number | null;
   bookedForName: string | null;
-  openingMileage: number;
+  openingMileage: number | null;
   closingMileage: number | null;
   openingFuel: FuelLevel;
   closingFuel: FuelLevel | null;
@@ -199,6 +202,11 @@ function BookingForm({
       ? entered < vehicle.lastMileage
       : false;
 
+  // Switched off per vehicle on the register. Default to demanding it, so a
+  // vehicle that somehow isn't in the list can't quietly relax the rule — the
+  // server re-checks against the register either way.
+  const mileageRequired = vehicle?.mileageRequired ?? true;
+
   const term = search.trim().toLowerCase();
   const matches = term
     ? allUsers.filter(
@@ -231,11 +239,13 @@ function BookingForm({
       </Field>
 
       <Field
-        label="Opening mileage"
+        label={mileageRequired ? "Opening mileage" : "Opening mileage (optional)"}
         hint={
-          vehicle?.lastMileage != null
-            ? `Last recorded reading for this vehicle: ${formatMileage(vehicle.lastMileage)} km.`
-            : "The odometer reading as you take the vehicle over."
+          !mileageRequired
+            ? "This vehicle doesn't need a reading — fill it in if you have one, or leave it blank."
+            : vehicle?.lastMileage != null
+              ? `Last recorded reading for this vehicle: ${formatMileage(vehicle.lastMileage)} km.`
+              : "The odometer reading as you take the vehicle over."
         }
       >
         <Input
@@ -243,7 +253,7 @@ function BookingForm({
           type="number"
           inputMode="numeric"
           min={0}
-          required
+          required={mileageRequired}
           value={mileage}
           onChange={(e) => setMileage(e.target.value)}
           className="max-w-40"
@@ -347,7 +357,7 @@ function BookingForm({
         <SubmitButton
           label="Take the vehicle"
           busy="Saving…"
-          disabled={!vehicleId || openingFuel === "" || mileage === ""}
+          disabled={!vehicleId || openingFuel === "" || (mileageRequired && mileage === "")}
         />
       </div>
     </form>
@@ -395,10 +405,14 @@ function ReturnForm({
     if (confirmState.ok) onDone();
   }, [confirmState.ok, onDone]);
 
+  const mileageRequired = booking.vehicleMileageRequired;
   const entered = Number(closingMileage);
   const valid = closingMileage !== "" && Number.isFinite(entered);
-  const belowOpening = valid && entered < booking.openingMileage;
-  const distance = valid && !belowOpening ? entered - booking.openingMileage : null;
+  // Only comparable when the trip was signed out with a reading — on a vehicle
+  // whose mileage is switched off there may be nothing to compare against.
+  const belowOpening = valid && booking.openingMileage != null && entered < booking.openingMileage;
+  const distance =
+    valid && !belowOpening ? mileageDifference(booking.openingMileage, entered) : null;
 
   if (awaitingCode) {
     return (
@@ -419,21 +433,28 @@ function ReturnForm({
         </div>
 
         <dl className="rounded-lg border border-line px-3 py-2.5 text-sm">
-          <div className="flex justify-between py-0.5">
-            <dt className="text-muted">Closing mileage</dt>
-            <dd className="font-medium text-slate-900">
-              {formatMileage(booking.pendingClosingMileage)} km
-            </dd>
-          </div>
-          <div className="flex justify-between py-0.5">
-            <dt className="text-muted">Distance travelled</dt>
-            <dd className="font-medium text-slate-900">
-              {formatMileage(
-                mileageDifference(booking.openingMileage, booking.pendingClosingMileage),
-              )}{" "}
-              km
-            </dd>
-          </div>
+          {/* Whatever readings there are, so the code approves numbers that can
+              actually be checked. A vehicle with mileage switched off simply
+              shows the fuel line. */}
+          {booking.pendingClosingMileage != null && (
+            <div className="flex justify-between py-0.5">
+              <dt className="text-muted">Closing mileage</dt>
+              <dd className="font-medium text-slate-900">
+                {formatMileage(booking.pendingClosingMileage)} km
+              </dd>
+            </div>
+          )}
+          {mileageDifference(booking.openingMileage, booking.pendingClosingMileage) != null && (
+            <div className="flex justify-between py-0.5">
+              <dt className="text-muted">Distance travelled</dt>
+              <dd className="font-medium text-slate-900">
+                {formatMileage(
+                  mileageDifference(booking.openingMileage, booking.pendingClosingMileage),
+                )}{" "}
+                km
+              </dd>
+            </div>
+          )}
           <div className="flex justify-between py-0.5">
             <dt className="text-muted">Fuel on return</dt>
             <dd className="font-medium text-slate-900">{fuelLabel(booking.pendingClosingFuel)}</dd>
@@ -485,19 +506,28 @@ function ReturnForm({
         <strong>{booking.vehicleName}</strong>
         {booking.vehicleNickname ? ` “${booking.vehicleNickname}”` : ""} · {booking.vehicleReg}
         <span className="mt-0.5 block text-xs text-muted">
-          Taken out at {formatMileage(booking.openingMileage)} km, tank{" "}
+          {booking.openingMileage == null
+            ? "Taken out with no mileage recorded, tank "
+            : `Taken out at ${formatMileage(booking.openingMileage)} km, tank `}
           {fuelLabel(booking.openingFuel).toLowerCase()}, by{" "}
           {booking.bookedForName ?? booking.bookedByName}.
         </span>
       </div>
 
-      <Field label="Closing mileage" hint="The odometer reading now the trip is done.">
+      <Field
+        label={mileageRequired ? "Closing mileage" : "Closing mileage (optional)"}
+        hint={
+          mileageRequired
+            ? "The odometer reading now the trip is done."
+            : "This vehicle doesn't need a reading — fill it in if you have one, or leave it blank."
+        }
+      >
         <Input
           name="closingMileage"
           type="number"
           inputMode="numeric"
           min={0}
-          required
+          required={mileageRequired}
           value={closingMileage}
           onChange={(e) => setClosingMileage(e.target.value)}
           className="max-w-40"
@@ -534,7 +564,9 @@ function ReturnForm({
         <SubmitButton
           label="Submit and email me a code"
           busy="Sending…"
-          disabled={closingFuel === "" || closingMileage === "" || belowOpening}
+          disabled={
+            closingFuel === "" || (mileageRequired && closingMileage === "") || belowOpening
+          }
         />
       </div>
     </form>

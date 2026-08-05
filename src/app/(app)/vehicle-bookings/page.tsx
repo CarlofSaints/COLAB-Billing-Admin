@@ -25,6 +25,9 @@ export default async function VehicleBookingsPage() {
       vehicleNickname: vehicles.nickname,
       vehicleReg: vehicles.regNumber,
       vehicleCompanyName: companies.name,
+      // Off the vehicle, so unticking the box releases trips that are already
+      // open rather than only the ones started afterwards.
+      vehicleMileageRequired: vehicles.mileageRequired,
       bookedByUserId: vehicleBookings.bookedByUserId,
       bookedByName: vehicleBookings.bookedByName,
       bookedForUserId: vehicleBookings.bookedForUserId,
@@ -103,6 +106,7 @@ export default async function VehicleBookingsPage() {
     nickname: v.nickname,
     regNumber: v.regNumber,
     companyName: v.companyName,
+    mileageRequired: v.mileageRequired,
     lastMileage: lastMileage.get(v.id) ?? null,
     available: !openTrips.has(v.id),
   }));

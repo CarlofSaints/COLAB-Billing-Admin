@@ -964,12 +964,26 @@ export function vehicleReturnOtpEmail(input: {
   code: string;
   vehicleName: string;
   vehicleReg: string;
-  closingMileage: number;
+  /** Null on a vehicle whose odometer readings are switched off. */
+  closingMileage: number | null;
   closingFuelLabel: string;
-  distanceLabel: string;
+  distanceLabel: string | null;
   minutesValid: number;
 }) {
   const subject = `${input.code} is your code to sign in ${input.vehicleName}`;
+
+  // The table is here so the reader can check the numbers they typed before
+  // spending the code. A row with no number in it can't be checked, so it's
+  // left out rather than filled with a dash.
+  const readings: [string, string][] = [
+    ...(input.closingMileage != null
+      ? ([["Closing mileage", escapeHtml(String(input.closingMileage))]] as [string, string][])
+      : []),
+    ...(input.distanceLabel
+      ? ([["Distance travelled", escapeHtml(input.distanceLabel)]] as [string, string][])
+      : []),
+    ["Fuel on return", escapeHtml(input.closingFuelLabel)],
+  ];
 
   const html = emailShell({
     preheader: `Your code is ${input.code} — it expires in ${input.minutesValid} minutes.`,
@@ -981,11 +995,7 @@ export function vehicleReturnOtpEmail(input: {
       ),
       codeValue(input.code),
       p(`The code expires in ${input.minutesValid} minutes.`),
-      detailTable([
-        ["Closing mileage", escapeHtml(String(input.closingMileage))],
-        ["Distance travelled", escapeHtml(input.distanceLabel)],
-        ["Fuel on return", escapeHtml(input.closingFuelLabel)],
-      ]),
+      detailTable(readings),
       note(
         "If those readings aren't the ones you entered, don't use the code — go back to the booking and check.",
       ),
@@ -999,8 +1009,8 @@ export function vehicleReturnOtpEmail(input: {
     `Your code to sign ${input.vehicleName} (${input.vehicleReg}) back in is: ${input.code}`,
     `It expires in ${input.minutesValid} minutes.`,
     "",
-    `Closing mileage: ${input.closingMileage}`,
-    `Distance travelled: ${input.distanceLabel}`,
+    ...(input.closingMileage != null ? [`Closing mileage: ${input.closingMileage}`] : []),
+    ...(input.distanceLabel ? [`Distance travelled: ${input.distanceLabel}`] : []),
     `Fuel on return: ${input.closingFuelLabel}`,
     "",
     "If those readings aren't the ones you entered, don't use the code — go back to the booking and check.",

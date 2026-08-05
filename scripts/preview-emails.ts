@@ -310,6 +310,21 @@ const samples: { label: string; mail: { subject: string; html: string } }[] = [
     }),
   },
   {
+    // The other shape of the same email: a vehicle whose odometer readings are
+    // switched off on the register, so there is nothing to quote back but fuel.
+    label: "Vehicle sign-in code — mileage not tracked",
+    mail: vehicleReturnOtpEmail({
+      name: "Sky Roos",
+      code: "418 302",
+      vehicleName: "Yard trailer",
+      vehicleReg: "CA 987-654",
+      closingMileage: null,
+      closingFuelLabel: "Half",
+      distanceLabel: null,
+      minutesValid: 10,
+    }),
+  },
+  {
     label: "Office issue reported",
     mail: issueReportedEmail({
       category: "Electrical",

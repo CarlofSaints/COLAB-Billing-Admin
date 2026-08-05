@@ -1056,6 +1056,16 @@ export const vehicles = pgTable(
     companyId: integer("company_id")
       .notNull()
       .references(() => companies.id, { onDelete: "restrict" }),
+    /**
+     * Whether a booking of this vehicle has to carry odometer readings.
+     *
+     * On by default — tracking mileage is half the point of the register. Turned
+     * off per vehicle for the ones where nobody reads the odometer, so the
+     * booking form stops demanding a number that would otherwise be invented.
+     * An invented reading is worse than a blank one: it makes the Difference
+     * column look like a fact.
+     */
+    mileageRequired: boolean("mileage_required").notNull().default(true),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1157,7 +1167,13 @@ export const vehicleBookings = pgTable(
     bookedForName: text("booked_for_name"),
     bookedForEmail: text("booked_for_email"),
 
-    openingMileage: integer("opening_mileage").notNull(),
+    /**
+     * Null only where the vehicle has `mileage_required` switched off. Not
+     * defaulted to 0: a trip that starts at zero kilometres is a claim, and the
+     * Difference column would then quietly report the whole odometer as
+     * distance travelled.
+     */
+    openingMileage: integer("opening_mileage"),
     closingMileage: integer("closing_mileage"),
     openingFuel: vehicleFuelLevelEnum("opening_fuel").notNull(),
     closingFuel: vehicleFuelLevelEnum("closing_fuel"),

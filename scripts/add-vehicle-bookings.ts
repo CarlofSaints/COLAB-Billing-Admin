@@ -52,7 +52,10 @@ const statements: [string, string][] = [
        "booked_for_user_id" integer references "users"("id") on delete set null,
        "booked_for_name" text,
        "booked_for_email" text,
-       "opening_mileage" integer not null,
+       -- Nullable since mileage became optional per vehicle; see
+       -- scripts/add-vehicle-mileage-optional.ts. Left nullable here too so a
+       -- database built from scratch matches the live one either way round.
+       "opening_mileage" integer,
        "closing_mileage" integer,
        "opening_fuel" "vehicle_fuel_level" not null,
        "closing_fuel" "vehicle_fuel_level",

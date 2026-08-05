@@ -21,6 +21,7 @@ export default async function VehiclesPage() {
       branded: vehicles.branded,
       companyId: vehicles.companyId,
       companyName: companies.name,
+      mileageRequired: vehicles.mileageRequired,
       active: vehicles.active,
       // Drives the delete button's warning: with the number to hand it can say
       // what will actually happen instead of "this might not work".

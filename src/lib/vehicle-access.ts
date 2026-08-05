@@ -127,6 +127,7 @@ export async function bookableVehicles(scope: BookerScope) {
       colour: vehicles.colour,
       companyId: vehicles.companyId,
       companyName: companies.name,
+      mileageRequired: vehicles.mileageRequired,
     })
     .from(vehicles)
     .innerJoin(companies, eq(vehicles.companyId, companies.id))
@@ -141,7 +142,25 @@ export async function bookableVehicles(scope: BookerScope) {
 export async function assertCanBookVehicle(
   scope: BookerScope,
   vehicleId: number,
-): Promise<{ ok: true; vehicle: { id: number; name: string; regNumber: string; companyId: number; companyName: string } } | { ok: false; error: string }> {
+): Promise<
+  | {
+      ok: true;
+      vehicle: {
+        id: number;
+        name: string;
+        regNumber: string;
+        companyId: number;
+        companyName: string;
+        /**
+         * Read back off the vehicle here, not taken from the form, for the same
+         * reason the company is: the form can say anything. This is what the
+         * action enforces the mileage rule against.
+         */
+        mileageRequired: boolean;
+      };
+    }
+  | { ok: false; error: string }
+> {
   const [vehicle] = await db
     .select({
       id: vehicles.id,
@@ -150,6 +169,7 @@ export async function assertCanBookVehicle(
       active: vehicles.active,
       companyId: vehicles.companyId,
       companyName: companies.name,
+      mileageRequired: vehicles.mileageRequired,
     })
     .from(vehicles)
     .innerJoin(companies, eq(vehicles.companyId, companies.id))
@@ -180,6 +200,7 @@ export async function assertCanBookVehicle(
       regNumber: vehicle.regNumber,
       companyId: vehicle.companyId,
       companyName: vehicle.companyName,
+      mileageRequired: vehicle.mileageRequired,
     },
   };
 }
