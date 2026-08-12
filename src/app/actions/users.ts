@@ -8,7 +8,13 @@ import { db } from "@/db";
 import { users, roles, staff } from "@/db/schema";
 import { requirePermission, hashPassword } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
-import { appBaseUrl, credentialsEmail, mailConfigured, sendMail } from "@/lib/mailer";
+import {
+  appBaseUrl,
+  credentialsEmail,
+  hubInviteEmail,
+  mailConfigured,
+  sendMail,
+} from "@/lib/mailer";
 
 export type UserActionState = {
   error?: string;
@@ -490,6 +496,105 @@ export async function resetUserPassword(userId: number): Promise<UserActionState
   });
   revalidatePath("/users");
   return { ok: true, tempPassword: pw };
+}
+
+/**
+ * Re-send someone their welcome email and sign-in details.
+ *
+ * **This necessarily issues a NEW temporary password.** Passwords are stored as
+ * a hash, so the one originally emailed cannot be read back and re-sent — there
+ * is nothing to resend. The only honest version of this button is therefore
+ * "mint a fresh temporary password and email it", and the old one stops working
+ * the moment it runs. The confirm on the button says so.
+ *
+ * Two guards exist because both failure modes end with a person who cannot sign
+ * in and nobody holding a password that works:
+ *   - mail not configured — refused BEFORE the password is replaced, otherwise
+ *     the account is left locked with a secret that exists nowhere;
+ *   - the send failing anyway — the new password comes back in the state so the
+ *     admin can hand it over, exactly as Add user already does.
+ *
+ * A disabled account is refused outright: emailing sign-in details to someone
+ * who will be bounced at the login screen only generates a support question.
+ */
+export async function resendCredentials(userId: number): Promise<UserActionState> {
+  const actor = await requirePermission("users.manage");
+
+  const [target] = await db
+    .select({ id: users.id, name: users.name, email: users.email, active: users.active })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!target) return { error: "That user no longer exists." };
+  if (!target.active) {
+    return {
+      error: `${target.name}'s account is disabled, so they can't sign in with anything you send them. Enable it first, then resend.`,
+    };
+  }
+  if (!mailConfigured()) {
+    return {
+      error:
+        "Email isn't configured yet — add the GRAPH_* variables (or RESEND_API_KEY and MAIL_FROM) in Vercel. Nothing was changed, so their current password still works.",
+    };
+  }
+
+  // Which welcome? Someone on the team list gets the Team Hub welcome with its
+  // "set up your profile" call to action; someone who only has a login — an
+  // outside accountant, say — gets the plain sign-in details, because that
+  // email would otherwise send them to a profile card that tells them they're
+  // not on the team list. Resolved userId-else-email, the app-wide rule.
+  const [member] = await db
+    .select({ id: staff.id })
+    .from(staff)
+    .where(sql`${staff.userId} = ${target.id} or lower(${staff.email}) = ${target.email.toLowerCase()}`)
+    .limit(1);
+
+  const pw = tempPassword();
+  const passwordHash = await hashPassword(pw);
+  await db
+    .update(users)
+    // Forced regardless of what the account was on before: a password an admin
+    // has seen and emailed is not one the person gets to keep.
+    .set({ passwordHash, mustChangePassword: true, updatedAt: new Date() })
+    .where(eq(users.id, userId));
+
+  const base = await appBaseUrl();
+  const mail = member
+    ? hubInviteEmail({
+        name: target.name,
+        email: target.email,
+        password: pw,
+        loginUrl: `${base}/login`,
+        profileUrl: `${base}/account`,
+      })
+    : credentialsEmail({
+        name: target.name,
+        email: target.email,
+        password: pw,
+        loginUrl: `${base}/login`,
+        mustChangePassword: true,
+        isReset: false,
+      });
+  const res = await sendMail({ to: target.email, subject: mail.subject, html: mail.html, text: mail.text });
+
+  await logEvent({
+    action: res.ok ? "user.credentials_resent" : "user.credentials_resend_failed",
+    // Naming the transport for the same reason the create path does: a send
+    // that failed over to Resend looks healthy from here and identical from the
+    // recipient's end, right up until you go hunting for why nothing arrived.
+    summary: res.ok
+      ? `Re-sent sign-in details to ${target.name} (${target.email}) with a new temporary password (via ${res.provider})`
+      : `Failed to re-send sign-in details to ${target.name} (${target.email}): ${res.error} — their password was still reset`,
+    actor,
+    entityType: "user",
+    entityId: userId,
+    metadata: { welcome: member ? "hub_invite" : "credentials" },
+  });
+
+  revalidatePath("/users");
+  return res.ok
+    ? { ok: true, emailed: true, emailTo: target.email, tempPassword: pw }
+    : { ok: true, emailed: false, emailError: res.error, emailTo: target.email, tempPassword: pw };
 }
 
 export async function listRoles() {

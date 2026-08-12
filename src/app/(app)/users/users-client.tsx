@@ -6,6 +6,7 @@ import {
   Plus,
   KeyRound,
   Copy,
+  Mail,
   MailCheck,
   AlertTriangle,
   Trash2,
@@ -20,6 +21,7 @@ import {
   updateUserRole,
   setUserActive,
   resetUserPassword,
+  resendCredentials,
   deleteUser,
   type UserActionState,
 } from "@/app/actions/users";
@@ -380,6 +382,8 @@ export function UsersManager({
   const [resetPw, setResetPw] = useState<string | null>(null);
   const [editing, setEditing] = useState<UserRow | null>(null);
   const [addingToTeam, setAddingToTeam] = useState<UserRow | null>(null);
+  const [resent, setResent] = useState<(UserActionState & { name: string }) | null>(null);
+  const [resending, setResending] = useState<number | null>(null);
   const [query, setQuery] = useState("");
 
   // Same behaviour as the search on Team Members: plain substring match over
@@ -521,6 +525,26 @@ export function UsersManager({
                           <Button
                             variant="ghost"
                             size="sm"
+                            disabled={resending === u.id}
+                            title="Resend welcome email & sign-in details"
+                            onClick={async () => {
+                              if (
+                                !confirm(
+                                  `Resend the welcome email to ${u.name} (${u.email})?\n\nThey'll be sent a NEW temporary password and asked to change it when they sign in. Any password they have now — including one they chose themselves — stops working.`,
+                                )
+                              )
+                                return;
+                              setResending(u.id);
+                              const res = await resendCredentials(u.id);
+                              setResending(null);
+                              setResent({ ...res, name: u.name });
+                            }}
+                          >
+                            <Mail className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             title="Reset password"
                             onClick={async () => {
                               if (confirm(`Reset password for ${u.name}?`)) {
@@ -599,6 +623,44 @@ export function UsersManager({
             companies={companies}
             onDone={() => setAddingToTeam(null)}
           />
+        </Modal>
+      )}
+      {resent && (
+        <Modal
+          title={resent.error ? "Nothing was sent" : `Welcome email — ${resent.name}`}
+          open
+          onOpenChange={(o) => !o && setResent(null)}
+        >
+          <div className="space-y-4">
+            {resent.error ? (
+              <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                {resent.error}
+              </p>
+            ) : (
+              <>
+                {resent.emailed ? (
+                  <p className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                    <MailCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                    Welcome email and sign-in details sent to {resent.emailTo}.
+                  </p>
+                ) : (
+                  <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    The password was reset, but the email didn&apos;t send: {resent.emailError} Share
+                    the password below instead — the old one no longer works.
+                  </p>
+                )}
+                {/* Shown on success too: the send can report OK and still land in
+                    a junk folder, and this is the one moment the password is
+                    readable. */}
+                {resent.tempPassword && <TempPasswordNote pw={resent.tempPassword} />}
+              </>
+            )}
+            <div className="flex justify-end">
+              <Button onClick={() => setResent(null)}>Done</Button>
+            </div>
+          </div>
         </Modal>
       )}
       {resetPw && (
