@@ -13,6 +13,7 @@ export {
   credentialsEmail,
   hubInviteEmail,
   issueReportedEmail,
+  passwordResetEmail,
   receptionDutyReminderEmail,
   receptionSwapOutcomeEmail,
   receptionSwapRequestEmail,

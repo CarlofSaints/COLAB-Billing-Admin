@@ -181,6 +181,36 @@ export const users = pgTable(
   (t) => [uniqueIndex("users_email_unique").on(t.email)],
 );
 
+/**
+ * "Forgot password" links.
+ *
+ * ⚠️ Unlike the reception-swap and steal-request tokens elsewhere in this file,
+ * this token DOES authenticate — whoever holds it can set the password. So only
+ * a sha256 of it is stored: a leaked database row can't be replayed as a link.
+ * The raw value exists in the email and nowhere else.
+ *
+ * Rows are kept after use rather than deleted, so "who reset their password and
+ * when" is answerable from the table as well as the activity log.
+ */
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** Set the moment it's spent — a link works exactly once. */
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("password_reset_token_hash_unique").on(t.tokenHash),
+    index("password_reset_user_idx").on(t.userId),
+  ],
+);
+
 /* ------------------------------------------------------------------ */
 /* Staff                                                              */
 /* ------------------------------------------------------------------ */

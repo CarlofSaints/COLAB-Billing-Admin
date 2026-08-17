@@ -80,6 +80,60 @@ export function credentialsEmail(input: {
 }
 
 /**
+ * The "I forgot my password" link, sent from the public login screen.
+ *
+ * ⚠️ Deliberately carries NO password — unlike `credentialsEmail`, nothing here
+ * is a live secret until the person clicks through and chooses one, so an email
+ * sitting unread in an inbox isn't a working key to the account. It also names
+ * the address the request was made for, because the one person who must be able
+ * to act on an unrequested reset is whoever's account it is.
+ */
+export function passwordResetEmail(input: {
+  name: string;
+  email: string;
+  resetUrl: string;
+  minutesValid: number;
+}) {
+  const { name, email, resetUrl, minutesValid } = input;
+  const subject = "Reset your COLAB password";
+
+  const validity = `The link works once and expires in ${minutesValid} minutes.`;
+
+  const html = emailShell({
+    preheader: "Choose a new password for the COLAB hub.",
+    eyebrow: "Password reset",
+    heading: `Hi ${name},`,
+    content: [
+      p(
+        `Someone asked to reset the COLAB hub password for ${escapeHtml(email)}. Click below to choose a new one.`,
+      ),
+      button(resetUrl, "Choose a new password"),
+      p(validity),
+      p(`If the button doesn't work, paste this into your browser:<br>${link(resetUrl)}`),
+      note(
+        "If this wasn't you, you can ignore this email — your password hasn't changed and nobody can " +
+          "use this link without opening it. If you keep getting these, tell the COLAB office.",
+      ),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${name},`,
+    "",
+    `Someone asked to reset the COLAB hub password for ${email}.`,
+    "",
+    "Choose a new password here:",
+    resetUrl,
+    "",
+    validity,
+    "",
+    "If this wasn't you, you can ignore this email — your password hasn't changed.",
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
  * Welcome email when a team member is turned into a hub user — carries their
  * sign-in details and points them straight at their profile to fill in.
  */

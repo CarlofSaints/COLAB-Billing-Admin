@@ -13,6 +13,7 @@ import {
   taskAssignedEmail,
   taskCreatedEmail,
   issueReportedEmail,
+  passwordResetEmail,
   bookingConfirmedEmail,
   bookingHandedOverEmail,
   bookingTakenOverEmail,
@@ -57,6 +58,15 @@ const samples: { label: string; mail: { subject: string; html: string } }[] = [
       loginUrl: `${BASE}/login`,
       mustChangePassword: true,
       isReset: true,
+    }),
+  },
+  {
+    label: "Forgot password — reset link",
+    mail: passwordResetEmail({
+      name: "Sky Roos",
+      email: "sky@colab2.co.za",
+      resetUrl: `${BASE}/reset-password/8Kq2vRt7ZmXpL0aWc4NfEyHb1JsQdU6g`,
+      minutesValid: 60,
     }),
   },
   {

@@ -15,6 +15,7 @@ import {
 } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { passwordProblem } from "@/lib/password-policy";
+import { lastPasswordResetAt } from "@/lib/password-reset";
 
 export type LoginState = { error?: string };
 
@@ -35,6 +36,17 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
   // table, and the lockout survives a redeploy because it isn't in memory.
   // Keyed on the email typed, so one account being hammered can't lock out
   // anybody else.
+  //
+  // ⚠️ A COMPLETED PASSWORD RESET CLEARS THE SLATE. Someone who forgot their
+  // password has usually burned several attempts working that out, so without
+  // this they'd set a new password and *still* be locked out by their own
+  // failures — with the reset link already spent. Nobody can log a
+  // `auth.password_reset` without holding the mailbox, so this can't be used to
+  // lift the throttle.
+  const windowStart = new Date(Date.now() - LOCKOUT_WINDOW_MS);
+  const resetAt = await lastPasswordResetAt(email);
+  const countFrom = resetAt && resetAt > windowStart ? resetAt : windowStart;
+
   const [{ fails }] = await db
     .select({ fails: sql<number>`count(*)::int` })
     .from(activityLog)
@@ -42,7 +54,7 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
       and(
         eq(activityLog.action, "auth.login_failed"),
         eq(activityLog.actorLabel, email),
-        gt(activityLog.createdAt, new Date(Date.now() - LOCKOUT_WINDOW_MS)),
+        gt(activityLog.createdAt, countFrom),
       ),
     );
 
@@ -54,7 +66,7 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
       actorLabel: email,
     });
     return {
-      error: `Too many failed attempts. Try again in ${LOCKOUT_WINDOW_MS / 60000} minutes, or ask an admin to reset your password.`,
+      error: `Too many failed attempts. Try again in ${LOCKOUT_WINDOW_MS / 60000} minutes, or use "Forgot your password?" below — resetting it lets you back in straight away.`,
     };
   }
 
