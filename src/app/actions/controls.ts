@@ -15,6 +15,8 @@ import {
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { TOTAL_SQM_KEY, RENT_AMOUNT_KEY } from "@/lib/controls";
+import { FIXED_SPLIT_MODES, isDerivedMode } from "@/lib/billing-calc";
+import type { FixedSplitMode } from "@/lib/billing-calc";
 
 export type ActionState = { error?: string; ok?: boolean };
 
@@ -234,7 +236,10 @@ export async function saveFixedItem(
   const name = String(formData.get("name") ?? "").trim();
   const unitAmount = Number(formData.get("unitAmount") || 0);
   const notes = String(formData.get("notes") ?? "").trim() || null;
-  const splitMode = formData.get("splitMode") === "percent" ? "percent" : "quantity";
+  const rawMode = String(formData.get("splitMode") ?? "");
+  const splitMode: FixedSplitMode = FIXED_SPLIT_MODES.some((m) => m.key === rawMode)
+    ? (rawMode as FixedSplitMode)
+    : "quantity";
   // Only someone who can see restricted values may change what's restricted.
   const sensitive = formData.get("sensitive") != null;
 
@@ -247,18 +252,28 @@ export async function saveFixedItem(
     .filter((n) => Number.isInteger(n) && n > 0);
   if (companyIds.length === 0) return { error: "Assign at least one sub-company." };
 
+  // For the derived modes (per m², per head, equal, direct) the ticked
+  // companies are the whole of the input — the share is worked out at read
+  // time. Store 0 rather than a stale copy of today's percentage: a saved
+  // number would look authoritative and be wrong the moment anyone moves desk.
+  const derived = isDerivedMode(splitMode);
   const allocations = companyIds.map((cid) => {
+    if (derived) return { companyId: cid, quantity: 0 };
     const q = Number(formData.get(`qty_${cid}`));
     return { companyId: cid, quantity: Number.isFinite(q) && q >= 0 ? q : 1 };
   });
 
-  // A percentage split has to account for the whole cost, or part of it would
-  // quietly go unbilled.
+  // A hand-typed percentage split has to account for the whole cost, or part
+  // of it would quietly go unbilled.
   if (splitMode === "percent") {
     const sum = allocations.reduce((s, a) => s + a.quantity, 0);
     if (Math.abs(sum - 100) > 0.01) {
       return { error: `Percentages must add up to 100% (currently ${sum.toFixed(2)}%).` };
     }
+  }
+
+  if (splitMode === "direct" && companyIds.length !== 1) {
+    return { error: "A direct split goes to exactly one sub-company — tick just the one." };
   }
 
   let itemId = id;

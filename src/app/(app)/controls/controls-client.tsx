@@ -33,13 +33,26 @@ import { Table, THead, TH, TR, TD } from "@/components/ui/table";
 import { formatCurrency, cn } from "@/lib/utils";
 import {
   computeEffectiveAreas,
+  deriveFixedShares,
   fixedAllocationAmount,
   fixedAllocationLabel,
   fixedItemTotal,
+  fixedSplitModeLabel,
+  isDerivedMode,
+  isPercentShaped,
+  FIXED_SPLIT_MODES,
+  type FixedSplitBasis,
   type FixedSplitMode,
 } from "@/lib/billing-calc";
 
-type FixedAllocation = { companyId: number; companyName: string; quantity: number };
+type FixedAllocation = {
+  companyId: number;
+  companyName: string;
+  /** Units in quantity mode, otherwise a percentage of the total. */
+  quantity: number;
+  /** True when that percentage was worked out rather than typed in. */
+  derived: boolean;
+};
 type FixedItemRow = {
   id: number;
   name: string;
@@ -622,11 +635,13 @@ function FixedTab({
   companies,
   canManage,
   canUnlock,
+  basis,
 }: {
   items: FixedItemRow[];
   companies: ControlCompany[];
   canManage: boolean;
   canUnlock: boolean;
+  basis: FixedSplitBasis;
 }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<FixedItemRow | null>(null);
@@ -642,9 +657,11 @@ function FixedTab({
         <div>
           <CardTitle>Fixed line items</CardTitle>
           <CardDescription>
-            Costs billed directly to companies — e.g. parking. One item (shared name & price) can
-            cover several companies, each with its own quantity. Items marked with a tag count
-            their quantities from who carries that tag, and are edited on the User Tags page.
+            Costs billed directly to companies — e.g. parking. Each item picks its own split: a
+            price per unit, percentages you type, or per m² / per head / evenly / straight to one
+            company, which are worked out fresh on every run. Add one item per part of an invoice
+            and they can each split a different way. Items marked with a tag count their
+            quantities from who carries that tag, and are edited on the User Tags page.
           </CardDescription>
         </div>
         <div className="flex items-center gap-3">
@@ -685,7 +702,7 @@ function FixedTab({
                   </div>
                   <div className="flex items-center gap-1 text-xs text-muted">
                     <SensitiveAmount amount={it.unitAmount} canUnlock={canUnlock} />
-                    <span>{it.splitMode === "percent" ? "total, split by %" : "each"}</span>
+                    <span>{isPercentShaped(it.splitMode) ? `total, ${fixedSplitModeLabel(it.splitMode).toLowerCase()}` : "each"}</span>
                     {it.notes ? <span>· {it.notes}</span> : null}
                   </div>
                 </div>
@@ -736,7 +753,7 @@ function FixedTab({
                     >
                       <span className="text-slate-700">{a.companyName}</span>
                       <span className="flex items-center gap-1 text-muted">
-                        {it.splitMode === "percent" ? `${a.quantity}% of` : `${a.quantity} ×`}
+                        {isPercentShaped(it.splitMode) ? `${fixedAllocationLabel(it.splitMode, a.quantity)} of` : `${a.quantity} ×`}
                         <SensitiveAmount amount={it.unitAmount} canUnlock={canUnlock} />=
                         <span className="font-medium text-slate-800">
                           <SensitiveAmount
@@ -763,7 +780,7 @@ function FixedTab({
 
       {adding && (
         <Modal title="Add fixed line item" open onOpenChange={setAdding} wide>
-          <FixedItemForm companies={companies} onDone={() => setAdding(false)} />
+          <FixedItemForm companies={companies} basis={basis} onDone={() => setAdding(false)} />
         </Modal>
       )}
       {editing && (
@@ -773,7 +790,7 @@ function FixedTab({
           onOpenChange={(o) => !o && setEditing(null)}
           wide
         >
-          <FixedItemForm item={editing} companies={companies} onDone={() => setEditing(null)} />
+          <FixedItemForm item={editing} companies={companies} basis={basis} onDone={() => setEditing(null)} />
         </Modal>
       )}
     </Card>
@@ -783,10 +800,12 @@ function FixedTab({
 function FixedItemForm({
   item,
   companies,
+  basis,
   onDone,
 }: {
   item?: FixedItemRow;
   companies: ControlCompany[];
+  basis: FixedSplitBasis;
   onDone: () => void;
 }) {
   const [state, action] = useActionState<ActionState, FormData>(saveFixedItem, {});
@@ -806,14 +825,45 @@ function FixedItemForm({
     if (state.ok) onDone();
   }, [state.ok, onDone]);
 
+  const modeSpec = FIXED_SPLIT_MODES.find((m) => m.key === mode);
+  const percentShaped = isPercentShaped(mode);
+  const derived = isDerivedMode(mode);
+
+  // A direct split goes to exactly one company. Switching to it with several
+  // already ticked narrows to the first rather than saving an invalid form —
+  // derived, not corrected in an effect, so the earlier ticks come back if
+  // they change their mind and pick another mode.
+  const active = useMemo(
+    () => (mode === "direct" && selected.size > 1 ? new Set([[...selected][0]]) : selected),
+    [mode, selected],
+  );
+
   const percentTotal = companies
-    .filter((c) => selected.has(c.id))
+    .filter((c) => active.has(c.id))
     .reduce((s, c) => s + (Number(qty[c.id]) || 0), 0);
   const percentBalanced = Math.abs(percentTotal - 100) < 0.01;
+
+  // What the derived modes work out to on today's numbers, shown live so the
+  // split isn't a black box at the moment you choose it.
+  const derivedShares = useMemo(
+    () =>
+      derived
+        ? deriveFixedShares(
+            mode,
+            companies.filter((c) => active.has(c.id)).map((c) => c.id),
+            basis,
+          )
+        : {},
+    [derived, mode, companies, active, basis],
+  );
+  const derivedEmpty = derived && Object.keys(derivedShares).length === 0 && active.size > 0;
 
   const toggle = (id: number) =>
     setSelected((prev) => {
       const next = new Set(prev);
+      // Only one company can carry a direct split, so picking a second
+      // replaces the first rather than quietly splitting it two ways.
+      if (mode === "direct") return next.has(id) ? new Set() : new Set([id]);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
@@ -826,44 +876,20 @@ function FixedItemForm({
         <Input name="name" defaultValue={item?.name} placeholder="e.g. Parking bays" required autoFocus />
       </Field>
 
-      <div>
-        <p className="mb-1.5 block text-sm font-medium text-slate-700">How is it split?</p>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => setMode("quantity")}
-            className={cn(
-              "rounded-lg border px-3 py-2 text-left text-sm",
-              mode === "quantity"
-                ? "border-brand-600 bg-brand-50 text-brand-800"
-                : "border-line text-slate-600 hover:bg-slate-50",
-            )}
-          >
-            <span className="font-medium">Quantity per line</span>
-            <span className="block text-xs text-muted">A price each — e.g. 13 parking bays</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("percent")}
-            className={cn(
-              "rounded-lg border px-3 py-2 text-left text-sm",
-              mode === "percent"
-                ? "border-brand-600 bg-brand-50 text-brand-800"
-                : "border-line text-slate-600 hover:bg-slate-50",
-            )}
-          >
-            <span className="font-medium">Percentage split</span>
-            <span className="block text-xs text-muted">
-              One total, divided by a % per company
-            </span>
-          </button>
-        </div>
-      </div>
+      <Field label="How is it split?" hint={modeSpec?.hint}>
+        <Select value={mode} onChange={(e) => setMode(e.target.value as FixedSplitMode)}>
+          {FIXED_SPLIT_MODES.map((m) => (
+            <option key={m.key} value={m.key}>
+              {m.label}
+            </option>
+          ))}
+        </Select>
+      </Field>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field
-          label={mode === "percent" ? "Total amount (excl. VAT)" : "Unit amount (excl. VAT)"}
-          hint={mode === "percent" ? "The whole cost, before it's divided." : undefined}
+          label={percentShaped ? "Total amount (excl. VAT)" : "Unit amount (excl. VAT)"}
+          hint={percentShaped ? "The whole cost, before it's divided." : undefined}
         >
           <Input
             name="unitAmount"
@@ -898,13 +924,17 @@ function FixedItemForm({
 
       <div>
         <p className="mb-1.5 text-sm font-medium text-slate-700">
-          {mode === "percent"
-            ? "Assign to sub-companies & percentage"
-            : "Assign to sub-companies & quantity"}
+          {derived
+            ? mode === "direct"
+              ? "Which sub-company carries it?"
+              : "Which sub-companies share it?"
+            : mode === "percent"
+              ? "Assign to sub-companies & percentage"
+              : "Assign to sub-companies & quantity"}
         </p>
         <div className="space-y-1 rounded-lg border border-line p-2">
           {companies.map((c) => {
-            const on = selected.has(c.id);
+            const on = active.has(c.id);
             return (
               <div
                 key={c.id}
@@ -921,20 +951,28 @@ function FixedItemForm({
                   />
                   {c.name}
                 </label>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted">{mode === "percent" ? "%" : "Qty"}</span>
-                  <Input
-                    name={`qty_${c.id}`}
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max={mode === "percent" ? 100 : undefined}
-                    value={qty[c.id] ?? ""}
-                    disabled={!on}
-                    onChange={(e) => setQty((s) => ({ ...s, [c.id]: e.target.value }))}
-                    className="w-20 text-right"
-                  />
-                </div>
+                {derived ? (
+                  // No input: the share is worked out, and a box you can type
+                  // in would imply it gets saved. Show what it comes to today.
+                  <span className="text-sm tabular-nums text-slate-600">
+                    {on ? `${Math.round((derivedShares[c.id] ?? 0) * 10) / 10}%` : "—"}
+                  </span>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-muted">{mode === "percent" ? "%" : "Qty"}</span>
+                    <Input
+                      name={`qty_${c.id}`}
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max={mode === "percent" ? 100 : undefined}
+                      value={qty[c.id] ?? ""}
+                      disabled={!on}
+                      onChange={(e) => setQty((s) => ({ ...s, [c.id]: e.target.value }))}
+                      className="w-20 text-right"
+                    />
+                  </div>
+                )}
               </div>
             );
           })}
@@ -951,10 +989,21 @@ function FixedItemForm({
           )}
         </div>
         <p className="mt-1 text-xs text-muted">
-          {mode === "percent"
-            ? "Tick each company that shares this cost and set its percentage. They must add up to 100%."
-            : "Tick each company that shares this cost and set how many units it takes."}
+          {derived
+            ? mode === "direct"
+              ? "The whole amount goes on this one company's invoice."
+              : "Percentages are shown on today's numbers and recalculated every run — nothing is saved."
+            : mode === "percent"
+              ? "Tick each company that shares this cost and set its percentage. They must add up to 100%."
+              : "Tick each company that shares this cost and set how many units it takes."}
         </p>
+        {derivedEmpty && (
+          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {mode === "per_sqm"
+              ? "None of the ticked companies has floor space set, so this would bill nothing. Set it on the Per Square Metre tab."
+              : "None of the ticked companies has billable headcount, so this would bill nothing. Check the Headcount tab."}
+          </p>
+        )}
       </div>
 
       {state.error && (
@@ -1006,6 +1055,22 @@ export function ControlsManager({
   fixedItems: FixedItemRow[];
 }) {
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("sqm");
+
+  // What a per-m² or per-head fixed item would split on right now. Same
+  // function the invoice run uses, so the preview in the form is the number
+  // that gets billed — not an approximation of it.
+  const fixedBasis = useMemo<FixedSplitBasis>(() => {
+    const { effective } = computeEffectiveAreas(
+      companies,
+      Object.fromEntries(companies.map((c) => [c.id, c.sqm || 0])),
+      commonSpaces,
+      totalSqm,
+    );
+    return {
+      area: effective,
+      headcount: Object.fromEntries(companies.map((c) => [c.id, c.effectiveHeadcount])),
+    };
+  }, [companies, commonSpaces, totalSqm]);
 
   if (companies.length === 0) {
     return (
@@ -1059,6 +1124,7 @@ export function ControlsManager({
           companies={companies}
           canManage={canManage}
           canUnlock={canUnlock}
+          basis={fixedBasis}
         />
       )}
     </div>

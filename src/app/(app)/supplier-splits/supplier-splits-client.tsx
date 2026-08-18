@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useActionState } from "react";
+import type { FixedSplitMode } from "@/lib/billing-calc";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
@@ -77,7 +78,7 @@ type Draft = {
 type FixedItemOption = {
   id: number;
   name: string;
-  splitMode: "quantity" | "percent";
+  splitMode: FixedSplitMode;
   /** null when the item's amount is restricted for this viewer. */
   unitAmount: number | null;
   /** What the item's per-company shares recover each month; null if restricted. */

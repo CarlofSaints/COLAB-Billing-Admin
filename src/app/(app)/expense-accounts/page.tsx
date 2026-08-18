@@ -84,7 +84,7 @@ export default async function ExpenseAccountsPage() {
         fixedItems={items.map((i) => ({
           id: i.id,
           name: i.name,
-          splitMode: i.splitMode as "quantity" | "percent",
+          splitMode: i.splitMode,
           // A restricted item's amount never leaves the server, not even in a
           // dropdown label.
           unitAmount: maskAmount(Number(i.unitAmount), i.sensitive, reveal.unlocked),

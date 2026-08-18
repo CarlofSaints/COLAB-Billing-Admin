@@ -11,6 +11,7 @@ import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { fetchExpenseAccounts, xeroStatus } from "@/lib/xero";
 import { getMonthCosts } from "@/lib/month-costs";
 import { fixedItemTotal } from "@/lib/billing-calc";
+import { loadFixedAllocations } from "@/lib/tag-billing";
 import { maskAmount, revealState } from "@/lib/sensitive";
 import { RevealToggle } from "@/components/sensitive-amount";
 import { defaultPeriod, isPeriod, recentPeriods } from "@/lib/periods";
@@ -66,6 +67,10 @@ export default async function SupplierSplitsPage({
       .orderBy(asc(supplierSplits.period)),
     db.select().from(expenseAccountMappings),
   ]);
+
+  // Resolved once here so tag-driven and derived items report what they
+  // really recover, not what their (empty or placeholder) rows say.
+  const resolvedFixed = await loadFixedAllocations(items, allocations);
 
   const accountName = new Map(
     (accountList.ok ? accountList.accounts : []).map((a) => [a.code ?? "", a.name]),
@@ -148,13 +153,16 @@ export default async function SupplierSplitsPage({
         fixedItems={items.map((i) => ({
           id: i.id,
           name: i.name,
-          splitMode: i.splitMode as "quantity" | "percent",
+          splitMode: i.splitMode,
           unitAmount: maskAmount(Number(i.unitAmount), i.sensitive, reveal.unlocked),
-          // What the item's per-company shares actually recover.
+          // What the item's per-company shares actually recover. Through the
+          // same resolver the invoice run uses — reading the allocation rows
+          // raw would report zero for a tag-driven item (it has none) and for
+          // a per-m²/per-head one (its rows carry no share, only membership).
           allocatedTotal: maskAmount(
             fixedItemTotal(
               { splitMode: i.splitMode, unitAmount: Number(i.unitAmount) },
-              allocations.filter((a) => a.fixedLineItemId === i.id).map((a) => Number(a.quantity)),
+              (resolvedFixed.get(i.id) ?? []).map((a) => a.quantity),
             ),
             i.sensitive,
             reveal.unlocked,

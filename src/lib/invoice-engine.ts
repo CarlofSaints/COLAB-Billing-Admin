@@ -1,27 +1,22 @@
 import "server-only";
-import { and, asc, eq, lt } from "drizzle-orm";
+import { asc, eq, lt } from "drizzle-orm";
 import { db } from "@/db";
 import {
-  appSettings,
-  commonSpaces,
-  commonSpaceSplits,
-  companies,
-  companyAllocations,
   creditorLinks,
   expenseAccountMappings,
   fixedLineAllocations,
   fixedLineItems,
-  staff,
   supplierSplits,
 } from "@/db/schema";
-import { sql } from "drizzle-orm";
 import {
-  computeEffectiveAreas,
   fixedAllocationAmount,
   fixedItemTotal,
+  fixedSplitModeLabel,
+  isPercentShaped,
   rentShare,
 } from "./billing-calc";
-import { RENT_AMOUNT_KEY, TOTAL_SQM_KEY } from "./controls";
+import { loadSplitBasis } from "./split-basis";
+import type { SplitBasis } from "./split-basis";
 import { fetchExpenseAccounts } from "./xero";
 import { getMonthCosts } from "./month-costs";
 import { periodLabel } from "./periods";
@@ -65,14 +60,7 @@ export type InvoicePreview = {
   grandTotal: number;
 };
 
-type Basis = {
-  /** Effective floor area per company, and the building total. */
-  area: Record<number, number>;
-  totalSqm: number;
-  headcount: Record<number, number>;
-  totalHeadcount: number;
-  companyIds: number[];
-};
+type Basis = SplitBasis;
 
 /** Splits one amount across companies according to a resolved method. */
 function allocate(
@@ -129,87 +117,12 @@ function formatRand(n: number) {
   return `R${n.toFixed(2)}`;
 }
 
-/** Everything the split maths needs, loaded once per preview. */
-async function loadBasis(): Promise<{
-  basis: Basis;
-  companyRows: { id: number; name: string; xeroContactId: string | null; xeroContactName: string | null }[];
-  totalSqm: number;
-  rentAmount: number;
-}> {
-  const companyRows = await db
-    .select({
-      id: companies.id,
-      name: companies.name,
-      xeroContactId: companies.xeroContactId,
-      xeroContactName: companies.xeroContactName,
-    })
-    .from(companies)
-    .where(and(eq(companies.type, "sub"), eq(companies.active, true)))
-    .orderBy(asc(companies.name));
-
-  const allocs = await db.select().from(companyAllocations);
-  const settings = await db.select().from(appSettings);
-  const setting = (key: string) => {
-    const row = settings.find((s) => s.key === key);
-    return row?.value ? Number(row.value) : 0;
-  };
-  const totalSqm = setting(TOTAL_SQM_KEY);
-  const rentAmount = setting(RENT_AMOUNT_KEY);
-
-  const spaceRows = await db.select().from(commonSpaces).where(eq(commonSpaces.active, true));
-  const splitRows = await db.select().from(commonSpaceSplits);
-
-  const { effective } = computeEffectiveAreas(
-    companyRows,
-    Object.fromEntries(
-      companyRows.map((c) => [
-        c.id,
-        Number(allocs.find((a) => a.companyId === c.id)?.squareMetres ?? 0),
-      ]),
-    ),
-    spaceRows.map((s) => ({
-      sqm: Number(s.squareMetres),
-      splitMethod: s.splitMethod as "occupancy" | "custom",
-      splits: splitRows
-        .filter((sp) => sp.commonSpaceId === s.id)
-        .map((sp) => ({ companyId: sp.companyId, percent: Number(sp.percent) })),
-    })),
-    totalSqm,
-  );
-
-  // Only people flagged "Include in Billing" count towards the split.
-  const counts = await db
-    .select({ companyId: staff.companyId, count: sql<number>`count(*)::int` })
-    .from(staff)
-    .where(and(eq(staff.active, true), eq(staff.includeInBilling, true)))
-    .groupBy(staff.companyId);
-
-  const headcount: Record<number, number> = {};
-  for (const c of companyRows) {
-    const override = allocs.find((a) => a.companyId === c.id)?.headcountOverride;
-    headcount[c.id] = override ?? counts.find((x) => x.companyId === c.id)?.count ?? 0;
-  }
-
-  return {
-    basis: {
-      area: effective,
-      totalSqm,
-      headcount,
-      totalHeadcount: Object.values(headcount).reduce((s, n) => s + n, 0),
-      companyIds: companyRows.map((c) => c.id),
-    },
-    companyRows,
-    totalSqm,
-    rentAmount,
-  };
-}
-
 /**
  * Builds the invoice preview for a month. Nothing is written and nothing is
  * sent — this is purely what the invoices *would* say.
  */
 export async function buildPreview(period: string, runType: RunType): Promise<InvoicePreview> {
-  const { basis, companyRows, totalSqm, rentAmount } = await loadBasis();
+  const { basis, companyRows, totalSqm, rentAmount } = await loadSplitBasis();
   const warnings: PreviewWarning[] = [];
   const linesByCompany = new Map<number, PreviewLine[]>();
   companyRows.forEach((c) => linesByCompany.set(c.id, []));
@@ -256,7 +169,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       .orderBy(asc(fixedLineItems.name));
     const allocations = await db.select().from(fixedLineAllocations);
     // Tag-driven items count their quantities from who carries the tag.
-    const resolved = await loadFixedAllocations(items, allocations);
+    const resolved = await loadFixedAllocations(items, allocations, basis);
 
     for (const item of items) {
       const spec = { splitMode: item.splitMode, unitAmount: Number(item.unitAmount) };
@@ -269,8 +182,9 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
           description: `${item.name} — ${label}`,
           amount,
           detail: [
-            spec.splitMode === "percent"
-              ? `${share}% of ${formatRand(spec.unitAmount)}`
+            isPercentShaped(spec.splitMode)
+              ? `${Math.round(share * 10) / 10}% of ${formatRand(spec.unitAmount)}` +
+                (alloc.derived ? ` (${fixedSplitModeLabel(spec.splitMode).toLowerCase()})` : "")
               : alloc.fromTag
                 ? `${share} × ${formatRand(spec.unitAmount)} (tagged team members)`
                 : `${share} × ${formatRand(spec.unitAmount)}`,
@@ -348,7 +262,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     // Same resolution as the recurring run above — otherwise a tagged item
     // would recover a different amount here than it billed, and the balance
     // would be wrong by exactly that difference.
-    const resolvedRecovery = await loadFixedAllocations(fixedItemRows, fixedAllocRows);
+    const resolvedRecovery = await loadFixedAllocations(fixedItemRows, fixedAllocRows, basis);
     const recoveredByItem = new Map<number, number>();
     for (const item of fixedItemRows) {
       // An inactive item never went out on the recurring invoice, so it

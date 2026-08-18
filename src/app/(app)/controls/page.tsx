@@ -77,7 +77,7 @@ export default async function ControlsPage() {
   const fixedData = items.map((it) => ({
     id: it.id,
     name: it.name,
-    splitMode: it.splitMode as "quantity" | "percent",
+    splitMode: it.splitMode,
     sensitive: it.sensitive,
     // A restricted amount is replaced with null before it leaves the server.
     unitAmount: maskAmount(Number(it.unitAmount), it.sensitive, reveal.unlocked),
@@ -87,6 +87,7 @@ export default async function ControlsPage() {
       companyId: a.companyId,
       companyName: companyNameById.get(a.companyId) ?? "—",
       quantity: a.quantity,
+      derived: a.derived,
     })),
   }));
 

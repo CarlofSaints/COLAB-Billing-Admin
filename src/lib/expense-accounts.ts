@@ -4,6 +4,9 @@
  * action and the client grid, so nothing server-only belongs in here.
  */
 
+import { fixedSplitModeLabel, isPercentShaped } from "./billing-calc";
+import type { FixedSplitMode } from "./billing-calc";
+
 export const ACCOUNT_METHODS = [
   "per_sqm",
   "headcount",
@@ -158,7 +161,7 @@ export function percentSummary(
 export type FixedItemOption = {
   id: number;
   name: string;
-  splitMode: "quantity" | "percent";
+  splitMode: FixedSplitMode;
   /** null when the item's amount is restricted for this viewer. */
   unitAmount: number | null;
   allocatedTotal: number | null;
@@ -173,8 +176,8 @@ export function fixedItemLabel(
   format: (n: number) => string,
 ): string {
   if (item.unitAmount === null) return `${item.name} · restricted`;
-  return item.splitMode === "percent"
-    ? `${item.name} · ${format(item.unitAmount)} total, split by %`
+  return isPercentShaped(item.splitMode)
+    ? `${item.name} · ${format(item.unitAmount)} total, ${fixedSplitModeLabel(item.splitMode).toLowerCase()}`
     : `${item.name} · ${format(item.unitAmount)} each`;
 }
 

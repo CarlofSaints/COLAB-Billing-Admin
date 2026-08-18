@@ -739,9 +739,23 @@ export const companyAllocations = pgTable(
 );
 
 // How a fixed line item divides across companies.
-//   quantity — `unit_amount` is a price each, and each company takes N units
-//   percent  — `unit_amount` is the whole cost, and each company takes a share
-export const fixedSplitModeEnum = pgEnum("fixed_split_mode", ["quantity", "percent"]);
+//   quantity  — `unit_amount` is a price each, and each company takes N units
+//   percent   — `unit_amount` is the whole cost, split by percentages you type
+//   per_sqm   — the whole cost, split by effective floor area
+//   headcount — the whole cost, split by billable headcount
+//   equal     — the whole cost, split evenly between the assigned companies
+//   direct    — the whole cost, carried by one company
+// The last four are worked out from Controls every time they are read, so they
+// re-split themselves as space and staff change. `fixed_line_allocations` then
+// records only WHICH companies take part; its `quantity` is unused.
+export const fixedSplitModeEnum = pgEnum("fixed_split_mode", [
+  "quantity",
+  "percent",
+  "per_sqm",
+  "headcount",
+  "equal",
+  "direct",
+]);
 
 // A fixed line item billed directly to companies (e.g. parking bays, or one
 // person's salary split by agreed percentages).

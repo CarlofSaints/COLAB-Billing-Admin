@@ -15,6 +15,9 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { fixedLineItems, staff, staffTags, tags } from "@/db/schema";
+import { deriveFixedShares, isDerivedMode } from "./billing-calc";
+import type { FixedSplitBasis, FixedSplitMode } from "./billing-calc";
+import { loadSplitBasis } from "./split-basis";
 
 /** A company's share of an item, however it was arrived at. */
 export type ResolvedAllocation = {
@@ -22,9 +25,15 @@ export type ResolvedAllocation = {
   quantity: number;
   /** True when the quantity was counted from a tag rather than typed in. */
   fromTag: boolean;
+  /**
+   * True when the share was worked out from floor space, headcount or an even
+   * split rather than read from the allocations table. The stored `quantity`
+   * on those rows is meaningless — it records only which companies take part.
+   */
+  derived: boolean;
 };
 
-type ItemLike = { id: number; tagId: number | null };
+type ItemLike = { id: number; tagId: number | null; splitMode: FixedSplitMode };
 type AllocLike = { fixedLineItemId: number; companyId: number; quantity: string | number };
 
 /**
@@ -56,14 +65,24 @@ export async function tagHeadcounts(): Promise<Map<number, Map<number, number>>>
 }
 
 /**
- * The per-company quantities for every item: counted from the tag where one is
- * set, otherwise the manual allocations. Companies with no tagged people are
- * left out entirely rather than billed zero.
+ * The per-company quantities for every item, whichever way it is split:
+ *
+ *   tag-driven      — counted from who carries the tag
+ *   quantity/percent — read straight from the allocations table
+ *   per m² / per head / equal / direct — worked out from `basis` right now,
+ *                      over only the companies the item is assigned to
+ *
+ * Companies with no tagged people, or no share of a derived split, are left
+ * out entirely rather than billed zero.
+ *
+ * Every screen and both invoice runs come through here, so a derived item
+ * cannot show one share on Controls and bill another on the run.
  */
 export function resolveFixedAllocations(
   items: ItemLike[],
   manualAllocations: AllocLike[],
   headcounts: Map<number, Map<number, number>>,
+  basis?: FixedSplitBasis,
 ): Map<number, ResolvedAllocation[]> {
   const out = new Map<number, ResolvedAllocation[]>();
 
@@ -75,17 +94,53 @@ export function resolveFixedAllocations(
         byCompany
           ? [...byCompany.entries()]
               .filter(([, count]) => count > 0)
-              .map(([companyId, count]) => ({ companyId, quantity: count, fromTag: true }))
+              .map(([companyId, count]) => ({
+                companyId,
+                quantity: count,
+                fromTag: true,
+                derived: false,
+              }))
           : [],
       );
-    } else {
+      continue;
+    }
+
+    const mine = manualAllocations.filter((a) => a.fixedLineItemId === item.id);
+
+    if (isDerivedMode(item.splitMode)) {
+      // The rows say *which* companies take part; the share itself is worked
+      // out now. Without a basis we bill nothing rather than fall back to the
+      // stored number, which for these modes is a placeholder, not a share.
+      const shares = basis
+        ? deriveFixedShares(
+            item.splitMode,
+            mine.map((a) => a.companyId),
+            basis,
+          )
+        : {};
       out.set(
         item.id,
-        manualAllocations
-          .filter((a) => a.fixedLineItemId === item.id)
-          .map((a) => ({ companyId: a.companyId, quantity: Number(a.quantity), fromTag: false })),
+        Object.entries(shares)
+          .map(([companyId, percent]) => ({
+            companyId: Number(companyId),
+            quantity: percent,
+            fromTag: false,
+            derived: true,
+          }))
+          .filter((a) => a.quantity > 0),
       );
+      continue;
     }
+
+    out.set(
+      item.id,
+      mine.map((a) => ({
+        companyId: a.companyId,
+        quantity: Number(a.quantity),
+        fromTag: false,
+        derived: false,
+      })),
+    );
   }
 
   return out;
@@ -95,11 +150,17 @@ export function resolveFixedAllocations(
 export async function loadFixedAllocations(
   items: ItemLike[],
   manualAllocations: AllocLike[],
+  /** Pass the basis in if you have already loaded it, to save the queries. */
+  knownBasis?: FixedSplitBasis,
 ): Promise<Map<number, ResolvedAllocation[]>> {
-  // Only pay for the count query when something actually uses a tag.
+  // Only pay for each extra query when something actually needs it.
   const needsCounts = items.some((i) => i.tagId !== null);
-  const headcounts = needsCounts ? await tagHeadcounts() : new Map();
-  return resolveFixedAllocations(items, manualAllocations, headcounts);
+  const needsBasis = !knownBasis && items.some((i) => i.tagId === null && isDerivedMode(i.splitMode));
+  const [headcounts, basis] = await Promise.all([
+    needsCounts ? tagHeadcounts() : Promise.resolve(new Map()),
+    needsBasis ? loadSplitBasis().then((b) => b.basis) : Promise.resolve(knownBasis),
+  ]);
+  return resolveFixedAllocations(items, manualAllocations, headcounts, basis);
 }
 
 /* ------------------------------------------------------------------ */
