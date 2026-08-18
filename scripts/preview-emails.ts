@@ -32,12 +32,33 @@ import {
   vehicleStealApprovedEmail,
   vehicleStealDeclinedEmail,
   vehicleStealRequestEmail,
+  signInNudgeEmail,
+  profileNudgeEmail,
 } from "../src/lib/email-templates";
 import { emailShell, plainBodyHtml } from "../src/lib/email-layout";
 
 const BASE = "https://hub.colab2.co.za";
 
 const samples: { label: string; mail: { subject: string; html: string } }[] = [
+  {
+    label: "Nudge — never signed in",
+    mail: signInNudgeEmail({
+      name: "Sky Roos",
+      email: "sky@colab2.co.za",
+      loginUrl: BASE + "/login",
+      forgotUrl: BASE + "/forgot-password",
+      profileUrl: BASE + "/account",
+    }),
+  },
+  {
+    label: "Nudge — profile not finished",
+    mail: profileNudgeEmail({
+      name: "Sky Roos",
+      missing: ["Profile picture", "Cell number", "Date of birth"],
+      profileUrl: BASE + "/account",
+      directoryUrl: BASE + "/meet-the-team",
+    }),
+  },
   {
     label: "User created — credentials",
     mail: credentialsEmail({

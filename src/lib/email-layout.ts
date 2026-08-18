@@ -185,3 +185,19 @@ export function plainBodyHtml(body: string, options: { linkify?: boolean } = {})
     : escaped;
   return `<div style="font-family:${FONT};font-size:15px;line-height:1.65;color:#1e293b">${linked.replace(/\n/g, "<br>")}</div>`;
 }
+
+/**
+ * A plain bulleted list — used for "here's what's still missing". A real <ul>
+ * rather than a table because it's prose, not data, and clients that strip the
+ * styling still render it as a list.
+ */
+export function bulletList(items: string[]): string {
+  if (items.length === 0) return "";
+  const li = items
+    .map(
+      (item) =>
+        `<li style="margin:0 0 7px;font-family:${FONT};font-size:15px;line-height:1.6;color:#1e293b">${escapeHtml(item)}</li>`,
+    )
+    .join("");
+  return `<ul style="margin:14px 0 18px;padding-left:22px">${li}</ul>`;
+}

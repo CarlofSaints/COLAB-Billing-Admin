@@ -4,6 +4,7 @@ import { mailSchedules } from "@/db/schema";
 import { runSchedule } from "@/lib/mail-runner";
 import { runTaskReminders } from "@/lib/task-reminders";
 import { runBookingReminders } from "@/lib/booking-reminders";
+import { runWeeklyProfileNudges } from "@/lib/profile-nudges";
 import { isDue } from "@/lib/schedules";
 import { logEvent } from "@/lib/log";
 
@@ -62,11 +63,29 @@ export async function GET(req: Request) {
     });
   }
 
-  if (due.length === 0 && tasks.sent === 0 && bookings.sent === 0) {
-    // Recorded so there's evidence the cron is alive even on quiet days.
+  // And the Monday nudge for people who've never signed in or haven't finished
+  // their profile. It no-ops unless somebody has switched it on.
+  const nudges = await runWeeklyProfileNudges();
+  if (nudges.ran) {
+    await logEvent({
+      action: "nudge.weekly_run",
+      summary:
+        `Weekly profile nudges: ${nudges.signInSent} sign-in, ${nudges.profileSent} profile` +
+        (nudges.failed ? `, ${nudges.failed} failed` : ""),
+      entityType: "user",
+      actorType: "system",
+    });
+  }
+
+  if (due.length === 0 && tasks.sent === 0 && bookings.sent === 0 && !nudges.ran) {
+    // Recorded so there's evidence the cron is alive even on quiet days. The
+    // nudge reason rides along on purpose: a run that sends nothing has to say
+    // WHY, or a switched-off feature and a broken one read identically here.
     await logEvent({
       action: "mail.cron_tick",
-      summary: `Reminder cron ran — nothing due (${rows.length} active schedule(s))`,
+      summary:
+        `Reminder cron ran — nothing due (${rows.length} active schedule(s))` +
+        (nudges.reason ? `. Profile nudges: ${nudges.reason}` : ""),
       entityType: "mail_schedule",
       actorType: "system",
     });
@@ -78,5 +97,6 @@ export async function GET(req: Request) {
     results,
     taskReminders: tasks,
     bookingReminders: bookings,
+    profileNudges: nudges,
   });
 }

@@ -7,6 +7,7 @@
  * Sending lives in `mailer.ts`; this file only decides what a message says.
  */
 import {
+  bulletList,
   button,
   codeValue,
   detailTable,
@@ -1632,6 +1633,109 @@ export function vehicleStealDeclinedEmail(input: {
     "Another vehicle may be free for that window — the calendar shows the whole fleet.",
     "",
     input.bookingsUrl,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
+ * "Your account is waiting" — for somebody who has never signed in.
+ *
+ * ⚠️ There is deliberately NO PASSWORD in here. Passwords are stored hashed,
+ * so the system cannot read anybody's back out to remind them of it. The only
+ * alternative would be to mint a new one, which would break the password they
+ * may already have — so this points at the reset link instead, and whatever
+ * they were given still works if they can find it.
+ */
+export function signInNudgeEmail(input: {
+  name: string;
+  email: string;
+  loginUrl: string;
+  forgotUrl: string;
+  profileUrl: string;
+}) {
+  const { name, email, loginUrl, forgotUrl, profileUrl } = input;
+  const subject = "Your COLAB Hub account is waiting for you";
+
+  const html = emailShell({
+    preheader: "You have an account you haven't used yet — here's how to get in.",
+    eyebrow: "Getting started",
+    heading: `Hi ${name}, you haven't signed in yet`,
+    content: [
+      p(
+        "You have a COLAB Hub account, but it's never been used. The Hub is where you book a meeting room or a car, see who's on reception, and find anyone's number.",
+      ),
+      detailTable([
+        ["Sign in at", link(loginUrl)],
+        ["Your username", escapeHtml(email)],
+      ]),
+      p(
+        `Still have the password you were given? Use it. If you don't — nobody can look it up for you, not even the office, because passwords are stored scrambled. ${link(forgotUrl, "Choose a new one here")} and you'll get a link by email.`,
+      ),
+      button(profileUrl, "Sign in and set up my profile"),
+      p(
+        "Once you're in, please fill in your profile — a photo, your cell number and your birthday. It's what everyone else sees when they look you up.",
+      ),
+      note("If you don't think you should have an account, let the COLAB office know."),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${name},`,
+    "",
+    "You have a COLAB Hub account, but it's never been used.",
+    "",
+    `Sign in at: ${loginUrl}`,
+    `Your username: ${email}`,
+    "",
+    "Still have the password you were given? Use it. If you don't, nobody can look",
+    "it up for you — passwords are stored scrambled. Choose a new one here:",
+    forgotUrl,
+    "",
+    `Once you're in, please fill in your profile: ${profileUrl}`,
+    "",
+    "If you don't think you should have an account, let the COLAB office know.",
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/** "Your profile is half empty" — for somebody who signs in but hasn't filled it in. */
+export function profileNudgeEmail(input: {
+  name: string;
+  missing: string[];
+  profileUrl: string;
+  directoryUrl: string;
+}) {
+  const { name, missing, profileUrl, directoryUrl } = input;
+  const subject = "Two minutes: finish your COLAB profile";
+
+  const html = emailShell({
+    preheader: `Still to add: ${missing.join(", ")}.`,
+    eyebrow: "Your profile",
+    heading: `Hi ${name}, your profile isn't finished`,
+    content: [
+      p(
+        `Your entry in the ${link(directoryUrl, "COLAB team directory")} is missing a few things. It's what people see when they're trying to work out who you are or how to reach you.`,
+      ),
+      p("<strong>Still to add:</strong>"),
+      bulletList(missing),
+      button(profileUrl, "Finish my profile"),
+      p("It takes about two minutes, and you only have to do it once."),
+      note("Already added some of these? Then this list is out of date — have a look anyway."),
+    ].join(""),
+  });
+
+  const text = [
+    `Hi ${name},`,
+    "",
+    "Your entry in the COLAB team directory is missing a few things:",
+    "",
+    ...missing.map((m) => `  - ${m}`),
+    "",
+    `Finish your profile: ${profileUrl}`,
+    "",
+    "It takes about two minutes, and you only have to do it once.",
   ].join("\n");
 
   return { subject, html, text };

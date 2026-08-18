@@ -175,6 +175,9 @@ export const users = pgTable(
     active: boolean("active").notNull().default(true),
     mustChangePassword: boolean("must_change_password").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    // When they were last emailed "you've never signed in". Stops the weekly
+    // run nagging the same person every seven days for as long as they ignore it.
+    lastLoginNudgeAt: timestamp("last_login_nudge_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -261,6 +264,9 @@ export const staff = pgTable(
     photoUrl: text("photo_url"), // Vercel Blob URL of their profile picture
     // Set the first time they save a profile — used to nudge empty profiles.
     profileCompletedAt: timestamp("profile_completed_at", { withTimezone: true }),
+    // When they were last emailed about the gaps in it. Same purpose as
+    // users.last_login_nudge_at, on the other half of the pair.
+    lastProfileNudgeAt: timestamp("last_profile_nudge_at", { withTimezone: true }),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
