@@ -31,7 +31,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input, Select, Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/page";
-import { Table, THead, TH, TR, TD } from "@/components/ui/table";
+import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
+import { useTableSort } from "@/lib/use-table-sort";
 import { formatDateTime } from "@/lib/utils";
 
 type RoleOpt = { id: number; name: string; key: string };
@@ -396,6 +397,20 @@ export function UsersManager({
     );
   }, [users, query]);
 
+  const { sorted, sort, toggle } = useTableSort(
+    filtered,
+    {
+      user: (u) => u.name,
+      role: (u) => u.roleName,
+      team: (u) => u.teamCompany,
+      // Never signed in reads as blank and sorts last either way, which is
+      // what you want when you're hunting for dormant accounts.
+      lastLogin: (u) => u.lastLogin,
+      status: (u) => (u.active ? "Active" : "Disabled"),
+    },
+    { key: "user", dir: "asc" },
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -436,16 +451,26 @@ export function UsersManager({
           <Table>
             <THead>
               <tr>
-                <TH>User</TH>
-                <TH>Role</TH>
-                <TH>Team member</TH>
-                <TH>Last sign-in</TH>
-                <TH>Status</TH>
+                <SortableTH sortKey="user" sort={sort} onSort={toggle}>
+                  User
+                </SortableTH>
+                <SortableTH sortKey="role" sort={sort} onSort={toggle}>
+                  Role
+                </SortableTH>
+                <SortableTH sortKey="team" sort={sort} onSort={toggle}>
+                  Team member
+                </SortableTH>
+                <SortableTH sortKey="lastLogin" sort={sort} onSort={toggle}>
+                  Last sign-in
+                </SortableTH>
+                <SortableTH sortKey="status" sort={sort} onSort={toggle}>
+                  Status
+                </SortableTH>
                 {canManage && <TH className="text-right">Actions</TH>}
               </tr>
             </THead>
             <tbody>
-              {filtered.map((u) => {
+              {sorted.map((u) => {
                 const isSelf = u.id === currentUserId;
                 return (
                   <TR key={u.id}>

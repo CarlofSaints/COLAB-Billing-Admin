@@ -31,7 +31,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input, Select } from "@/components/ui/field";
-import { Table, THead, TH, TR, TD } from "@/components/ui/table";
+import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
+import { useTableSort } from "@/lib/use-table-sort";
 import { EmptyState } from "@/components/ui/page";
 import { formatCurrency, cn } from "@/lib/utils";
 
@@ -169,6 +170,23 @@ export function ExpenseAccountsClient({
       );
     });
   }, [rows, draft, filter, query]);
+
+  // Xero hands these over in account-code order. Sorting is client-side over
+  // the filtered set, so the header you click is the order you get.
+  const { sorted, sort, toggle } = useTableSort(
+    visible,
+    {
+      code: (r) => r.code ?? "",
+      name: (r) => r.name,
+      method: (r) => {
+        const m = draft[r.accountId]?.method ?? UNMAPPED;
+        // "Not set" is the thing you're hunting for, so it sorts as a real
+        // value rather than falling to the bottom with the blanks.
+        return m === UNMAPPED ? "— Not set —" : (METHOD_BY_KEY[m]?.label ?? m);
+      },
+    },
+    { key: "code", dir: "asc" },
+  );
 
   const setRow = (id: string, patch: Partial<Draft>) =>
     setDraft((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
@@ -442,9 +460,15 @@ export function ExpenseAccountsClient({
                   />
                 </TH>
               )}
-              <TH className="w-24">Code</TH>
-              <TH>Account</TH>
-              <TH className="w-56">Split method</TH>
+              <SortableTH sortKey="code" sort={sort} onSort={toggle} className="w-24">
+                Code
+              </SortableTH>
+              <SortableTH sortKey="name" sort={sort} onSort={toggle}>
+                Account
+              </SortableTH>
+              <SortableTH sortKey="method" sort={sort} onSort={toggle} className="w-56">
+                Split method
+              </SortableTH>
               <TH className="w-64">Applies to</TH>
             </tr>
           </THead>
@@ -456,7 +480,7 @@ export function ExpenseAccountsClient({
                 </TD>
               </tr>
             ) : (
-              visible.map((r) => {
+              sorted.map((r) => {
                 const d = draft[r.accountId];
                 const isDirty = dirtyIds.includes(r.accountId);
                 const method = d?.method ?? UNMAPPED;

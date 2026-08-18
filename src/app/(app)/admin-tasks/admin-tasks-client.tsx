@@ -25,7 +25,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input, Textarea, Select, Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/page";
-import { Table, THead, TH, TR, TD } from "@/components/ui/table";
+import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
+import { useTableSort } from "@/lib/use-table-sort";
 import {
   TASK_PRIORITIES,
   TASK_RECURRENCES,
@@ -216,6 +217,22 @@ export function AdminTasksClient({
 }) {
   const [adding, setAdding] = useState(false);
 
+  const { sorted, sort, toggle } = useTableSort(
+    tasks,
+    {
+      task: (t) => t.name,
+      assignee: (t) => t.assigneeName,
+      // ISO dates, so a string compare is a date compare.
+      due: (t) => t.dueDate,
+      // Rank by severity, not by the label's spelling — "Can wait" before
+      // "Urgent" alphabetically is the opposite of what you asked for.
+      priority: (t) => TASK_PRIORITIES.findIndex((p) => p.value === t.priority),
+      repeats: (t) => recurrenceLabel(t.recurrence),
+      status: (t) => (t.status === "done" ? "Done" : "Open"),
+    },
+    { key: "due", dir: "asc" },
+  );
+
   return (
     <div className="space-y-4">
       {canManage && (
@@ -249,17 +266,29 @@ export function AdminTasksClient({
           <Table>
             <THead>
               <tr>
-                <TH>Task</TH>
-                <TH>Assigned to</TH>
-                <TH>Due</TH>
-                <TH>Priority</TH>
-                <TH>Repeats</TH>
-                <TH>Status</TH>
+                <SortableTH sortKey="task" sort={sort} onSort={toggle}>
+                  Task
+                </SortableTH>
+                <SortableTH sortKey="assignee" sort={sort} onSort={toggle}>
+                  Assigned to
+                </SortableTH>
+                <SortableTH sortKey="due" sort={sort} onSort={toggle}>
+                  Due
+                </SortableTH>
+                <SortableTH sortKey="priority" sort={sort} onSort={toggle}>
+                  Priority
+                </SortableTH>
+                <SortableTH sortKey="repeats" sort={sort} onSort={toggle}>
+                  Repeats
+                </SortableTH>
+                <SortableTH sortKey="status" sort={sort} onSort={toggle}>
+                  Status
+                </SortableTH>
                 {canManage && <TH className="text-right">Actions</TH>}
               </tr>
             </THead>
             <tbody>
-              {tasks.map((t) => {
+              {sorted.map((t) => {
                 const done = t.status === "done";
                 return (
                   <TR key={t.id} className={done ? "opacity-60" : undefined}>

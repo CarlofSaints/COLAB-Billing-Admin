@@ -25,7 +25,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input, Textarea, Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/page";
-import { Table, THead, TH, TR, TD } from "@/components/ui/table";
+import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
+import { useTableSort } from "@/lib/use-table-sort";
 import { cn } from "@/lib/utils";
 
 export type CompanyRow = {
@@ -300,6 +301,19 @@ export function CompaniesManager({
 
   const unlinked = companies.filter((c) => c.active && !c.xeroContactId);
 
+  const { sorted, sort, toggle } = useTableSort(
+    companies,
+    {
+      name: (c) => c.name,
+      reg: (c) => c.regNumber,
+      vat: (c) => c.vatNumber,
+      team: (c) => c.staffCount,
+      xero: (c) => c.xeroContactName,
+      status: (c) => (c.active ? "Active" : "Inactive"),
+    },
+    { key: "name", dir: "asc" },
+  );
+
   return (
     <div className="space-y-4">
       {unlinked.length > 0 && (
@@ -342,17 +356,29 @@ export function CompaniesManager({
           <Table>
             <THead>
               <tr>
-                <TH>Company</TH>
-                <TH>Reg no.</TH>
-                <TH>VAT no.</TH>
-                <TH>Team</TH>
-                <TH>Xero contact</TH>
-                <TH>Status</TH>
+                <SortableTH sortKey="name" sort={sort} onSort={toggle}>
+                  Company
+                </SortableTH>
+                <SortableTH sortKey="reg" sort={sort} onSort={toggle}>
+                  Reg no.
+                </SortableTH>
+                <SortableTH sortKey="vat" sort={sort} onSort={toggle}>
+                  VAT no.
+                </SortableTH>
+                <SortableTH sortKey="team" sort={sort} onSort={toggle}>
+                  Team
+                </SortableTH>
+                <SortableTH sortKey="xero" sort={sort} onSort={toggle}>
+                  Xero contact
+                </SortableTH>
+                <SortableTH sortKey="status" sort={sort} onSort={toggle}>
+                  Status
+                </SortableTH>
                 {canManage && <TH className="text-right">Actions</TH>}
               </tr>
             </THead>
             <tbody>
-              {companies.map((c) => (
+              {sorted.map((c) => (
                 <TR key={c.id}>
                   <TD>
                     <div className="font-medium text-slate-900">{c.name}</div>

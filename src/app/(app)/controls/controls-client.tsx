@@ -29,7 +29,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input, Select, Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
-import { Table, THead, TH, TR, TD } from "@/components/ui/table";
+import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
+import { useTableSort } from "@/lib/use-table-sort";
 import { formatCurrency, cn } from "@/lib/utils";
 import {
   computeEffectiveAreas,
@@ -145,6 +146,26 @@ function SqmTab({
 
   const overItemised = itemised > common + 0.01;
 
+  // The two tables below sort independently — you might want the entry grid
+  // alphabetical while you read the rent breakdown biggest-first.
+  const floor = useTableSort(
+    companies,
+    { name: (c) => c.name, sqm: (c) => occupiedNum[c.id] ?? 0 },
+    { key: "name", dir: "asc" },
+  );
+  const rentTable = useTableSort(
+    companies,
+    {
+      name: (c) => c.name,
+      private: (c) => occupiedNum[c.id] ?? 0,
+      common: (c) => Math.max(0, (effective[c.id] ?? 0) - (occupiedNum[c.id] ?? 0)),
+      effective: (c) => effective[c.id] ?? 0,
+      share: (c) => effective[c.id] ?? 0,
+      rent: (c) => rentFor(effective[c.id] ?? 0),
+    },
+    { key: "name", dir: "asc" },
+  );
+
   return (
     <div className="space-y-4">
       {/* Building total + occupied space */}
@@ -216,13 +237,17 @@ function SqmTab({
           <Table>
             <THead>
               <tr>
-                <TH>Sub-Company</TH>
-                <TH className="w-48">Occupied m²</TH>
+                <SortableTH sortKey="name" sort={floor.sort} onSort={floor.toggle}>
+                  Sub-Company
+                </SortableTH>
+                <SortableTH sortKey="sqm" sort={floor.sort} onSort={floor.toggle} className="w-48">
+                  Occupied m²
+                </SortableTH>
                 <TH className="w-40">Of building</TH>
               </tr>
             </THead>
             <tbody>
-              {companies.map((c) => (
+              {floor.sorted.map((c) => (
                 <TR key={c.id}>
                   <TD className="font-medium text-slate-900">{c.name}</TD>
                   <TD>
@@ -347,16 +372,28 @@ function SqmTab({
         <Table>
           <THead>
             <tr>
-              <TH>Sub-Company</TH>
-              <TH className="w-28 text-right">Private m²</TH>
-              <TH className="w-28 text-right">+ Common m²</TH>
-              <TH className="w-28 text-right">Effective m²</TH>
-              <TH className="w-36">Billed share</TH>
-              <TH className="w-32 text-right">Monthly rent</TH>
+              <SortableTH sortKey="name" sort={rentTable.sort} onSort={rentTable.toggle}>
+                Sub-Company
+              </SortableTH>
+              <SortableTH sortKey="private" sort={rentTable.sort} onSort={rentTable.toggle} className="w-28" align="right">
+                Private m²
+              </SortableTH>
+              <SortableTH sortKey="common" sort={rentTable.sort} onSort={rentTable.toggle} className="w-28" align="right">
+                + Common m²
+              </SortableTH>
+              <SortableTH sortKey="effective" sort={rentTable.sort} onSort={rentTable.toggle} className="w-28" align="right">
+                Effective m²
+              </SortableTH>
+              <SortableTH sortKey="share" sort={rentTable.sort} onSort={rentTable.toggle} className="w-36">
+                Billed share
+              </SortableTH>
+              <SortableTH sortKey="rent" sort={rentTable.sort} onSort={rentTable.toggle} className="w-32" align="right">
+                Monthly rent
+              </SortableTH>
             </tr>
           </THead>
           <tbody>
-            {companies.map((c) => {
+            {rentTable.sorted.map((c) => {
               const eff = effective[c.id] ?? 0;
               const priv = occupiedNum[c.id];
               return (
@@ -564,6 +601,22 @@ function HeadcountTab({ companies, canManage }: { companies: ControlCompany[]; c
     [companies, overrides],
   );
 
+  const { sorted, sort, toggle } = useTableSort(
+    companies,
+    {
+      name: (c) => c.name,
+      live: (c) => c.liveHeadcount,
+      // Blank means "use the live count", so it sorts as absent, not as zero.
+      override: (c) => {
+        const o = overrides[c.id];
+        return o === "" || o == null ? null : Number(o);
+      },
+      effective: (c) => effective(c),
+      share: (c) => effective(c),
+    },
+    { key: "name", dir: "asc" },
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -580,15 +633,25 @@ function HeadcountTab({ companies, canManage }: { companies: ControlCompany[]; c
         <Table>
           <THead>
             <tr>
-              <TH>Sub-Company</TH>
-              <TH className="w-32">Live count</TH>
-              <TH className="w-40">Override</TH>
-              <TH className="w-24">Effective</TH>
-              <TH className="w-40">Share</TH>
+              <SortableTH sortKey="name" sort={sort} onSort={toggle}>
+                Sub-Company
+              </SortableTH>
+              <SortableTH sortKey="live" sort={sort} onSort={toggle} className="w-32">
+                Live count
+              </SortableTH>
+              <SortableTH sortKey="override" sort={sort} onSort={toggle} className="w-40">
+                Override
+              </SortableTH>
+              <SortableTH sortKey="effective" sort={sort} onSort={toggle} className="w-24">
+                Effective
+              </SortableTH>
+              <SortableTH sortKey="share" sort={sort} onSort={toggle} className="w-40">
+                Share
+              </SortableTH>
             </tr>
           </THead>
           <tbody>
-            {companies.map((c) => (
+            {sorted.map((c) => (
               <TR key={c.id}>
                 <TD className="font-medium text-slate-900">{c.name}</TD>
                 <TD>

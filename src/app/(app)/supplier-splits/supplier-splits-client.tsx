@@ -37,7 +37,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input, Select } from "@/components/ui/field";
-import { Table, THead, TH, TR, TD } from "@/components/ui/table";
+import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
+import { useTableSort } from "@/lib/use-table-sort";
 import { EmptyState } from "@/components/ui/page";
 import { formatCurrency, cn } from "@/lib/utils";
 import { SensitiveAmount } from "@/components/sensitive-amount";
@@ -270,6 +271,22 @@ export function SupplierSplitsClient({
     );
     router.refresh();
   };
+
+  const { sorted, sort, toggle } = useTableSort(
+    visible,
+    {
+      supplier: (r) => r.supplierName,
+      account: (r) => r.accountName ?? r.accountCode,
+      // A restricted amount reads as null and lands at the bottom either way —
+      // it has no value to rank, and inventing one would leak the ordering.
+      amount: (r) => r.amount,
+      method: (r) => {
+        const m = draft[r.key]?.method ?? UNMAPPED;
+        return m === UNMAPPED ? "— Not set —" : (METHOD_BY_KEY[m]?.label ?? m);
+      },
+    },
+    { key: "supplier", dir: "asc" },
+  );
 
   const allVisibleSelected = visible.length > 0 && visible.every((r) => selected.has(r.key));
 
@@ -504,10 +521,18 @@ export function SupplierSplitsClient({
                   />
                 </TH>
               )}
-              <TH>Supplier</TH>
-              <TH className="w-52">Account</TH>
-              <TH className="w-32 text-right">Amount</TH>
-              <TH className="w-52">Split method</TH>
+              <SortableTH sortKey="supplier" sort={sort} onSort={toggle}>
+                Supplier
+              </SortableTH>
+              <SortableTH sortKey="account" sort={sort} onSort={toggle} className="w-52">
+                Account
+              </SortableTH>
+              <SortableTH sortKey="amount" sort={sort} onSort={toggle} className="w-32" align="right">
+                Amount
+              </SortableTH>
+              <SortableTH sortKey="method" sort={sort} onSort={toggle} className="w-52">
+                Split method
+              </SortableTH>
               <TH className="w-56">Applies to</TH>
             </tr>
           </THead>
@@ -521,7 +546,7 @@ export function SupplierSplitsClient({
                 </TD>
               </tr>
             ) : (
-              visible.map((r) => {
+              sorted.map((r) => {
                 const d = draft[r.key];
                 const isDirty = dirtyKeys.includes(r.key);
                 const method = d?.method ?? UNMAPPED;

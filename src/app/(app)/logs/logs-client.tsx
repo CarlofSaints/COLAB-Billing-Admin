@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input, Select } from "@/components/ui/field";
 import { EmptyState } from "@/components/ui/page";
-import { Table, THead, TH, TR, TD } from "@/components/ui/table";
+import { Table, THead, SortableTH, TR, TD } from "@/components/ui/table";
+import { useTableSort } from "@/lib/use-table-sort";
 import { formatDateTime } from "@/lib/utils";
 
 type LogEntry = {
@@ -45,6 +46,19 @@ export function LogViewer({ entries }: { entries: LogEntry[] }) {
     });
   }, [entries, query, actor]);
 
+  // Newest first is the useful default for an audit trail; the header is there
+  // for the times you want everything one person did, or one kind of event.
+  const { sorted, sort, toggle } = useTableSort(
+    filtered,
+    {
+      when: (e) => e.createdAt,
+      actor: (e) => e.actorLabel,
+      action: (e) => e.action,
+      summary: (e) => e.summary,
+    },
+    { key: "when", dir: "desc" },
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -75,14 +89,22 @@ export function LogViewer({ entries }: { entries: LogEntry[] }) {
           <Table>
             <THead>
               <tr>
-                <TH className="w-44">When</TH>
-                <TH className="w-40">Actor</TH>
-                <TH className="w-44">Action</TH>
-                <TH>Summary</TH>
+                <SortableTH sortKey="when" sort={sort} onSort={toggle} className="w-44">
+                  When
+                </SortableTH>
+                <SortableTH sortKey="actor" sort={sort} onSort={toggle} className="w-40">
+                  Actor
+                </SortableTH>
+                <SortableTH sortKey="action" sort={sort} onSort={toggle} className="w-44">
+                  Action
+                </SortableTH>
+                <SortableTH sortKey="summary" sort={sort} onSort={toggle}>
+                  Summary
+                </SortableTH>
               </tr>
             </THead>
             <tbody>
-              {filtered.map((e) => (
+              {sorted.map((e) => (
                 <TR key={e.id}>
                   <TD className="whitespace-nowrap text-xs text-muted">
                     {formatDateTime(e.createdAt)}

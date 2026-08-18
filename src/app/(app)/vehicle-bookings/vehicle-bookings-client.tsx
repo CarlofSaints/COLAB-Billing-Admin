@@ -1234,19 +1234,19 @@ export function VehicleBookingsClient({
                 <SortableTH sortKey="due" sort={sort} onSort={toggle}>
                   Due back
                 </SortableTH>
-                <SortableTH sortKey="opening" sort={sort} onSort={toggle} className="text-right">
+                <SortableTH sortKey="opening" sort={sort} onSort={toggle} align="right">
                   Opening km
                 </SortableTH>
-                <SortableTH sortKey="closing" sort={sort} onSort={toggle} className="text-right">
+                <SortableTH sortKey="closing" sort={sort} onSort={toggle} align="right">
                   Closing km
                 </SortableTH>
-                <SortableTH sortKey="difference" sort={sort} onSort={toggle} className="text-right">
+                <SortableTH sortKey="difference" sort={sort} onSort={toggle} align="right">
                   Difference
                 </SortableTH>
                 <SortableTH sortKey="fuel" sort={sort} onSort={toggle}>
                   Fuel
                 </SortableTH>
-                <SortableTH sortKey="spent" sort={sort} onSort={toggle} className="text-right">
+                <SortableTH sortKey="spent" sort={sort} onSort={toggle} align="right">
                   Fuel bought
                 </SortableTH>
                 <SortableTH sortKey="status" sort={sort} onSort={toggle}>

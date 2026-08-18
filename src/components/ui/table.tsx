@@ -49,29 +49,43 @@ export function SortableTH({
   sortKey,
   sort,
   onSort,
+  align = "left",
   className,
   children,
   ...props
-}: React.ThHTMLAttributes<HTMLTableCellElement> & {
+}: Omit<React.ThHTMLAttributes<HTMLTableCellElement>, "align"> & {
   sortKey: string;
   sort: { key: string; dir: "asc" | "desc" };
   onSort: (key: string) => void;
+  /** Match the column's cells — a numeric column reads right-aligned. */
+  align?: "left" | "right";
 }) {
   const active = sort.key === sortKey;
+  const arrow = (
+    // Always in the layout, invisible until active, so the header doesn't
+    // jump sideways the moment you click it.
+    <span className={cn("text-[10px] leading-none", active ? "opacity-100" : "opacity-0")}>
+      {active && sort.dir === "desc" ? "▼" : "▲"}
+    </span>
+  );
   return (
-    <TH className={cn("p-0", className)} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"} {...props}>
+    <TH
+      className={cn("p-0", className)}
+      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+      {...props}
+    >
       <button
         type="button"
         onClick={() => onSort(sortKey)}
         className={cn(
-          "flex w-full items-center gap-1 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide transition-colors",
+          "flex w-full items-center gap-1 px-4 py-3 text-xs font-semibold uppercase tracking-wide transition-colors",
+          align === "right" ? "justify-end text-right" : "text-left",
           active ? "text-slate-900" : "text-muted hover:text-slate-700",
         )}
       >
+        {align === "right" && arrow}
         {children}
-        <span className={cn("text-[10px] leading-none", active ? "opacity-100" : "opacity-0")}>
-          {active && sort.dir === "desc" ? "▼" : "▲"}
-        </span>
+        {align === "left" && arrow}
       </button>
     </TH>
   );
