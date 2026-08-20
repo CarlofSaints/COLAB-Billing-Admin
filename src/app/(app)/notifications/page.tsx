@@ -5,7 +5,11 @@ import { emailGroups } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { PageHeader, EmptyState } from "@/components/ui/page";
 import { resolveGroupMembers } from "@/lib/group-members";
-import { NOTIFICATION_TYPES, notificationGroupIds } from "@/lib/notifications";
+import {
+  NOTIFICATION_TYPES,
+  notificationChoices,
+  notificationPeopleOptions,
+} from "@/lib/notifications";
 import { allTags, organiserPeople, organiserTagId } from "@/lib/organisers";
 import { NotificationsClient } from "./notifications-client";
 import { OrganiserClient } from "./organiser-client";
@@ -38,7 +42,11 @@ export default async function NotificationsPage() {
     };
   });
 
-  const chosen = await notificationGroupIds();
+  const chosen = await notificationChoices();
+
+  // Only people with an address can be the named person — a picker offering
+  // somebody who can't be emailed is the same trap as an empty group.
+  const people = await notificationPeopleOptions();
 
   // Who can decline a vehicle booking. Kept on this page because it's the same
   // question ("who is the organiser?") asked for a different purpose, but saved
@@ -49,29 +57,29 @@ export default async function NotificationsPage() {
     organiserPeople(),
   ]);
 
-  if (groups.length === 0) {
-    return (
-      <div className="mx-auto max-w-3xl">
-        <PageHeader
-          title="Notifications"
-          description="Who else gets emailed when something happens."
-        />
-        <EmptyState
-          icon={<Bell className="h-8 w-8" />}
-          title="No email groups yet"
-          description="These notifications go to an email group, so there has to be one first. Make a group on the Email Groups page — a live rule like “everyone tagged ORGANISER” keeps itself up to date."
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title="Notifications"
-        description="Who gets emailed when something happens. The vehicle emails always reach the booker and the driver, and a group here adds to them. Office issues have no built-in list — they go to the group picked here and nobody else."
+        description="Who gets emailed when something happens. Each one takes an email group, one named person, or both. The vehicle emails always reach the booker and the driver and this adds to them; office issues and join requests have no built-in list, so they go to whoever is picked here and nobody else."
       />
-      <NotificationsClient types={NOTIFICATION_TYPES} groups={options} chosen={chosen} />
+      {/* Not an early return any more — a single named person is a complete
+          answer on its own, so the page still has to be usable with no groups. */}
+      {groups.length === 0 && (
+        <div className="mb-4">
+          <EmptyState
+            icon={<Bell className="h-8 w-8" />}
+            title="No email groups yet"
+            description="You can still name one person per notification below. For anything wider, make a group on the Email Groups page — a live rule like “everyone tagged ORGANISER” keeps itself up to date."
+          />
+        </div>
+      )}
+      <NotificationsClient
+        types={NOTIFICATION_TYPES}
+        groups={options}
+        people={people.map((p) => ({ id: p.id, name: p.name, email: p.email ?? "" }))}
+        chosen={chosen}
+      />
       <div className="mt-8">
         <OrganiserClient
           tags={tagOptions}

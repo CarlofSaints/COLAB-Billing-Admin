@@ -3,12 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { emailGroups, tags } from "@/db/schema";
+import { emailGroups, staff, tags } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import {
   NOTIFICATION_TYPES,
-  saveNotificationGroupIds,
+  saveNotificationChoices,
+  type NotificationChoice,
   type NotificationKey,
 } from "@/lib/notifications";
 import { setOrganiserTagId } from "@/lib/organisers";
@@ -21,56 +22,77 @@ export async function saveNotificationRecipients(
 ): Promise<NotificationState> {
   const actor = await requirePermission("notifications.manage");
 
-  const choices: Partial<Record<NotificationKey, number | null>> = {};
-  const wanted: number[] = [];
+  const choices: Partial<Record<NotificationKey, NotificationChoice>> = {};
+  const wantedGroups: number[] = [];
+  const wantedPeople: number[] = [];
+
+  /** "" means nobody; anything else has to be a positive integer id. */
+  const readId = (field: string): number | null | "bad" => {
+    const raw = String(formData.get(field) ?? "").trim();
+    if (raw === "") return null;
+    const id = Number(raw);
+    return Number.isInteger(id) && id > 0 ? id : "bad";
+  };
 
   for (const type of NOTIFICATION_TYPES) {
-    const raw = String(formData.get(type.key) ?? "").trim();
-    if (raw === "") {
-      choices[type.key] = null;
-      continue;
-    }
-    const id = Number(raw);
-    if (!Number.isInteger(id) || id <= 0) {
-      return { error: `That isn't a valid group for "${type.label}".` };
-    }
-    choices[type.key] = id;
-    wanted.push(id);
+    const groupId = readId(type.key);
+    if (groupId === "bad") return { error: `That isn't a valid group for "${type.label}".` };
+    const personId = readId(`${type.key}:person`);
+    if (personId === "bad") return { error: `That isn't a valid person for "${type.label}".` };
+
+    choices[type.key] = { groupId, personId };
+    if (groupId) wantedGroups.push(groupId);
+    if (personId) wantedPeople.push(personId);
   }
 
-  // Every chosen group has to exist. Storing an id for a group that has since
-  // been deleted would read as "somebody is being told" on the page while
-  // nobody actually is.
-  if (wanted.length > 0) {
+  // Everything chosen has to still exist and still be reachable. Storing an id
+  // for a deleted group or a person who has left would read as "somebody is
+  // being told" on the page while nobody actually is.
+  const known = new Map<number, string>();
+  if (wantedGroups.length > 0) {
     const found = await db
       .select({ id: emailGroups.id, name: emailGroups.name })
       .from(emailGroups)
-      .where(inArray(emailGroups.id, wanted));
-    const known = new Map(found.map((g) => [g.id, g.name]));
-    const missing = wanted.filter((id) => !known.has(id));
-    if (missing.length > 0) {
+      .where(inArray(emailGroups.id, wantedGroups));
+    for (const g of found) known.set(g.id, g.name);
+    if (wantedGroups.some((id) => !known.has(id))) {
       return { error: "One of those email groups no longer exists — reload and try again." };
     }
-
-    const named = NOTIFICATION_TYPES.filter((t) => choices[t.key] != null)
-      .map((t) => `${t.label} → ${known.get(choices[t.key] as number)}`)
-      .join("; ");
-    await saveNotificationGroupIds(choices);
-    await logEvent({
-      action: "notifications.update",
-      summary: `Set who else is emailed — ${named}`,
-      actor,
-      entityType: "app_setting",
-    });
-  } else {
-    await saveNotificationGroupIds(choices);
-    await logEvent({
-      action: "notifications.update",
-      summary: "Cleared the extra recipients on every notification",
-      actor,
-      entityType: "app_setting",
-    });
   }
+
+  const knownPeople = new Map<number, string>();
+  if (wantedPeople.length > 0) {
+    const found = await db
+      .select({ id: staff.id, name: staff.name, active: staff.active })
+      .from(staff)
+      .where(inArray(staff.id, wantedPeople));
+    for (const p of found) if (p.active) knownPeople.set(p.id, p.name);
+    if (wantedPeople.some((id) => !knownPeople.has(id))) {
+      return { error: "One of those people is no longer on the team — reload and try again." };
+    }
+  }
+
+  await saveNotificationChoices(choices);
+
+  const named = NOTIFICATION_TYPES.map((t) => {
+    const c = choices[t.key];
+    const parts = [
+      c?.groupId ? known.get(c.groupId) : null,
+      c?.personId ? knownPeople.get(c.personId) : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? `${t.label} → ${parts.join(" + ")}` : null;
+  })
+    .filter(Boolean)
+    .join("; ");
+
+  await logEvent({
+    action: "notifications.update",
+    summary: named
+      ? `Set who is emailed — ${named}`
+      : "Cleared the recipients on every notification",
+    actor,
+    entityType: "app_setting",
+  });
 
   revalidatePath("/notifications");
   return { ok: true };

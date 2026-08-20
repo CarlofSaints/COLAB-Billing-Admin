@@ -1,7 +1,7 @@
 import "server-only";
-import { inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { appSettings } from "@/db/schema";
+import { appSettings, staff } from "@/db/schema";
 import { resolveGroupRecipients } from "@/lib/group-members";
 
 /**
@@ -29,6 +29,11 @@ import { resolveGroupRecipients } from "@/lib/group-members";
  *    told without also mailing seven people who wouldn't — and that couldn't be
  *    changed without a deploy. `soleRecipients` marks that on the type so the
  *    UI can say "nobody will be told" rather than "nobody extra".
+ *
+ * Each event may also name ONE person alongside the group, for the "…and copy
+ * Jenny" case that isn't worth making a group for. They are merged and deduped
+ * by email at send time, so picking somebody who is already in the group costs
+ * them nothing. Two or more extra people is a group — make one.
  */
 
 export type NotificationKey =
@@ -77,14 +82,14 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
     key: "issue_reported",
     label: "Somebody reports an office issue",
     description:
-      "Goes to this group and nobody else — from the Issues page and from the QR-code stickers alike.",
+      "Goes to whoever is picked here and nobody else — from the Issues page and from the QR-code stickers alike.",
     soleRecipients: true,
   },
   {
     key: "signup_requested",
     label: "Somebody asks to join the hub",
     description:
-      "Goes to this group and nobody else. Pick people who can actually approve it — the email links to Join Requests.",
+      "Goes to whoever is picked here and nobody else. Pick people who can actually approve it — the email links to Join Requests.",
     soleRecipients: true,
   },
 ];
@@ -95,26 +100,61 @@ function settingKey(key: NotificationKey): string {
 }
 
 /**
- * The group chosen for each event, or null where nobody extra is told.
+ * `notify.vehicle_booked.person` — the one named person, alongside the group.
+ *
+ * A separate row rather than a second value packed into the first: the group
+ * and the person are edited, cleared and read independently, and a "3|17" style
+ * value is the kind of thing that half-parses later.
+ */
+function personSettingKey(key: NotificationKey): string {
+  return `notify.${key}.person`;
+}
+
+/** A blank, a stray value or a deleted row all mean "nobody" — never a throw. */
+function toId(raw: string | null | undefined): number | null {
+  const id = Number(raw);
+  return raw && Number.isInteger(id) && id > 0 ? id : null;
+}
+
+export type NotificationChoice = {
+  /** The email group, re-resolved at send time. */
+  groupId: number | null;
+  /**
+   * ONE named team member, told as well as the group.
+   *
+   * Deliberately a single person and not a second group: this is the "…and
+   * also copy Jenny" case, and anything bigger belongs in a group where the
+   * membership is visible and reusable. Stored as a `staff` id — the same
+   * thing a group resolves to — so the two lists dedupe by email cleanly.
+   */
+  personId: number | null;
+};
+
+/**
+ * The group and person chosen for each event.
  *
  * One query for all of them: the settings page needs the whole map, and the
- * send paths only ever want one, so a per-key query would be five round trips
- * on a page that renders once.
+ * send paths only ever want one, so a per-key query would be a round trip per
+ * notification on a page that renders once.
  */
-export async function notificationGroupIds(): Promise<Record<NotificationKey, number | null>> {
+export async function notificationChoices(): Promise<Record<NotificationKey, NotificationChoice>> {
   const rows = await db
     .select({ key: appSettings.key, value: appSettings.value })
     .from(appSettings)
-    .where(inArray(appSettings.key, NOTIFICATION_TYPES.map((t) => settingKey(t.key))));
+    .where(
+      inArray(
+        appSettings.key,
+        NOTIFICATION_TYPES.flatMap((t) => [settingKey(t.key), personSettingKey(t.key)]),
+      ),
+    );
 
   const byKey = new Map(rows.map((r) => [r.key, r.value]));
-  const out = {} as Record<NotificationKey, number | null>;
+  const out = {} as Record<NotificationKey, NotificationChoice>;
   for (const type of NOTIFICATION_TYPES) {
-    const raw = byKey.get(settingKey(type.key));
-    const id = Number(raw);
-    // A blank, a stray value or a deleted group all mean "nobody" — never a
-    // reason for a send to throw.
-    out[type.key] = raw && Number.isInteger(id) && id > 0 ? id : null;
+    out[type.key] = {
+      groupId: toId(byKey.get(settingKey(type.key))),
+      personId: toId(byKey.get(personSettingKey(type.key))),
+    };
   }
   return out;
 }
@@ -122,40 +162,83 @@ export async function notificationGroupIds(): Promise<Record<NotificationKey, nu
 export type ExtraRecipient = { email: string; name: string };
 
 /**
- * Who the chosen group says to email for one event, minus anyone already on the
- * message. On an additive event that's the extra copies; on a `soleRecipients`
- * event it's the whole list.
+ * The chosen group PLUS the chosen person, minus anyone already on the message.
+ * On an additive event that's the extra copies; on a `soleRecipients` event
+ * it's the whole list.
  *
  * `alreadyEmailed` matters more than it looks: the organiser is usually also a
  * person who books vehicles, and getting the same message twice — once as the
- * driver and once as the organiser — is how people start ignoring it.
+ * driver and once as the organiser — is how people start ignoring it. The named
+ * person is deduped against the group for the same reason: picking somebody who
+ * is already in the group is a natural thing to do and must not double up.
  */
 export async function notificationRecipients(
   key: NotificationKey,
   alreadyEmailed: string[] = [],
 ): Promise<ExtraRecipient[]> {
-  const groupId = (await notificationGroupIds())[key];
-  if (!groupId) return [];
+  const { groupId, personId } = (await notificationChoices())[key];
+  if (!groupId && !personId) return [];
 
   const seen = new Set(alreadyEmailed.map((e) => e.trim().toLowerCase()));
-  const members = await resolveGroupRecipients([groupId]);
+  const out: ExtraRecipient[] = [];
 
-  return members
-    .filter((m) => m.email && !seen.has(m.email.toLowerCase()))
-    .map((m) => ({ email: m.email as string, name: m.name }));
+  const add = (email: string | null, name: string) => {
+    const addr = (email ?? "").trim();
+    if (!addr.includes("@")) return;
+    const dedupe = addr.toLowerCase();
+    if (seen.has(dedupe)) return;
+    seen.add(dedupe);
+    out.push({ email: addr, name });
+  };
+
+  if (groupId) for (const m of await resolveGroupRecipients([groupId])) add(m.email, m.name);
+  if (personId) {
+    const person = await notificationPerson(personId);
+    // Gone or deactivated since being chosen: skipped exactly like a group
+    // member who has left, rather than failing the whole send.
+    if (person) add(person.email, person.name);
+  }
+
+  return out;
+}
+
+export type NotificationPerson = { id: number; name: string; email: string | null };
+
+/** The named person for one event, if they are still an active team member. */
+export async function notificationPerson(staffId: number): Promise<NotificationPerson | null> {
+  const [row] = await db
+    .select({ id: staff.id, name: staff.name, email: staff.email })
+    .from(staff)
+    .where(and(eq(staff.id, staffId), eq(staff.active, true)))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Everyone who can be picked as the named person — active, with an address. */
+export async function notificationPeopleOptions(): Promise<NotificationPerson[]> {
+  return db
+    .select({ id: staff.id, name: staff.name, email: staff.email })
+    .from(staff)
+    .where(and(eq(staff.active, true), isNotNull(staff.email), ne(staff.email, "")))
+    .orderBy(asc(staff.name));
 }
 
 /** Writes the choices. A null clears the row rather than storing an empty string. */
-export async function saveNotificationGroupIds(
-  choices: Partial<Record<NotificationKey, number | null>>,
+export async function saveNotificationChoices(
+  choices: Partial<Record<NotificationKey, NotificationChoice>>,
 ): Promise<void> {
-  for (const [key, groupId] of Object.entries(choices) as [NotificationKey, number | null][]) {
-    await db
-      .insert(appSettings)
-      .values({ key: settingKey(key), value: groupId == null ? null : String(groupId) })
-      .onConflictDoUpdate({
-        target: appSettings.key,
-        set: { value: groupId == null ? null : String(groupId), updatedAt: new Date() },
-      });
+  for (const [key, choice] of Object.entries(choices) as [NotificationKey, NotificationChoice][]) {
+    for (const [settingName, id] of [
+      [settingKey(key), choice.groupId],
+      [personSettingKey(key), choice.personId],
+    ] as [string, number | null][]) {
+      await db
+        .insert(appSettings)
+        .values({ key: settingName, value: id == null ? null : String(id) })
+        .onConflictDoUpdate({
+          target: appSettings.key,
+          set: { value: id == null ? null : String(id), updatedAt: new Date() },
+        });
+    }
   }
 }

@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { CheckCircle2, TriangleAlert, Users } from "lucide-react";
+import { CheckCircle2, TriangleAlert, User, Users } from "lucide-react";
 import {
   saveNotificationRecipients,
   type NotificationState,
@@ -11,7 +11,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select } from "@/components/ui/field";
-import type { NotificationKey, NotificationType } from "@/lib/notifications";
+import type {
+  NotificationChoice,
+  NotificationKey,
+  NotificationType,
+} from "@/lib/notifications";
 
 type GroupOption = {
   id: number;
@@ -22,6 +26,14 @@ type GroupOption = {
   sendableCount: number;
   preview: string[];
 };
+
+/** Active team members with an address — everyone the person picker offers. */
+type PersonOption = { id: number; name: string; email: string };
+
+/** `vehicle_booked:person` — the person field's name in the submitted form. */
+function personField(key: NotificationKey): string {
+  return `${key}:person`;
+}
 
 function SaveButton() {
   const { pending } = useFormStatus();
@@ -35,21 +47,29 @@ function SaveButton() {
 export function NotificationsClient({
   types,
   groups,
+  people,
   chosen,
 }: {
   types: NotificationType[];
   groups: GroupOption[];
-  chosen: Record<NotificationKey, number | null>;
+  people: PersonOption[];
+  chosen: Record<NotificationKey, NotificationChoice>;
 }) {
   const [state, action] = useActionState<NotificationState, FormData>(
     saveNotificationRecipients,
     {},
   );
   const [picked, setPicked] = useState<Record<string, string>>(() =>
-    Object.fromEntries(types.map((t) => [t.key, chosen[t.key] ? String(chosen[t.key]) : ""])),
+    Object.fromEntries(
+      types.flatMap((t) => [
+        [t.key, chosen[t.key].groupId ? String(chosen[t.key].groupId) : ""],
+        [personField(t.key), chosen[t.key].personId ? String(chosen[t.key].personId) : ""],
+      ]),
+    ),
   );
 
   const byId = new Map(groups.map((g) => [String(g.id), g]));
+  const personById = new Map(people.map((p) => [String(p.id), p]));
 
   return (
     <form action={action} className="space-y-4">
@@ -57,6 +77,8 @@ export function NotificationsClient({
         {types.map((type) => {
           const value = picked[type.key] ?? "";
           const group = byId.get(value);
+          const personValue = picked[personField(type.key)] ?? "";
+          const person = personById.get(personValue);
           return (
             <div key={type.key} className="px-4 py-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -64,30 +86,69 @@ export function NotificationsClient({
                   <p className="font-medium text-slate-900">{type.label}</p>
                   <p className="mt-0.5 text-xs text-muted">{type.description}</p>
                 </div>
-                <Select
-                  name={type.key}
-                  value={value}
-                  onChange={(e) =>
-                    setPicked((prev) => ({ ...prev, [type.key]: e.target.value }))
-                  }
-                  className="sm:max-w-56"
-                >
-                  <option value="">{type.soleRecipients ? "Nobody" : "Nobody else"}</option>
-                  {groups.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-                </Select>
+                <div className="flex flex-col gap-2 sm:w-56 sm:shrink-0">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-muted">Group</span>
+                    <Select
+                      name={type.key}
+                      value={value}
+                      onChange={(e) =>
+                        setPicked((prev) => ({ ...prev, [type.key]: e.target.value }))
+                      }
+                    >
+                      <option value="">{type.soleRecipients ? "Nobody" : "Nobody else"}</option>
+                      {groups.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                  {/* One person, not a second group. Anything wider belongs in
+                      a group, where the membership is visible and reusable. */}
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-muted">
+                      And one person
+                    </span>
+                    <Select
+                      name={personField(type.key)}
+                      value={personValue}
+                      onChange={(e) =>
+                        setPicked((prev) => ({ ...prev, [personField(type.key)]: e.target.value }))
+                      }
+                    >
+                      <option value="">Nobody</option>
+                      {people.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                </div>
               </div>
 
-              {/* An event with no built-in recipients and no group told nobody
-                  at all, which the row would otherwise show as a blank. */}
-              {!group && type.soleRecipients && (
+              {/* An event with no built-in recipients, no group and no person
+                  told nobody at all, which the row would otherwise show as a
+                  blank. A person on their own is a complete answer. */}
+              {!group && !person && type.soleRecipients && (
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                   <span className="flex items-center gap-1.5 font-medium text-amber-700">
                     <TriangleAlert className="h-3.5 w-3.5" />
-                    Nobody is being told when this happens — pick a group.
+                    Nobody is being told when this happens — pick a group or a person.
+                  </span>
+                </div>
+              )}
+
+              {person && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                  <span className="flex items-center gap-1.5">
+                    <User className="h-3.5 w-3.5" />
+                    {person.name} ({person.email})
+                    {/* Picking somebody already in the group is a natural thing
+                        to do, and the send dedupes — so say so rather than
+                        letting it look like a mistake. */}
+                    {group && group.preview.includes(person.name) ? " — already in the group, so one email" : ""}
                   </span>
                 </div>
               )}
