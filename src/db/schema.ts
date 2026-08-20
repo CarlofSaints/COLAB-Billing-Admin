@@ -364,7 +364,7 @@ export const adminTasks = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
-/* Office issues (anyone reports; directors + admins are notified)     */
+/* Office issues (anyone reports; the notification group is told)        */
 /* ------------------------------------------------------------------ */
 
 export const issues = pgTable(

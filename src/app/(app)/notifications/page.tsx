@@ -69,7 +69,7 @@ export default async function NotificationsPage() {
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title="Notifications"
-        description="Who else gets emailed when something happens. This is always in addition to the people who are already told — it can never switch an existing email off."
+        description="Who gets emailed when something happens. The vehicle emails always reach the booker and the driver, and a group here adds to them. Office issues have no built-in list — they go to the group picked here and nobody else."
       />
       <NotificationsClient types={NOTIFICATION_TYPES} groups={options} chosen={chosen} />
       <div className="mt-8">

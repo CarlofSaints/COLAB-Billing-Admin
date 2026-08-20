@@ -15,6 +15,7 @@ import {
   hubInviteEmail,
   signupNotifyEmail,
 } from "@/lib/mailer";
+import { notificationRecipients } from "@/lib/notifications";
 
 export type InviteState = {
   error?: string;
@@ -196,14 +197,12 @@ export async function submitSignupRequest(
     entityId: req.id,
   });
 
-  // Notify super admins (the approvers).
+  // Notify whoever the Notifications page points join requests at. This was
+  // hard-coded to Super Admin, which is one person — while Admin, Director and
+  // Finance can all approve. Who hears about it is now a choice, not a deploy.
   if (mailConfigured()) {
-    const admins = await db
-      .select({ email: users.email })
-      .from(users)
-      .innerJoin(roles, eq(users.roleId, roles.id))
-      .where(and(eq(roles.key, "super_admin"), eq(users.active, true)));
-    if (admins.length > 0) {
+    const approvers = await notificationRecipients("signup_requested");
+    if (approvers.length > 0) {
       const base = await appBaseUrl();
       const { subject, html, text } = signupNotifyEmail({
         applicantName: parsed.data.name,
@@ -211,7 +210,18 @@ export async function submitSignupRequest(
         companyName: company.name,
         reviewUrl: `${base}/signup-requests`,
       });
-      await Promise.all(admins.map((a) => sendMail({ to: a.email, subject, html, text })));
+      await Promise.all(approvers.map((a) => sendMail({ to: a.email, subject, html, text })));
+    } else {
+      // The request still shows on /signup-requests, but nobody has been
+      // pointed at it — worth a line rather than a silent wait.
+      await logEvent({
+        action: "signup.notify_nobody",
+        summary:
+          "Join request: nobody was emailed — the Notifications page has no group (or an empty one) set for “somebody asks to join the hub”.",
+        actorType: "system",
+        entityType: "signup_request",
+        entityId: req.id,
+      });
     }
   }
 

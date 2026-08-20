@@ -286,7 +286,7 @@ export function taskAssignedEmail(input: {
   return { subject, html, text };
 }
 
-/** Sent to directors + admins when someone reports an office issue. */
+/** Sent to the group chosen for "somebody reports an office issue". */
 export function issueReportedEmail(input: {
   category: string;
   detail: string;

@@ -19,10 +19,16 @@ import { resolveGroupRecipients } from "@/lib/group-members";
  * `resolveGroupRecipients` is already the single answer to "who is in this
  * group?" for six other features — and it buys both of those.
  *
- * ⚠️ ADDITIVE, ALWAYS. These recipients are added to whoever the event already
- * emails (the booker, the driver, the admins), never a replacement for them.
- * A setting that could silently switch off an existing notification is a much
- * more dangerous thing to hand someone than one that can only add.
+ * Two shapes of event use this, and the difference is worth knowing:
+ *
+ *  - The vehicle events ADD to a built-in list (the booker, the driver). The
+ *    group can only widen that; choosing nobody changes nothing.
+ *  - "Somebody reports an office issue" has NO built-in list any more. The
+ *    group IS the recipients. It used to be hard-coded to every director and
+ *    admin, which meant the one person who actually fixes things couldn't be
+ *    told without also mailing seven people who wouldn't — and that couldn't be
+ *    changed without a deploy. `soleRecipients` marks that on the type so the
+ *    UI can say "nobody will be told" rather than "nobody extra".
  */
 
 export type NotificationKey =
@@ -30,13 +36,20 @@ export type NotificationKey =
   | "vehicle_returned"
   | "vehicle_overdue"
   | "vehicle_cancelled"
-  | "issue_reported";
+  | "issue_reported"
+  | "signup_requested";
 
 export type NotificationType = {
   key: NotificationKey;
   label: string;
   /** What the event is, and who already gets it without any of this. */
   description: string;
+  /**
+   * True when the group is the WHOLE recipient list rather than an addition to
+   * a built-in one — so "Nobody else" means nobody at all, and the page has to
+   * say so.
+   */
+  soleRecipients?: boolean;
 };
 
 export const NOTIFICATION_TYPES: NotificationType[] = [
@@ -63,7 +76,16 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
   {
     key: "issue_reported",
     label: "Somebody reports an office issue",
-    description: "Already goes to every director and admin.",
+    description:
+      "Goes to this group and nobody else — from the Issues page and from the QR-code stickers alike.",
+    soleRecipients: true,
+  },
+  {
+    key: "signup_requested",
+    label: "Somebody asks to join the hub",
+    description:
+      "Goes to this group and nobody else. Pick people who can actually approve it — the email links to Join Requests.",
+    soleRecipients: true,
   },
 ];
 
@@ -100,13 +122,15 @@ export async function notificationGroupIds(): Promise<Record<NotificationKey, nu
 export type ExtraRecipient = { email: string; name: string };
 
 /**
- * The extra people to copy on one event, minus anyone already being emailed.
+ * Who the chosen group says to email for one event, minus anyone already on the
+ * message. On an additive event that's the extra copies; on a `soleRecipients`
+ * event it's the whole list.
  *
  * `alreadyEmailed` matters more than it looks: the organiser is usually also a
  * person who books vehicles, and getting the same message twice — once as the
  * driver and once as the organiser — is how people start ignoring it.
  */
-export async function extraRecipients(
+export async function notificationRecipients(
   key: NotificationKey,
   alreadyEmailed: string[] = [],
 ): Promise<ExtraRecipient[]> {

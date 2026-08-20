@@ -20,7 +20,7 @@ import {
   vehicleStealDeclinedEmail,
   vehicleStealRequestEmail,
 } from "@/lib/mailer";
-import { extraRecipients } from "@/lib/notifications";
+import { notificationRecipients } from "@/lib/notifications";
 import { isOrganiser } from "@/lib/organisers";
 import { storePrivatePhoto } from "@/lib/private-photo";
 import {
@@ -445,7 +445,7 @@ async function sendBookedEmails(booking: {
 
   // Whoever the Notifications page says to copy — minus anyone above, so the
   // organiser who booked the vehicle themselves gets one email, not two.
-  for (const extra of await extraRecipients("vehicle_booked", parties.map((p) => p.email))) {
+  for (const extra of await notificationRecipients("vehicle_booked", parties.map((p) => p.email))) {
     const mail = vehicleBookedEmail({
       ...trip,
       name: extra.name,
@@ -1089,7 +1089,7 @@ async function sendReturnedEmails(
   // an observer's copy is word-for-word the same one.
   const audience = [
     ...parties,
-    ...(await extraRecipients("vehicle_returned", parties.map((p) => p.email))),
+    ...(await notificationRecipients("vehicle_returned", parties.map((p) => p.email))),
   ];
 
   for (const party of audience) {
@@ -1308,7 +1308,7 @@ export async function cancelVehicleBooking(bookingId: number): Promise<VehicleBo
     const parties = bothParties(booking);
     const audience = [
       ...parties,
-      ...(await extraRecipients("vehicle_cancelled", parties.map((p) => p.email))),
+      ...(await notificationRecipients("vehicle_cancelled", parties.map((p) => p.email))),
     ];
     for (const party of audience) {
       const mail = vehicleBookingCancelledEmail({

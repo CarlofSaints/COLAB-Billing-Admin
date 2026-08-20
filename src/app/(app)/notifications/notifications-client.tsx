@@ -72,7 +72,7 @@ export function NotificationsClient({
                   }
                   className="sm:max-w-56"
                 >
-                  <option value="">Nobody else</option>
+                  <option value="">{type.soleRecipients ? "Nobody" : "Nobody else"}</option>
                   {groups.map((g) => (
                     <option key={g.id} value={g.id}>
                       {g.name}
@@ -80,6 +80,17 @@ export function NotificationsClient({
                   ))}
                 </Select>
               </div>
+
+              {/* An event with no built-in recipients and no group told nobody
+                  at all, which the row would otherwise show as a blank. */}
+              {!group && type.soleRecipients && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="flex items-center gap-1.5 font-medium text-amber-700">
+                    <TriangleAlert className="h-3.5 w-3.5" />
+                    Nobody is being told when this happens — pick a group.
+                  </span>
+                </div>
+              )}
 
               {group && (
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -90,7 +101,9 @@ export function NotificationsClient({
                     <span className="flex items-center gap-1.5 font-medium text-amber-700">
                       <TriangleAlert className="h-3.5 w-3.5" />
                       {group.memberCount === 0
-                        ? `${group.name} has nobody in it — nobody extra will be emailed.`
+                        ? `${group.name} has nobody in it — ${
+                            type.soleRecipients ? "nobody will be emailed" : "nobody extra will be emailed"
+                          }.`
                         : `Nobody in ${group.name} has an email address.`}
                     </span>
                   ) : (

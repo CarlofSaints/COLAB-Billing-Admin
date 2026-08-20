@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { issues, users, roles } from "@/db/schema";
+import { issues } from "@/db/schema";
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import {
@@ -15,7 +15,7 @@ import {
   type MailProvider,
 } from "@/lib/mailer";
 import { storeIssuePhoto } from "@/lib/issue-photo";
-import { extraRecipients } from "@/lib/notifications";
+import { notificationRecipients } from "@/lib/notifications";
 import { resolveCategory, resolvePlace } from "@/lib/issue-lists";
 
 export type ReportState = { error?: string; ok?: boolean; note?: string };
@@ -63,25 +63,13 @@ export async function reportIssue(_prev: ReportState, formData: FormData): Promi
     entityId: row.id,
   });
 
-  // Notify all active directors + admins (super admins included), plus whoever
-  // the Notifications page says to copy.
+  // Notify whoever the Notifications page points "somebody reports an office
+  // issue" at — nobody else. This used to also mail every director and admin
+  // from a role list hard-coded here, which sent seven people a broken kettle
+  // and could only be changed by a deploy.
   let note: string | undefined;
   if (mailConfigured()) {
-    const byRole = await db
-      .select({ email: users.email })
-      .from(users)
-      .innerJoin(roles, eq(users.roleId, roles.id))
-      .where(
-        and(
-          eq(users.active, true),
-          inArray(roles.key, ["super_admin", "director", "admin"]),
-        ),
-      );
-
-    // Added to the role-based list, never instead of it — an organiser who is
-    // also an admin still gets exactly one copy.
-    const extra = await extraRecipients("issue_reported", byRole.map((r) => r.email));
-    const recipients = [...byRole, ...extra.map((e) => ({ email: e.email }))];
+    const recipients = await notificationRecipients("issue_reported");
 
     if (recipients.length > 0) {
       const mail = issueReportedEmail({
@@ -117,7 +105,18 @@ export async function reportIssue(_prev: ReportState, formData: FormData): Promi
       });
       if (failed.length) note = `Reported — but ${failed.length} notification(s) failed to send.`;
     } else {
-      note = "Reported — but there are no directors or admins to notify.";
+      // Logged, not just returned: the reporter's toast is gone in seconds, and
+      // "nobody is set to be told about office issues" has to be findable
+      // afterwards or it stays broken indefinitely.
+      await logEvent({
+        action: "issue.notify_nobody",
+        summary:
+          "Issue notify: nobody was emailed — the Notifications page has no group (or an empty one) set for “somebody reports an office issue”.",
+        actor: user,
+        entityType: "issue",
+        entityId: row.id,
+      });
+      note = "Reported — but nobody is set up to be notified. Ask an admin to check Notifications.";
     }
   } else {
     note = "Reported — email isn't configured, so no one was notified.";

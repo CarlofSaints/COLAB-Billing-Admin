@@ -2,9 +2,9 @@
 
 import { createHash } from "node:crypto";
 import { headers } from "next/headers";
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { issues, users, roles, staff, companies } from "@/db/schema";
+import { issues, staff, companies } from "@/db/schema";
 import { logEvent } from "@/lib/log";
 import {
   appBaseUrl,
@@ -15,7 +15,7 @@ import {
   type MailProvider,
 } from "@/lib/mailer";
 import { storeIssuePhoto } from "@/lib/issue-photo";
-import { extraRecipients } from "@/lib/notifications";
+import { notificationRecipients } from "@/lib/notifications";
 import { resolveCategory, resolvePlace } from "@/lib/issue-lists";
 
 /**
@@ -31,7 +31,8 @@ import { resolveCategory, resolvePlace } from "@/lib/issue-lists";
  *     reporter is, so the ticket is stored with `source = 'public'` and is
  *     labelled unverified everywhere it is read.
  *   - submissions are rate limited per IP and carry a honeypot, because the
- *     form emails every admin and would otherwise be a free megaphone.
+ *     form emails whoever handles office issues and would otherwise be a
+ *     free megaphone.
  */
 
 export type PublicReportState = { error?: string; ok?: boolean };
@@ -158,19 +159,12 @@ export async function reportIssuePublic(
     entityId: row.id,
   });
 
-  // Notify all active directors + admins, plus whoever the Notifications page
-  // says to copy — same as the signed-in path. An issue reported off a sticker
-  // has to reach exactly the same people as one reported from a desk, or the
-  // organiser hears about half of what happens in the office.
+  // Notify whoever the Notifications page points the issue event at — the same
+  // group as the signed-in path. An issue reported off a sticker has to reach
+  // exactly the same people as one reported from a desk, or whoever fixes
+  // things hears about half of what happens in the office.
   if (mailConfigured()) {
-    const byRole = await db
-      .select({ email: users.email })
-      .from(users)
-      .innerJoin(roles, eq(users.roleId, roles.id))
-      .where(and(eq(users.active, true), inArray(roles.key, ["super_admin", "director", "admin"])));
-
-    const extra = await extraRecipients("issue_reported", byRole.map((r) => r.email));
-    const recipients = [...byRole, ...extra.map((e) => ({ email: e.email }))];
+    const recipients = await notificationRecipients("issue_reported");
 
     if (recipients.length > 0) {
       const mail = issueReportedEmail({
@@ -203,6 +197,17 @@ export async function reportIssuePublic(
         summary: failed.length
           ? `Public issue notify: ${results.length - failed.length}/${results.length} sent`
           : `Public issue notify: all ${results.length} sent (${describeProviders(byProvider)})`,
+        actorType: "system",
+        entityType: "issue",
+        entityId: row.id,
+      });
+    } else {
+      // The reporter is a stranger at a sticker and sees only "thanks" — if
+      // nobody is set to be told, the only trace is this line.
+      await logEvent({
+        action: "issue.notify_nobody",
+        summary:
+          "Public issue notify: nobody was emailed — the Notifications page has no group (or an empty one) set for “somebody reports an office issue”.",
         actorType: "system",
         entityType: "issue",
         entityId: row.id,
