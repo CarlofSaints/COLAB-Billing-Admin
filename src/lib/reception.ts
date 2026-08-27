@@ -37,6 +37,25 @@ export function buildSlotRanges(
 /* "You're on the desk shortly" reminders                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Is the "you're on the desk in 10 minutes" email switched on at all?
+ *
+ * OFF since 27 Aug 2026, by Carl's call: the nudge had been in test mode since
+ * it was built, so every one of them landed in his inbox instead of the desk
+ * staff's, and generating the rota on 25 Aug turned that into two a day.
+ *
+ * TO SWITCH IT BACK ON, BOTH OF THESE:
+ *   1. flip this to `true`;
+ *   2. restore the `/api/cron/reception` entry in vercel.json
+ *      (`"schedule": "20,50 4-16 * * *"`, see REMINDER_CRON_MINUTES below).
+ * The cron entry is what actually makes it fire; this flag is what makes the
+ * app tell the truth about it, on the rota page and in the job itself.
+ *
+ * Nothing else needs undoing — the rota, swaps and the whole reception page
+ * work exactly the same with the nudge off.
+ */
+export const REMINDERS_ENABLED = false;
+
 /** How far ahead of a shift the nudge goes out. */
 export const REMINDER_LEAD_MINUTES = 10;
 

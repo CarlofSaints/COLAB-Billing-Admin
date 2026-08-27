@@ -6,10 +6,6 @@
       "schedule": "0 4 * * *"
     },
     {
-      "path": "/api/cron/reception",
-      "schedule": "20,50 4-16 * * *"
-    },
-    {
       "path": "/api/cron/vehicles",
       "schedule": "*/15 * * * *"
     }

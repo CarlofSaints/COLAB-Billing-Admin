@@ -4,6 +4,7 @@ import { useActionState, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import {
+  BellOff,
   CalendarRange,
   ChevronLeft,
   ChevronRight,
@@ -30,6 +31,7 @@ import {
   DEFAULT_WEEKDAYS,
   REMINDER_CRON_MINUTES,
   REMINDER_LEAD_MINUTES,
+  REMINDERS_ENABLED,
   addDays,
   dayLabel,
   minutesToLabel,
@@ -134,7 +136,18 @@ function GenerateWeekForm({
         </Field>
       </div>
 
-      {unreachable.length > 0 && (
+      {!REMINDERS_ENABLED && (
+        <p className="flex gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+          <BellOff className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <strong>Shift reminder emails are switched off.</strong> Nobody is emailed
+            &ldquo;you&rsquo;re on the desk in {REMINDER_LEAD_MINUTES} minutes&rdquo;. The rota
+            itself, and swaps, work as normal.
+          </span>
+        </p>
+      )}
+
+      {REMINDERS_ENABLED && unreachable.length > 0 && (
         <p className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <span>

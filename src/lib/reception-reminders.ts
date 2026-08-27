@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { receptionSlots, staff } from "@/db/schema";
 import { appBaseUrl, mailConfigured, receptionDutyReminderEmail, sendMail } from "@/lib/mailer";
-import { dayLabel, minutesToLabel, selectDueShifts } from "@/lib/reception";
+import { dayLabel, minutesToLabel, REMINDERS_ENABLED, selectDueShifts } from "@/lib/reception";
 import { SAST_OFFSET_MINUTES, sastDateKey } from "@/lib/schedules";
 
 /**
@@ -54,6 +54,9 @@ export async function runReceptionReminders(
   now: Date = new Date(),
 ): Promise<{ checked: number; sent: number; testTo: string | null }> {
   const testTo = process.env.RECEPTION_REMINDER_TEST_TO?.trim() || null;
+  // Switched off in code as well as in vercel.json, so a leftover schedule or a
+  // hand-fired request can't start the emails up again on its own.
+  if (!REMINDERS_ENABLED) return { checked: 0, sent: 0, testTo };
   if (!mailConfigured()) return { checked: 0, sent: 0, testTo };
 
   const { dateKey, minuteOfDay } = nowInSast(now);

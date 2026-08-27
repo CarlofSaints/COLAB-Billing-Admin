@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { mailStatus } from "@/lib/mailer";
+import { REMINDERS_ENABLED } from "@/lib/reception";
 
 /**
  * Simple health check. Confirms the app is up and whether the core
@@ -24,6 +25,10 @@ export async function GET() {
       // boolean, not the address — this endpoint is public. "No reminder
       // arrived" is otherwise indistinguishable from "test mode is on".
       receptionReminderTestMode: Boolean(process.env.RECEPTION_REMINDER_TEST_TO?.trim()),
+      // Off since 27 Aug 2026 — the switch is REMINDERS_ENABLED in
+      // lib/reception.ts plus the cron entry in vercel.json. Here so the live
+      // state can be read without guessing which deploy is serving.
+      receptionRemindersEnabled: REMINDERS_ENABLED,
     },
   });
 }
