@@ -114,14 +114,14 @@ export default async function Dashboard({
 
   // The card figures come from the same engine that builds the invoices, so
   // what a company sees here is exactly what it will be billed.
-  const [recurring, monthEnd] = await Promise.all([
+  const [staticRun, variableRun] = await Promise.all([
     buildPreview(period, "recurring"),
     buildPreview(period, "month_end"),
   ]);
 
   const rentByCompany = new Map<number, number>();
   const otherByCompany = new Map<number, number>();
-  for (const c of recurring.companies) {
+  for (const c of staticRun.companies) {
     const rent = c.lines
       .filter((l) => l.key.startsWith("rent-"))
       .reduce((s, l) => s + l.amount, 0);
@@ -129,7 +129,7 @@ export default async function Dashboard({
     rentByCompany.set(c.companyId, rent);
     otherByCompany.set(c.companyId, other);
   }
-  for (const c of monthEnd.companies) {
+  for (const c of variableRun.companies) {
     otherByCompany.set(c.companyId, (otherByCompany.get(c.companyId) ?? 0) + c.total);
   }
 
@@ -148,8 +148,8 @@ export default async function Dashboard({
   const staffShares = percentShares(subCompanies.map((c) => staffByCompany.get(c.id) ?? 0));
   const sqmShares = percentShares(subCompanies.map((c) => sqmByCompany.get(c.id) ?? 0));
   const rentShares = percentShares(subCompanies.map((c) => rentByCompany.get(c.id) ?? 0));
-  // Other expenses can come out NEGATIVE — a month-end creditor variance
-  // credits back more than the recurring fixed items charged. "A share of the
+  // Other expenses can come out NEGATIVE — a Variable-run creditor variance
+  // credits back more than the Static fixed items charged. "A share of the
   // total" means nothing for a credit, so those get no percentage rather than a
   // misleading 0%.
   const otherValues = subCompanies.map((c) => otherByCompany.get(c.id) ?? 0);
@@ -256,7 +256,7 @@ export default async function Dashboard({
       <div className="mt-8 grid gap-4">
         <Card>
           <CardContent>
-            <h3 className="font-semibold text-slate-900">Month-end billing</h3>
+            <h3 className="font-semibold text-slate-900">Billing controls</h3>
             <p className="mt-1 text-sm text-muted">
               Configure how shared expenses split across the sub-companies — by floor space,
               headcount, or fixed line items.

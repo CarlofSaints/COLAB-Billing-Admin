@@ -9,7 +9,7 @@ import { logEvent } from "@/lib/log";
 import { isPeriod, periodLabel } from "@/lib/periods";
 import { createDraftInvoice } from "@/lib/xero";
 import { DEFAULT_INCOME_ACCOUNT, INCOME_ACCOUNT_KEY } from "@/lib/controls";
-import type { RunType } from "@/lib/invoice-engine";
+import { RUN_TYPE_LABELS, type RunType } from "@/lib/run-types";
 
 export type GenerateResult = {
   error?: string;
@@ -102,7 +102,9 @@ export async function generateInvoices(
 
   const date = periodEnd(period);
   const dueDate = addDays(date, 30);
-  const reference = `COLAB ${runType === "recurring" ? "recurring" : "month-end"} — ${periodLabel(period)}`;
+  // Goes onto the Xero draft as its Reference, so this is the one place the run
+  // type's name leaves the app. Was "COLAB recurring" / "COLAB month-end".
+  const reference = `COLAB ${RUN_TYPE_LABELS[runType]} — ${periodLabel(period)}`;
 
   const [run] = await db
     .insert(invoiceRuns)
@@ -167,7 +169,7 @@ export async function generateInvoices(
 
   await logEvent({
     action: "billing.invoices_generated",
-    summary: `Created ${created.length} draft invoice(s) in Xero for ${periodLabel(period)} (${runType === "recurring" ? "recurring" : "month-end"})${failed.length ? `, ${failed.length} failed` : ""}`,
+    summary: `Created ${created.length} draft invoice(s) in Xero for ${periodLabel(period)} (${RUN_TYPE_LABELS[runType]})${failed.length ? `, ${failed.length} failed` : ""}`,
     actor: user,
     entityType: "invoice_run",
     entityId: run.id,

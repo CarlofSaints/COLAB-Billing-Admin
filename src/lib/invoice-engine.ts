@@ -23,8 +23,13 @@ import { periodLabel } from "./periods";
 import { loadFixedAllocations } from "./tag-billing";
 import { METHOD_BY_KEY } from "./expense-accounts";
 import type { AccountMethod, PercentEntry } from "./expense-accounts";
+import type { RunType } from "./run-types";
 
-export type RunType = "recurring" | "month_end";
+// The run type and its on-screen name live in a client-safe module (this one
+// is `server-only`, and the Invoice Run toggle is a client component).
+// Re-exported here so the many `from "@/lib/invoice-engine"` imports still work.
+export { RUN_TYPE_LABELS, RUN_TYPES } from "./run-types";
+export type { RunType } from "./run-types";
 
 export type PreviewLine = {
   /** Stable id so the editor can track a line across re-renders. */
@@ -98,9 +103,9 @@ function allocate(
       if (opts.companyId) out[opts.companyId] = amount;
       return out;
     }
-    // "fixed" is recovered by a fixed line item on the recurring run,
+    // "fixed" is recovered by a fixed line item on the Static run,
     // "controls" is billed from Controls, and "exclude" is never recharged —
-    // none of them produce a month-end line.
+    // none of them produce a Variable line.
     case "fixed":
     case "controls":
     case "exclude":
@@ -193,7 +198,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       }
     }
   } else {
-    // ---- Month-end: the Xero actuals, split by the mappings ---------
+    // ---- Variable: the Xero actuals, split by the mappings ---------
     const [costs, accountList] = await Promise.all([
       getMonthCosts(period),
       fetchExpenseAccounts(),
@@ -259,13 +264,13 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     // What each fixed line item recovers from the companies each month.
     const fixedItemRows = await db.select().from(fixedLineItems);
     const fixedAllocRows = await db.select().from(fixedLineAllocations);
-    // Same resolution as the recurring run above — otherwise a tagged item
+    // Same resolution as the Static run above — otherwise a tagged item
     // would recover a different amount here than it billed, and the balance
     // would be wrong by exactly that difference.
     const resolvedRecovery = await loadFixedAllocations(fixedItemRows, fixedAllocRows, basis);
     const recoveredByItem = new Map<number, number>();
     for (const item of fixedItemRows) {
-      // An inactive item never went out on the recurring invoice, so it
+      // An inactive item never went out on the Static invoice, so it
       // recovers nothing — deducting it here would under-recharge silently.
       if (!item.active) continue;
       recoveredByItem.set(
@@ -286,7 +291,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     const unsplitBalanceSuppliers: string[] = [];
     const creditedItems = new Set<number>();
     const duplicateItemUse = new Set<number>();
-    // Costs from creditors linked to a recurring fixed item — pooled here and
+    // Costs from creditors linked to a Static fixed item — pooled here and
     // reconciled after the loop instead of being split normally.
     const creditorPool = new Map<string, { name: string; total: number; contributors: string[] }>();
 
@@ -311,7 +316,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     for (const row of costs.rows) {
       const own = explicit.get(row.key);
 
-      // Linked creditor (e.g. the landlord) — already billed on the recurring
+      // Linked creditor (e.g. the landlord) — already billed on the Static
       // invoice. Pool it for reconciliation and don't split it here. A manual
       // this-month split still wins, as an escape hatch.
       const link = linkByContact.get(row.contactId);
@@ -409,7 +414,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       entry.total += splitAmount;
       entry.contributors.push(
         method === "fixed"
-          ? `${row.supplierName} — balance ${formatRand(splitAmount)} of ${formatRand(row.amount)} (rest on the recurring invoice)`
+          ? `${row.supplierName} — balance ${formatRand(splitAmount)} of ${formatRand(row.amount)} (rest on the Static invoice)`
           : `${row.supplierName} — ${formatRand(splitAmount)}`,
       );
       perAccount.set(row.accountCode, entry);
@@ -446,16 +451,16 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       entry.total += balance;
       const itemName = fixedItemRows.find((i) => i.id === pooled.itemId)?.name ?? "a fixed item";
       entry.contributors.push(
-        `${formatRand(pooled.total)} on this account, less ${formatRand(credited)} recovered by ${itemName} on the recurring invoice`,
+        `${formatRand(pooled.total)} on this account, less ${formatRand(credited)} recovered by ${itemName} on the Static invoice`,
         ...pooled.contributors,
       );
       perAccount.set(code, entry);
     }
 
-    // ---- Linked creditors: reconcile actual (Xero) vs recurring -----
+    // ---- Linked creditors: reconcile actual (Xero) vs Static -----
     for (const [contactId, pool] of creditorPool) {
       const link = linkByContact.get(contactId)!;
-      const itemName = fixedItemRows.find((i) => i.id === link.fixedLineItemId)?.name ?? "the recurring item";
+      const itemName = fixedItemRows.find((i) => i.id === link.fixedLineItemId)?.name ?? "the Static item";
       const recovered = round2(recoveredByItem.get(link.fixedLineItemId) ?? 0);
       const actual = round2(pool.total);
       const variance = round2(actual - recovered);
@@ -464,7 +469,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       if (recovered <= 0) {
         warnings.push({
           level: "warn",
-          message: `${pool.name} is linked to "${itemName}", but that item bills nothing on the recurring invoice — check its allocations. Its R${actual.toFixed(2)} in Xero was NOT billed here.`,
+          message: `${pool.name} is linked to "${itemName}", but that item bills nothing on the Static invoice — check its allocations. Its R${actual.toFixed(2)} in Xero was NOT billed here.`,
           href: "/controls",
           linkLabel: "Open Controls",
         });
@@ -473,14 +478,14 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       if (Math.abs(variance) < 0.01) {
         warnings.push({
           level: "info",
-          message: `${pool.name}: R${actual.toFixed(2)} in Xero matches "${itemName}" on the recurring invoice — reconciled, not billed again.`,
+          message: `${pool.name}: R${actual.toFixed(2)} in Xero matches "${itemName}" on the Static invoice — reconciled, not billed again.`,
         });
         continue;
       }
       if (variance < 0) {
         warnings.push({
           level: "warn",
-          message: `${pool.name}: R${recovered.toFixed(2)} billed on the recurring invoice for "${itemName}", but only R${actual.toFixed(2)} in Xero — R${Math.abs(variance).toFixed(2)} over-recovered. Review whether to credit it.`,
+          message: `${pool.name}: R${recovered.toFixed(2)} billed on the Static invoice for "${itemName}", but only R${actual.toFixed(2)} in Xero — R${Math.abs(variance).toFixed(2)} over-recovered. Review whether to credit it.`,
         });
         continue;
       }
@@ -490,7 +495,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       if (!bm || bm === "fixed" || bm === "controls" || bm === "exclude") {
         warnings.push({
           level: "warn",
-          message: `${pool.name}: R${actual.toFixed(2)} in Xero vs R${recovered.toFixed(2)} on the recurring invoice — R${variance.toFixed(2)} over, but the link has no split rule, so it is NOT billed. Set one.`,
+          message: `${pool.name}: R${actual.toFixed(2)} in Xero vs R${recovered.toFixed(2)} on the Static invoice — R${variance.toFixed(2)} over, but the link has no split rule, so it is NOT billed. Set one.`,
           href: "/creditor-links",
           linkLabel: "Set the rule",
         });
@@ -505,17 +510,17 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
         if (Math.abs(amt) < 0.005) continue;
         push(c.id, {
           key: `creditor-${contactId}-${c.id}`,
-          description: `${pool.name} — over recurring — ${label}`,
+          description: `${pool.name} — over Static — ${label}`,
           amount: amt,
           detail: [
-            `Actual R${actual.toFixed(2)} vs R${recovered.toFixed(2)} billed on the recurring invoice; R${variance.toFixed(2)} over, split by ${METHOD_BY_KEY[bm].short}`,
+            `Actual R${actual.toFixed(2)} vs R${recovered.toFixed(2)} billed on the Static invoice; R${variance.toFixed(2)} over, split by ${METHOD_BY_KEY[bm].short}`,
             ...pool.contributors,
           ],
         });
       }
       warnings.push({
         level: "info",
-        message: `${pool.name}: R${variance.toFixed(2)} over the recurring invoice is billed here (actual R${actual.toFixed(2)} vs R${recovered.toFixed(2)}).`,
+        message: `${pool.name}: R${variance.toFixed(2)} over the Static invoice is billed here (actual R${actual.toFixed(2)} vs R${recovered.toFixed(2)}).`,
       });
     }
 
@@ -539,7 +544,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       }
     }
 
-    // ---- Month-end warnings ----------------------------------------
+    // ---- Variable warnings ----------------------------------------
     warnings.push({
       level: "info",
       message:
@@ -569,11 +574,11 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     if (recoveredElsewhere > 0) {
       warnings.push({
         level: "info",
-        message: `${formatRand(recoveredElsewhere)} is recovered by fixed line items and is billed on the recurring invoice instead, not here.`,
+        message: `${formatRand(recoveredElsewhere)} is recovered by fixed line items and is billed on the Static invoice instead, not here.`,
       });
     }
 
-    // A fixed line item always goes out on the recurring invoice. If nothing
+    // A fixed line item always goes out on the Static invoice. If nothing
     // deducts it from the account its cost actually sits in, that account's
     // split bills it a second time.
     const referencedItems = new Set<number>([
@@ -588,7 +593,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     if (unreferenced.length > 0) {
       warnings.push({
         level: "warn",
-        message: `${unreferenced.map((i) => i.name).join(", ")} ${unreferenced.length === 1 ? "is" : "are"} billed on the recurring invoice, but no expense account is set to "Fixed line item" to deduct ${unreferenced.length === 1 ? "it" : "them"}. If that cost also sits in an account being split here, it will be charged twice.`,
+        message: `${unreferenced.map((i) => i.name).join(", ")} ${unreferenced.length === 1 ? "is" : "are"} billed on the Static invoice, but no expense account is set to "Fixed line item" to deduct ${unreferenced.length === 1 ? "it" : "them"}. If that cost also sits in an account being split here, it will be charged twice.`,
         href: "/expense-accounts",
         linkLabel: "Check the account rules",
       });
@@ -609,7 +614,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     if (billedFromControls > 0) {
       warnings.push({
         level: "info",
-        message: `${formatRand(billedFromControls)} is marked "Ignore — split in Controls" and is billed on the recurring invoice instead.`,
+        message: `${formatRand(billedFromControls)} is marked "Ignore — split in Controls" and is billed on the Static invoice instead.`,
       });
     }
 
@@ -622,7 +627,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       });
     }
 
-    // Rent is billed from Controls on the recurring run, so seeing it again
+    // Rent is billed from Controls on the Static run, so seeing it again
     // here means it would go out twice.
     if (rentAmount > 0) {
       const rentish = sortedAccounts.find(([code]) =>
@@ -631,7 +636,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       if (rentish) {
         warnings.push({
           level: "warn",
-          message: `Account ${rentish[0]} (${accountNameByCode.get(rentish[0])}) is being split here, but rent is also billed on the recurring invoice from Controls — that would charge it twice. Mark the account "Not recharged" if the recurring invoice already covers it.`,
+          message: `Account ${rentish[0]} (${accountNameByCode.get(rentish[0])}) is being split here, but rent is also billed on the Static invoice from Controls — that would charge it twice. Mark the account "Not recharged" if the Static invoice already covers it.`,
           href: "/expense-accounts",
           linkLabel: "Open Expense Accounts",
         });

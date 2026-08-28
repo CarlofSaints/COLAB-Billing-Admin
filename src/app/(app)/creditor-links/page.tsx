@@ -52,7 +52,7 @@ export default async function CreditorLinksPage() {
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title="Creditor Links"
-        description="Link a Xero creditor (landlord, ISP…) to the recurring line item that already bills it. Its Xero bills are then ignored at month-end and reconciled against what was billed."
+        description="Link a Xero creditor (landlord, ISP…) to the Static line item that already bills it. Its Xero bills are then ignored on the Variable run and reconciled against what was billed."
       />
       <CreditorLinksClient
         links={links}

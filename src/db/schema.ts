@@ -480,12 +480,12 @@ export const receptionSlots = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
-/* Creditor links (a Xero creditor pre-billed by a recurring item)     */
+/* Creditor links (a Xero creditor pre-billed by a Static item)       */
 /* ------------------------------------------------------------------ */
 
 /**
  * Links a Xero creditor (e.g. the landlord, the ISP) to the fixed line item
- * that already recovers its cost on the recurring invoice. In the month-end
+ * that already recovers its cost on the Static invoice. In the Variable
  * run the creditor's Xero bills are auto-ignored (so nothing bills twice) and
  * reconciled against what was billed; any overage splits by `balanceMethod`.
  */
@@ -790,7 +790,7 @@ export const fixedLineItems = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   // At most one item per costed tag, so costing a tag twice can't produce two
-  // competing recurring lines.
+  // competing Static lines.
   (t) => [
     uniqueIndex("fixed_item_tag_unique")
       .on(t.tagId)
@@ -951,9 +951,11 @@ export const commonSpaceSplits = pgTable(
 /* Invoice runs                                                       */
 /* ------------------------------------------------------------------ */
 
-// "recurring" = the predictable monthly charges (rent, fixed line items),
-// billed ahead. "month_end" = the variable Xero actuals, billed in arrears
-// once the month is reconciled.
+// Named "Static" and "Variable" on screen - see RUN_TYPE_LABELS in lib/run-types.ts.
+// "recurring" = the predictable monthly charges (rent, fixed line items), billed
+// ahead. "month_end" = the variable Xero actuals, billed in arrears once the
+// month is reconciled. The KEYS never change: renaming a pg enum value means
+// recreating the type, which takes the column with it.
 export const invoiceRunTypeEnum = pgEnum("invoice_run_type", ["recurring", "month_end"]);
 
 /** One generation of invoices for a billing month. */

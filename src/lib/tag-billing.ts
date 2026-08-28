@@ -7,7 +7,7 @@
  * is where the per-company quantity comes from: instead of a hand-typed
  * `fixed_line_allocations` row, it is counted live from who carries the tag.
  *
- * That means the recurring run and the month-end recovery figure must agree on
+ * That means the Static run and the Variable recovery figure must agree on
  * the count, so both go through `resolveFixedAllocations` below rather than
  * reading the allocations table directly.
  */

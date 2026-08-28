@@ -5,7 +5,7 @@ import "server-only";
  *
  * This used to live privately inside `invoice-engine.ts`. Fixed line items can
  * now be split per m² or per head as well, and those shares have to come out
- * identical to the ones the month-end run uses — two copies of this maths
+ * identical to the ones the Variable run uses — two copies of this maths
  * would drift and nobody would notice until an invoice disagreed with the
  * preview. So it lives here once and both sides read it.
  */

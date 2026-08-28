@@ -21,7 +21,7 @@ export const XERO_SCOPES = [
   "accounting.contacts",
   "accounting.contacts.read",
   "accounting.settings.read",
-  // Needed for the month-end P&L per expense account. Added after the first
+  // Needed for the Variable run P&L per expense account. Added after the first
   // connection, so an existing connection must be re-consented to pick it up.
   //
   // NB: the broad "accounting.reports.read" is rejected with invalid_scope —

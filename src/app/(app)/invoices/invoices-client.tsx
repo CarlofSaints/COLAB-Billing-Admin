@@ -18,7 +18,8 @@ import {
   Plug,
 } from "lucide-react";
 import { generateInvoices, type GenerateResult } from "@/app/actions/invoices";
-import type { InvoicePreview, PreviewCompany, RunType } from "@/lib/invoice-engine";
+import type { InvoicePreview, PreviewCompany } from "@/lib/invoice-engine";
+import { RUN_TYPES, RUN_TYPE_LABELS, type RunType } from "@/lib/run-types";
 import { periodLabel } from "@/lib/periods";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -182,24 +183,19 @@ export function InvoiceBuilder({
                 ))}
               </Select>
               <div className="flex gap-1 rounded-lg border border-line p-1">
-                {(
-                  [
-                    { key: "recurring", label: "Recurring" },
-                    { key: "month_end", label: "Month-end" },
-                  ] as const
-                ).map((t) => (
+                {RUN_TYPES.map((key) => (
                   <button
-                    key={t.key}
+                    key={key}
                     type="button"
-                    onClick={() => switchTo({ run: t.key })}
+                    onClick={() => switchTo({ run: key })}
                     className={cn(
                       "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                      preview.runType === t.key
+                      preview.runType === key
                         ? "bg-brand-700 text-white"
                         : "text-slate-600 hover:bg-slate-100",
                     )}
                   >
-                    {t.label}
+                    {RUN_TYPE_LABELS[key]}
                   </button>
                 ))}
               </div>
@@ -214,7 +210,7 @@ export function InvoiceBuilder({
 
           <p className="text-sm text-muted">
             {preview.runType === "recurring"
-              ? "The predictable charges: rent split by effective floor space, plus the fixed line items. These don't depend on Xero actuals, so this run can go out at the start of the month."
+              ? "The static charges: rent split by effective floor space, plus the fixed line items. These don't depend on Xero actuals, so this run can go out at the start of the month."
               : "The variable costs actually incurred in Xero, split by your account and supplier mappings. Run this once the month is reconciled."}
           </p>
         </CardHeader>

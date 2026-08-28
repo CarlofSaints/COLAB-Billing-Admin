@@ -130,7 +130,7 @@ export function SubCompanyCard({
               <div className="flex items-center justify-between">
                 <span className="text-muted">Other expenses</span>
                 {/* ⚠️ A NEGATIVE HERE IS REAL AND MUST BE SHOWN. It used to
-                    test `> 0`, so a month-end credit larger than the recurring
+                    test `> 0`, so a Variable-run credit larger than the Static
                     fixed items rendered as an em dash — the card then showed
                     rent, a dash, and a total that was smaller than the rent
                     above it and explained by nothing on screen. */}

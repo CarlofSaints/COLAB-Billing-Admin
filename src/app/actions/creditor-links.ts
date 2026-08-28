@@ -30,7 +30,7 @@ export async function createCreditorLink(
   const xeroContactName = String(formData.get("xeroContactName") ?? "").trim();
   const fixedLineItemId = Number(formData.get("fixedLineItemId"));
   if (!xeroContactId || !xeroContactName) return { error: "Choose a creditor." };
-  if (!fixedLineItemId) return { error: "Choose the recurring line item it's billed by." };
+  if (!fixedLineItemId) return { error: "Choose the Static line item it is billed by." };
 
   const { method, companyId } = readBalance(formData);
   if (method === "direct" && !companyId) return { error: "Choose the company for a direct split." };
@@ -48,7 +48,7 @@ export async function createCreditorLink(
       .returning();
     await logEvent({
       action: "creditor_link.create",
-      summary: `Linked creditor ${xeroContactName} to a recurring line item`,
+      summary: `Linked creditor ${xeroContactName} to a Static line item`,
       actor,
       entityType: "creditor_link",
       entityId: row.id,
@@ -69,7 +69,7 @@ export async function updateCreditorLink(
   const id = Number(formData.get("id"));
   const fixedLineItemId = Number(formData.get("fixedLineItemId"));
   if (!id) return { error: "Missing link id" };
-  if (!fixedLineItemId) return { error: "Choose the recurring line item it's billed by." };
+  if (!fixedLineItemId) return { error: "Choose the Static line item it is billed by." };
 
   const { method, companyId } = readBalance(formData);
   if (method === "direct" && !companyId) return { error: "Choose the company for a direct split." };

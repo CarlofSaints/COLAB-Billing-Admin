@@ -92,7 +92,7 @@ export const METHODS: MethodDef[] = [
     label: "Ignore — split in Controls",
     short: "In Controls",
     description:
-      "Already billed from Controls — rent on the recurring invoice, or a fixed line item. Ignored here so it can't go out twice.",
+      "Already billed from Controls — rent on the Static invoice, or a fixed line item. Ignored here so it can't go out twice.",
     tone: "indigo",
     applies: "Billed from Controls",
   },

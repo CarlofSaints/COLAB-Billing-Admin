@@ -92,7 +92,7 @@ function TagForm({ tag, onDone }: { tag?: TagRow; onDone: () => void }) {
       </label>
       <Field
         label="Cost per person, per month"
-        hint="Leave blank for a label-only tag like Reception. Enter an amount and the tag bills: each sub-company is charged for the people it has tagged, on the recurring run."
+        hint="Leave blank for a label-only tag like Reception. Enter an amount and the tag bills: each sub-company is charged for the people it has tagged, on the Static run."
       >
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted">R</span>
@@ -126,7 +126,7 @@ function TagForm({ tag, onDone }: { tag?: TagRow; onDone: () => void }) {
       {editing && hadCost && cost.trim() === "" && (
         <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          Clearing the cost stops this billing. Its recurring line item is kept but deactivated, so
+          Clearing the cost stops this billing. Its Static line item is kept but deactivated, so
           any expense account linked to it stays linked.
         </p>
       )}
@@ -169,7 +169,7 @@ function RowActions({ tag }: { tag: TagRow }) {
         disabled={pending}
         onClick={() => {
           // A costed tag bills per tagged head, so deleting one stops a real
-          // monthly charge. Saying so beats finding out at month-end.
+          // monthly charge. Saying so beats finding out when the invoice goes out.
           const monthly =
             tag.costPerPerson !== null
               ? ` It currently bills ${formatCurrency(tag.billableCount * tag.costPerPerson)} a month, and that charge will stop.`
@@ -243,7 +243,7 @@ export function TagsClient({ tags }: { tags: TagRow[] }) {
                 </div>
                 <RowActions tag={t} />
               </div>
-              {/* Where a billable tag's money actually lands, so the recurring
+              {/* Where a billable tag's money actually lands, so the Static
                   invoice holds no surprises. */}
               {t.costPerPerson !== null && t.billable.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 pl-1 text-xs text-muted">

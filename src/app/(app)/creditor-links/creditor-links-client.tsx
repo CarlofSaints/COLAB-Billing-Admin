@@ -108,10 +108,10 @@ function LinkForm({
         </Field>
       )}
 
-      <Field label="Billed by this recurring line item" hint="What already recovers this cost up front.">
+      <Field label="Billed by this Static line item" hint="What already recovers this cost up front.">
         <Select name="fixedLineItemId" defaultValue={link?.fixedLineItemId ?? ""} required>
           <option value="" disabled>
-            Choose a recurring item…
+            Choose a Static item…
           </option>
           {items.map((i) => (
             <option key={i.id} value={i.id}>
@@ -123,7 +123,7 @@ function LinkForm({
 
       <Field
         label="If Xero is more than what was billed…"
-        hint="How to split the overage onto the month-end invoice."
+        hint="How to split the overage onto the Variable invoice."
       >
         <Select
           name="balanceMethod"
@@ -270,7 +270,7 @@ export function CreditorLinksClient({
 
       {items.length === 0 && (
         <p className="text-sm text-muted">
-          Create a recurring fixed line item first (under Controls), then link a creditor to it.
+          Create a Static fixed line item first (under Controls), then link a creditor to it.
         </p>
       )}
 
@@ -278,7 +278,7 @@ export function CreditorLinksClient({
         <EmptyState
           icon={<Link2 className="h-8 w-8" />}
           title="No creditor links yet"
-          description="Link a creditor whose cost you already bill up front (e.g. the landlord) so it isn't billed again at month-end."
+          description="Link a creditor whose cost you already bill up front (e.g. the landlord) so it is not billed again on the Variable run."
         />
       ) : (
         <Card className="divide-y divide-line">

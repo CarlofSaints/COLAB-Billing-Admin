@@ -13,7 +13,7 @@ import { formatCurrency } from "@/lib/utils";
 export type TagState = { error?: string; ok?: boolean };
 
 /**
- * A costed tag feeds the recurring invoice through its fixed line item, so a
+ * A costed tag feeds the Static invoice through its fixed line item, so a
  * tag edit has to refresh Controls and the dashboard too, not just the tag
  * screens.
  */
@@ -125,11 +125,11 @@ export async function updateTag(_prev: TagState, formData: FormData): Promise<Ta
   await syncTagLineItem(id, name, costPerPerson);
 
   // Money changes are worth spelling out in the log — this one moves what
-  // goes out on the recurring invoice.
+  // goes out on the Static invoice.
   let summary = `Updated tag "${name}"`;
   if (previousCost !== costPerPerson) {
     if (costPerPerson === null) {
-      summary = `Removed the cost from tag "${name}" — its recurring line item is now inactive`;
+      summary = `Removed the cost from tag "${name}" — its Static line item is now inactive`;
     } else if (previousCost === null) {
       summary = `Made tag "${name}" billable at ${formatCurrency(costPerPerson)} per person`;
     } else {
