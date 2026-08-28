@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { creditorLinks, fixedLineItems, companies } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { fetchContacts } from "@/lib/xero";
+import { recoveryItemIds } from "@/lib/expense-accounts";
 import { PageHeader } from "@/components/ui/page";
 import { CreditorLinksClient } from "./creditor-links-client";
 
@@ -14,19 +15,20 @@ export default async function CreditorLinksPage() {
   const user = await getCurrentUser();
   const canManage = user ? hasPermission(user, "controls.manage") : false;
 
-  const links = await db
+  // A link recovers SEVERAL items now, so the item name can no longer come
+  // from a join on one id — the names are looked up from `items` below.
+  const linkRows = await db
     .select({
       id: creditorLinks.id,
       xeroContactId: creditorLinks.xeroContactId,
       xeroContactName: creditorLinks.xeroContactName,
       fixedLineItemId: creditorLinks.fixedLineItemId,
-      itemName: fixedLineItems.name,
+      fixedLineItemIds: creditorLinks.fixedLineItemIds,
       balanceMethod: creditorLinks.balanceMethod,
       balanceCompanyId: creditorLinks.balanceCompanyId,
       balanceCompanyName: companies.name,
     })
     .from(creditorLinks)
-    .leftJoin(fixedLineItems, eq(fixedLineItems.id, creditorLinks.fixedLineItemId))
     .leftJoin(companies, eq(companies.id, creditorLinks.balanceCompanyId))
     .orderBy(asc(creditorLinks.xeroContactName));
 
@@ -35,6 +37,23 @@ export default async function CreditorLinksPage() {
     .from(fixedLineItems)
     .where(eq(fixedLineItems.active, true))
     .orderBy(asc(fixedLineItems.name));
+
+  const nameOf = new Map(items.map((i) => [i.id, i.name]));
+  const links = linkRows.map((l) => {
+    const ids = recoveryItemIds(l);
+    return {
+      id: l.id,
+      xeroContactId: l.xeroContactId,
+      xeroContactName: l.xeroContactName,
+      fixedLineItemIds: ids,
+      // An id whose item is gone (or now inactive) is named as such rather
+      // than silently dropped — it recovers nothing and inflates the overage.
+      itemNames: ids.map((id) => nameOf.get(id) ?? `item ${id} (missing)`),
+      balanceMethod: l.balanceMethod,
+      balanceCompanyId: l.balanceCompanyId,
+      balanceCompanyName: l.balanceCompanyName,
+    };
+  });
 
   const subCompanies = await db
     .select({ id: companies.id, name: companies.name })

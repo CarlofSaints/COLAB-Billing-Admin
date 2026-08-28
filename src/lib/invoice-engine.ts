@@ -21,7 +21,7 @@ import { fetchExpenseAccounts } from "./xero";
 import { getMonthCosts } from "./month-costs";
 import { periodLabel } from "./periods";
 import { loadFixedAllocations } from "./tag-billing";
-import { METHOD_BY_KEY } from "./expense-accounts";
+import { METHOD_BY_KEY, recoversFixedItems, recoveryItemIds } from "./expense-accounts";
 import type { AccountMethod, PercentEntry } from "./expense-accounts";
 import type { RunType } from "./run-types";
 
@@ -291,6 +291,8 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     const unsplitBalanceSuppliers: string[] = [];
     const creditedItems = new Set<number>();
     const duplicateItemUse = new Set<number>();
+    // Recovery rules pointing at a fixed line item that no longer exists.
+    const unknownRecoveryItems = new Set<number>();
     // Costs from creditors linked to a Static fixed item — pooled here and
     // reconciled after the loop instead of being split normally.
     const creditorPool = new Map<string, { name: string; total: number; contributors: string[] }>();
@@ -305,13 +307,42 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       string,
       {
         total: number;
-        itemId: number | null;
+        itemIds: number[];
         balanceMethod: AccountMethod | null;
         balanceCompanyId: number | null;
         balancePercentages: PercentEntry[] | null;
         contributors: string[];
       }
     >();
+
+    /**
+     * What a rule's named items recover between them, and their names.
+     *
+     * An item is only ever credited ONCE per run, however many rules name it —
+     * crediting it twice would silently under-recharge by its full amount.
+     * `creditedItems` is the ledger of what has already been counted.
+     */
+    const recoveryFor = (itemIds: number[]) => {
+      let total = 0;
+      const names: string[] = [];
+      for (const id of itemIds) {
+        const item = fixedItemRows.find((i) => i.id === id);
+        // An id can outlive its item (deleted from Controls). Say so rather
+        // than quietly recovering nothing.
+        if (!item) {
+          unknownRecoveryItems.add(id);
+          continue;
+        }
+        if (creditedItems.has(id)) {
+          duplicateItemUse.add(id);
+          continue;
+        }
+        creditedItems.add(id);
+        total += recoveredByItem.get(id) ?? 0;
+        names.push(item.name);
+      }
+      return { total: round2(total), names };
+    };
 
     for (const row of costs.rows) {
       const own = explicit.get(row.key);
@@ -345,7 +376,13 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
 
       const method = winner.method as AccountMethod;
       if (method === "exclude") continue;
-      if (method === "controls") {
+
+      const ruleItemIds = recoversFixedItems(method) ? recoveryItemIds(winner) : [];
+
+      // "Ignore — split in Controls" naming no items is the original meaning:
+      // the whole cost is recovered over there, nothing is billed here. That
+      // is still right for rent, which Controls bills without a fixed item.
+      if (method === "controls" && ruleItemIds.length === 0) {
         billedFromControls += row.amount;
         continue;
       }
@@ -355,14 +392,14 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       let splitCompanyId: number | null = winner.companyId;
       let splitPercentages: PercentEntry[] | null = winner.percentages ?? null;
 
-      if (method === "fixed") {
+      if (recoversFixedItems(method)) {
         const balanceMethod = (winner.balanceMethod ?? null) as AccountMethod | null;
 
-        // Rule from the account: pool the whole account, recover the item once.
+        // Rule from the account: pool the whole account, recover the items once.
         if (!own && !prior) {
           const entry = accountFixed.get(row.accountCode) ?? {
             total: 0,
-            itemId: winner.fixedLineItemId,
+            itemIds: ruleItemIds,
             balanceMethod,
             balanceCompanyId: winner.balanceCompanyId,
             balancePercentages: winner.percentages ? null : (winner.balancePercentages ?? null),
@@ -375,20 +412,13 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
         }
 
         // Rule set against this specific supplier line: it covers that line
-        // only, and the item can still only be credited once.
-        const itemId = winner.fixedLineItemId;
-        const alreadyCredited = itemId != null && creditedItems.has(itemId);
-        if (itemId != null) {
-          if (alreadyCredited) duplicateItemUse.add(itemId);
-          creditedItems.add(itemId);
-        }
-        const recovered =
-          itemId != null && !alreadyCredited ? (recoveredByItem.get(itemId) ?? 0) : 0;
+        // only, and each item can still only be credited once.
+        const { total: recovered } = recoveryFor(ruleItemIds);
         recoveredElsewhere += Math.min(recovered, row.amount);
         const balance = round2(row.amount - recovered);
         if (balance <= 0.005) continue;
 
-        if (!balanceMethod || balanceMethod === "fixed") {
+        if (!balanceMethod || recoversFixedItems(balanceMethod)) {
           unsplitBalance += balance;
           unsplitBalanceSuppliers.push(`${row.supplierName} (${formatRand(balance)})`);
           continue;
@@ -413,7 +443,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       }
       entry.total += splitAmount;
       entry.contributors.push(
-        method === "fixed"
+        recoversFixedItems(method)
           ? `${row.supplierName} — balance ${formatRand(splitAmount)} of ${formatRand(row.amount)} (rest on the Static invoice)`
           : `${row.supplierName} — ${formatRand(splitAmount)}`,
       );
@@ -423,13 +453,13 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     // Accounts whose rule is a fixed line item: recover the item once against
     // the account's whole cost, then split the remainder.
     for (const [code, pooled] of accountFixed) {
-      const recovered = pooled.itemId != null ? (recoveredByItem.get(pooled.itemId) ?? 0) : 0;
+      const { total: recovered, names: recoveredNames } = recoveryFor(pooled.itemIds);
       const credited = Math.min(recovered, pooled.total);
       recoveredElsewhere += credited;
       const balance = round2(pooled.total - credited);
       if (balance <= 0.005) continue;
 
-      if (!pooled.balanceMethod || pooled.balanceMethod === "fixed") {
+      if (!pooled.balanceMethod || recoversFixedItems(pooled.balanceMethod)) {
         unsplitBalance += balance;
         unsplitBalanceSuppliers.push(
           `${accountNameByCode.get(code) ?? code} (${formatRand(balance)})`,
@@ -449,7 +479,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
         entry.company[id] = (entry.company[id] ?? 0) + value;
       }
       entry.total += balance;
-      const itemName = fixedItemRows.find((i) => i.id === pooled.itemId)?.name ?? "a fixed item";
+      const itemName = recoveredNames.length > 0 ? recoveredNames.join(" + ") : "a fixed item";
       entry.contributors.push(
         `${formatRand(pooled.total)} on this account, less ${formatRand(credited)} recovered by ${itemName} on the Static invoice`,
         ...pooled.contributors,
@@ -460,8 +490,11 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     // ---- Linked creditors: reconcile actual (Xero) vs Static -----
     for (const [contactId, pool] of creditorPool) {
       const link = linkByContact.get(contactId)!;
-      const itemName = fixedItemRows.find((i) => i.id === link.fixedLineItemId)?.name ?? "the Static item";
-      const recovered = round2(recoveredByItem.get(link.fixedLineItemId) ?? 0);
+      // A creditor's bill is routinely pre-billed by SEVERAL Static items —
+      // Yaxxa's covers handsets by tag, licences by tag and fibre per head.
+      // Naming one leaves the overage overstated by all the others.
+      const { total: recovered, names } = recoveryFor(recoveryItemIds(link));
+      const itemName = names.length > 0 ? names.join(" + ") : "the Static item";
       const actual = round2(pool.total);
       const variance = round2(actual - recovered);
       recoveredElsewhere += Math.min(recovered, actual);
@@ -492,7 +525,7 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
 
       // Overage — split by the link's balance rule.
       const bm = (link.balanceMethod ?? null) as AccountMethod | null;
-      if (!bm || bm === "fixed" || bm === "controls" || bm === "exclude") {
+      if (!bm || recoversFixedItems(bm) || bm === "exclude") {
         warnings.push({
           level: "warn",
           message: `${pool.name}: R${actual.toFixed(2)} in Xero vs R${recovered.toFixed(2)} on the Static invoice — R${variance.toFixed(2)} over, but the link has no split rule, so it is NOT billed. Set one.`,
@@ -581,11 +614,14 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     // A fixed line item always goes out on the Static invoice. If nothing
     // deducts it from the account its cost actually sits in, that account's
     // split bills it a second time.
+    // ⚠️ Every one of these must go through `recoveryItemIds` — reading the
+    // legacy scalar would miss items 2..n of a multi-item rule and warn that a
+    // properly deducted item is about to be double-charged.
     const referencedItems = new Set<number>([
-      ...accountMappings.map((m) => m.fixedLineItemId).filter((id): id is number => id != null),
-      ...thisMonth.map((s) => s.fixedLineItemId).filter((id): id is number => id != null),
-      ...earlier.map((s) => s.fixedLineItemId).filter((id): id is number => id != null),
-      ...creditorLinkRows.map((l) => l.fixedLineItemId),
+      ...accountMappings.flatMap(recoveryItemIds),
+      ...thisMonth.flatMap(recoveryItemIds),
+      ...earlier.flatMap(recoveryItemIds),
+      ...creditorLinkRows.flatMap(recoveryItemIds),
     ]);
     const unreferenced = fixedItemRows.filter(
       (i) => i.active && !referencedItems.has(i.id) && (recoveredByItem.get(i.id) ?? 0) > 0,
@@ -611,10 +647,23 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       });
     }
 
+    // A rule can outlive the item it names — the item gets deleted in Controls
+    // and the rule silently recovers that much less, quietly OVER-charging.
+    // Deleting an item strips it from every rule, so this should never fire;
+    // saying so beats a balance that is wrong by an amount nothing explains.
+    if (unknownRecoveryItems.size > 0) {
+      warnings.push({
+        level: "warn",
+        message: `A split rule names ${unknownRecoveryItems.size} fixed line item(s) that no longer exist, so nothing was deducted for ${unknownRecoveryItems.size === 1 ? "it" : "them"} and the balance billed here is too high. Re-pick the items on the rule.`,
+        href: `/supplier-splits?period=${period}`,
+        linkLabel: "Check the rules",
+      });
+    }
+
     if (billedFromControls > 0) {
       warnings.push({
         level: "info",
-        message: `${formatRand(billedFromControls)} is marked "Ignore — split in Controls" and is billed on the Static invoice instead.`,
+        message: `${formatRand(billedFromControls)} is marked "Ignore — split in Controls" with no items named, so the whole amount is billed on the Static invoice instead.`,
       });
     }
 

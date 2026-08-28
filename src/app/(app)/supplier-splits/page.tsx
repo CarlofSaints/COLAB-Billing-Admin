@@ -15,7 +15,7 @@ import { loadFixedAllocations } from "@/lib/tag-billing";
 import { maskAmount, revealState } from "@/lib/sensitive";
 import { RevealToggle } from "@/components/sensitive-amount";
 import { defaultPeriod, isPeriod, recentPeriods } from "@/lib/periods";
-import type { AccountMethod } from "@/lib/expense-accounts";
+import { recoveryItemIds, type AccountMethod } from "@/lib/expense-accounts";
 import { PageHeader } from "@/components/ui/page";
 import { SupplierSplitsClient, type SupplierRow } from "./supplier-splits-client";
 
@@ -98,7 +98,7 @@ export default async function SupplierSplitsPage({
     let source: SupplierRow["source"] = "unset";
     let method: AccountMethod | null = null;
     let companyId: number | null = null;
-    let fixedLineItemId: number | null = null;
+    let fixedLineItemIds: number[] = [];
     let percentages: { companyId: number; percent: number }[] | null = null;
     let inheritedFrom: string | null = null;
 
@@ -110,7 +110,7 @@ export default async function SupplierSplitsPage({
     if (winner) {
       method = winner.method;
       companyId = winner.companyId;
-      fixedLineItemId = winner.fixedLineItemId;
+      fixedLineItemIds = recoveryItemIds(winner);
       percentages = winner.percentages ?? null;
     }
     if (!own && prior) inheritedFrom = prior.period;
@@ -126,7 +126,7 @@ export default async function SupplierSplitsPage({
       documents: s.documents,
       method,
       companyId,
-      fixedLineItemId,
+      fixedLineItemIds,
       percentages,
       // Balance decisions only live on supplier rows — an account default has
       // no notion of the shortfall on one supplier's invoice.

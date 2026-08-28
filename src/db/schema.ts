@@ -495,9 +495,13 @@ export const creditorLinks = pgTable(
     id: serial("id").primaryKey(),
     xeroContactId: text("xero_contact_id").notNull(),
     xeroContactName: text("xero_contact_name").notNull(),
-    fixedLineItemId: integer("fixed_line_item_id")
-      .notNull()
-      .references(() => fixedLineItems.id, { onDelete: "cascade" }),
+    // Nullable since multi-item recovery: a link naming three items has no
+    // single id to put here. Kept only as a read fallback for older rows.
+    fixedLineItemId: integer("fixed_line_item_id").references(() => fixedLineItems.id, {
+      onDelete: "set null",
+    }),
+    // Every Static item that pre-bills this creditor. Read via `recoveryItemIds()`.
+    fixedLineItemIds: jsonb("fixed_line_item_ids").$type<number[]>().notNull().default([]),
     // How an overage (actual > billed) is split. Null = flag it, don't bill.
     balanceMethod: accountMethodEnum("balance_method"),
     balanceCompanyId: integer("balance_company_id").references(() => companies.id, {
@@ -839,10 +843,16 @@ export const expenseAccountMappings = pgTable(
     method: accountMethodEnum("method").notNull(),
     // Only for method = "direct": the sub-company that carries the whole cost.
     companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
-    // Only for method = "fixed": which fixed line item recovers this account.
+    // Legacy single id, still READ as a fallback for any row written before
+    // multi-item recovery. New writes go to `fixedLineItemIds` below.
     fixedLineItemId: integer("fixed_line_item_id").references(() => fixedLineItems.id, {
       onDelete: "set null",
     }),
+    // For method = "fixed", and optionally for "controls": every fixed line
+    // item that already recovers part of this account. One supplier bill is
+    // routinely pre-billed by several items, and the balance is overstated by
+    // every one you cannot name. Read it through `recoveryItemIds()`.
+    fixedLineItemIds: jsonb("fixed_line_item_ids").$type<number[]>().notNull().default([]),
     // Only for method = "percent".
     percentages: jsonb("percentages").$type<PercentSplit[]>(),
     // Hide every amount on this account — its supplier lines, its journal
@@ -886,11 +896,14 @@ export const supplierSplits = pgTable(
     fixedLineItemId: integer("fixed_line_item_id").references(() => fixedLineItems.id, {
       onDelete: "set null",
     }),
+    // Every fixed line item that already recovers part of this supplier line.
+    // See the note on expense_account_mappings; read via `recoveryItemIds()`.
+    fixedLineItemIds: jsonb("fixed_line_item_ids").$type<number[]>().notNull().default([]),
     // Only for method = "percent".
     percentages: jsonb("percentages").$type<PercentSplit[]>(),
-    // When method = "fixed", the fixed line item may recover less than COLAB
-    // actually paid (e.g. 20 parking bays paid for, 16 taken up). These decide
-    // how that leftover balance is split.
+    // The named items may recover less than COLAB actually paid (e.g. 20
+    // parking bays paid for, 16 taken up; or a phone bill whose call usage no
+    // fixed item covers). These decide how that leftover balance is split.
     balanceMethod: accountMethodEnum("balance_method"),
     balanceCompanyId: integer("balance_company_id").references(() => companies.id, {
       onDelete: "set null",

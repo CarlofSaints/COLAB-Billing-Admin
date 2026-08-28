@@ -15,6 +15,7 @@ import {
 import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { TOTAL_SQM_KEY, RENT_AMOUNT_KEY } from "@/lib/controls";
+import { forgetRecoveryItem } from "@/lib/recovery-rules";
 import { FIXED_SPLIT_MODES, isDerivedMode } from "@/lib/billing-calc";
 import type { FixedSplitMode } from "@/lib/billing-calc";
 
@@ -340,6 +341,10 @@ export async function deleteFixedItem(id: number) {
     .limit(1);
   if (existing?.tagId != null) return;
   await db.delete(fixedLineItems).where(eq(fixedLineItems.id, id));
+  // The FK clears the legacy scalar for us, but a jsonb array holds no FK —
+  // an id left behind would recover nothing and silently OVER-charge the
+  // balance by this item's whole amount. Strip it from every rule.
+  await forgetRecoveryItem(id);
   await logEvent({
     action: "controls.fixed_delete",
     summary: "Removed a fixed line item",

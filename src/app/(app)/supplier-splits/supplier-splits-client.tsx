@@ -26,12 +26,13 @@ import {
   METHOD_BY_KEY,
   BALANCE_METHODS,
   UNMAPPED,
+  recoversFixedItems,
   type AccountMethod,
   type MethodChoice,
   type PercentEntry,
 } from "@/lib/expense-accounts";
-import { fixedItemLabel } from "@/lib/expense-accounts";
 import { PercentCell } from "@/components/percent-split";
+import { RecoveryItemsCell } from "@/components/recovery-items";
 import { periodLabel } from "@/lib/periods";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,7 +58,7 @@ export type SupplierRow = {
   documents: number;
   method: AccountMethod | null;
   companyId: number | null;
-  fixedLineItemId: number | null;
+  fixedLineItemIds: number[];
   percentages: PercentEntry[] | null;
   balanceMethod: AccountMethod | null;
   balanceCompanyId: number | null;
@@ -69,7 +70,7 @@ export type SupplierRow = {
 type Draft = {
   method: MethodChoice;
   companyId: number | null;
-  fixedLineItemId: number | null;
+  fixedLineItemIds: number[];
   percentages: PercentEntry[] | null;
   balanceMethod: MethodChoice;
   balanceCompanyId: number | null;
@@ -87,6 +88,9 @@ type FixedItemOption = {
 };
 type Filter = "all" | "unset" | "inherited" | AccountMethod;
 
+/** True for the methods that recover items before splitting the balance. */
+const recovers = (m: MethodChoice) => m !== UNMAPPED && recoversFixedItems(m);
+
 const SOURCE_BADGE: Record<Source, { label: string; tone: "green" | "amber" | "neutral" | "brand" }> = {
   explicit: { label: "Set this month", tone: "green" },
   inherited: { label: "Carried forward", tone: "brand" },
@@ -101,7 +105,7 @@ function toDraft(rows: SupplierRow[]): Record<string, Draft> {
       {
         method: (r.method ?? UNMAPPED) as MethodChoice,
         companyId: r.companyId,
-        fixedLineItemId: r.fixedLineItemId,
+        fixedLineItemIds: r.fixedLineItemIds,
         percentages: r.percentages,
         balanceMethod: (r.balanceMethod ?? UNMAPPED) as MethodChoice,
         balanceCompanyId: r.balanceCompanyId,
@@ -115,7 +119,8 @@ function same(a: Draft, b: Draft) {
   return (
     a.method === b.method &&
     a.companyId === b.companyId &&
-    a.fixedLineItemId === b.fixedLineItemId &&
+    JSON.stringify([...a.fixedLineItemIds].sort()) ===
+      JSON.stringify([...b.fixedLineItemIds].sort()) &&
     JSON.stringify(a.percentages ?? []) === JSON.stringify(b.percentages ?? []) &&
     a.balanceMethod === b.balanceMethod &&
     a.balanceCompanyId === b.balanceCompanyId &&
@@ -206,12 +211,12 @@ export function SupplierSplitsClient({
     setRow(key, {
       method,
       companyId: method === "direct" ? (draft[key]?.companyId ?? null) : null,
-      fixedLineItemId: method === "fixed" ? (draft[key]?.fixedLineItemId ?? null) : null,
+      fixedLineItemIds: recovers(method) ? (draft[key]?.fixedLineItemIds ?? []) : [],
       percentages: method === "percent" ? (draft[key]?.percentages ?? null) : null,
       // The balance decision only exists alongside a fixed line item.
-      balanceMethod: method === "fixed" ? (draft[key]?.balanceMethod ?? UNMAPPED) : UNMAPPED,
-      balanceCompanyId: method === "fixed" ? (draft[key]?.balanceCompanyId ?? null) : null,
-      balancePercentages: method === "fixed" ? (draft[key]?.balancePercentages ?? null) : null,
+      balanceMethod: recovers(method) ? (draft[key]?.balanceMethod ?? UNMAPPED) : UNMAPPED,
+      balanceCompanyId: recovers(method) ? (draft[key]?.balanceCompanyId ?? null) : null,
+      balancePercentages: recovers(method) ? (draft[key]?.balancePercentages ?? null) : null,
     });
 
   const changeBalanceMethod = (key: string, method: MethodChoice) =>
@@ -230,11 +235,11 @@ export function SupplierSplitsClient({
           ...next[key],
           method: bulkMethod,
           companyId: bulkMethod === "direct" ? next[key].companyId : null,
-          fixedLineItemId: bulkMethod === "fixed" ? next[key].fixedLineItemId : null,
+          fixedLineItemIds: recovers(bulkMethod) ? next[key].fixedLineItemIds : [],
           percentages: bulkMethod === "percent" ? next[key].percentages : null,
-          balanceMethod: bulkMethod === "fixed" ? next[key].balanceMethod : UNMAPPED,
-          balanceCompanyId: bulkMethod === "fixed" ? next[key].balanceCompanyId : null,
-          balancePercentages: bulkMethod === "fixed" ? next[key].balancePercentages : null,
+          balanceMethod: recovers(bulkMethod) ? next[key].balanceMethod : UNMAPPED,
+          balanceCompanyId: recovers(bulkMethod) ? next[key].balanceCompanyId : null,
+          balancePercentages: recovers(bulkMethod) ? next[key].balancePercentages : null,
         };
       }
       return next;
@@ -262,7 +267,7 @@ export function SupplierSplitsClient({
         amount: r.amount,
         method: r.method as string,
         companyId: r.companyId,
-        fixedLineItemId: r.fixedLineItemId,
+        fixedLineItemIds: r.fixedLineItemIds,
         percentages: r.percentages,
         balanceMethod: r.balanceMethod,
         balanceCompanyId: r.balanceCompanyId,
@@ -302,7 +307,7 @@ export function SupplierSplitsClient({
         amount: r.amount,
         method: d.method === UNMAPPED ? null : d.method,
         companyId: d.companyId,
-        fixedLineItemId: d.fixedLineItemId,
+        fixedLineItemIds: d.fixedLineItemIds,
         percentages: d.percentages,
         balanceMethod: d.balanceMethod === UNMAPPED ? null : d.balanceMethod,
         balanceCompanyId: d.balanceCompanyId,
@@ -650,16 +655,18 @@ export function SupplierSplitsClient({
                           canManage={canManage}
                           canUnlock={canUnlock}
                           dirty={isDirty}
-                          duplicateCount={
-                            d?.fixedLineItemId == null
-                              ? 0
-                              : rows.filter(
-                                  (other) =>
-                                    draft[other.key]?.method === "fixed" &&
-                                    draft[other.key]?.fixedLineItemId === d.fixedLineItemId,
-                                ).length
-                          }
-                          onItemChange={(id) => setRow(r.key, { fixedLineItemId: id })}
+                          // Items this row claims that another row claims too.
+                          // An item only recovers its amount ONCE, so the
+                          // second claimant's balance is silently too small.
+                          sharedItemIds={(d?.fixedLineItemIds ?? []).filter((id) =>
+                            rows.some(
+                              (other) =>
+                                other.key !== r.key &&
+                                recovers(draft[other.key]?.method ?? UNMAPPED) &&
+                                (draft[other.key]?.fixedLineItemIds ?? []).includes(id),
+                            ),
+                          )}
+                          onItemsChange={(ids) => setRow(r.key, { fixedLineItemIds: ids })}
                           onBalanceMethod={(m) => changeBalanceMethod(r.key, m)}
                           onBalanceCompany={(id) => setRow(r.key, { balanceCompanyId: id })}
                           onBalancePercentages={(p) => setRow(r.key, { balancePercentages: p })}
@@ -694,10 +701,13 @@ export function SupplierSplitsClient({
 }
 
 /**
- * The fixed-line-item control plus the balance it leaves behind. A fixed item
- * recovers a set amount (e.g. 16 parking bays), which may be less than the
- * supplier actually charged (20 bays) — the shortfall has to be split too,
- * or it silently never reaches an invoice.
+ * The recovered-items control plus the balance they leave behind.
+ *
+ * Fixed items recover a set amount (16 parking bays; Yaxxa's handsets,
+ * licences and fibre), which is routinely less than the supplier charged —
+ * the shortfall has to be split too, or it silently never reaches an invoice.
+ * That shortfall is the whole point here: it is where a phone bill's call
+ * usage lives, and it changes every month.
  */
 function FixedWithBalance({
   row,
@@ -706,9 +716,9 @@ function FixedWithBalance({
   companies,
   canManage,
   canUnlock,
-  duplicateCount,
+  sharedItemIds,
   dirty,
-  onItemChange,
+  onItemsChange,
   onBalanceMethod,
   onBalanceCompany,
   onBalancePercentages,
@@ -719,23 +729,30 @@ function FixedWithBalance({
   companies: { id: number; name: string }[];
   canManage: boolean;
   canUnlock: boolean;
-  /** How many rows this month point at the same fixed line item. */
-  duplicateCount: number;
+  /** Items this row shares with another row this month. */
+  sharedItemIds: number[];
   /** Whether this row has been edited away from its inherited rule. */
   dirty: boolean;
-  onItemChange: (id: number | null) => void;
+  onItemsChange: (ids: number[]) => void;
   onBalanceMethod: (m: MethodChoice) => void;
   onBalanceCompany: (id: number | null) => void;
   onBalancePercentages: (p: PercentEntry[]) => void;
 }) {
-  const item = fixedItems.find((f) => f.id === draft?.fixedLineItemId) ?? null;
+  const ids = draft?.fixedLineItemIds ?? [];
+  const picked = fixedItems.filter((f) => ids.includes(f.id));
+  const item = picked.length > 0 ? picked[0] : null;
+  const itemNames = picked.map((p) => p.name).join(" + ");
   // Inherited straight from the account's own rule, untouched on this row.
   const fromAccountRule = row.source === "account" && !dirty;
-  const sharedWith = item && !fromAccountRule ? duplicateCount - 1 : 0;
-  const recovered = item?.allocatedTotal ?? 0;
+  const shared = fromAccountRule
+    ? []
+    : fixedItems.filter((f) => sharedItemIds.includes(f.id)).map((f) => f.name);
+  // Restricted items hide their amount, so a sum would silently omit them.
+  const anyRestricted = picked.some((p) => p.allocatedTotal === null);
+  const recovered = picked.reduce((s, p) => s + (p.allocatedTotal ?? 0), 0);
   // With either figure restricted we can't show the balance without giving it
   // away — the balance method is still editable.
-  const restricted = row.amount === null || (item != null && item.allocatedTotal === null);
+  const restricted = row.amount === null || anyRestricted;
   const balance = item && !restricted ? Math.round((row.amount! - recovered) * 100) / 100 : 0;
   const matched = item != null && !restricted && Math.abs(balance) < 0.005;
   const balanceMethod = draft?.balanceMethod ?? UNMAPPED;
@@ -743,38 +760,37 @@ function FixedWithBalance({
 
   return (
     <div className="space-y-1.5">
-      <Select
-        value={draft?.fixedLineItemId ?? ""}
+      <RecoveryItemsCell
+        value={ids}
+        items={fixedItems}
         disabled={!canManage}
-        onChange={(e) => onItemChange(e.target.value ? Number(e.target.value) : null)}
-      >
-        <option value="">Not linked to an item</option>
-        {fixedItems.map((f) => (
-          <option key={f.id} value={f.id}>
-            {fixedItemLabel(f, formatCurrency)}
-          </option>
-        ))}
-      </Select>
+        emptyLabel={
+          draft?.method === "controls"
+            ? "All of it — nothing billed here"
+            : "No items — nothing is recovered"
+        }
+        onChange={onItemsChange}
+      />
 
       {fromAccountRule && item ? (
-        // The rule belongs to the account, not this line: the item is recovered
-        // once against the account's whole cost and the rest is split.
+        // The rule belongs to the account, not this line: the items are
+        // recovered once against the account's whole cost and the rest split.
         <p className="flex items-start gap-1.5 rounded-md border border-line bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
           <Info className="mt-px h-3.5 w-3.5 shrink-0" />
           <span>
-            Set on account {row.accountCode}: {item.name} is recovered once across the whole
-            account, and whatever is left splits{" "}
+            Set on account {row.accountCode}: {itemNames} {picked.length === 1 ? "is" : "are"}{" "}
+            recovered once across the whole account, and whatever is left splits{" "}
             {balanceMethod === UNMAPPED ? "— no balance rule set yet" : "as set there"}. Change it
             on Expense Accounts, or override just this line here.
           </span>
         </p>
-      ) : sharedWith > 0 ? (
+      ) : shared.length > 0 ? (
         <p className="flex items-start gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs font-medium text-red-800">
           <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
           <span>
-            You&apos;ve linked {item?.name} to {sharedWith + 1} separate lines this month. It only
-            recovers its amount <em>once</em>, so the rest would be under-recovered — link it to
-            the single line it covers.
+            {shared.join(", ")} {shared.length === 1 ? "is" : "are"} also claimed by another line
+            this month. An item only recovers its amount <em>once</em>, so this line&apos;s balance
+            would be too small — claim each item on the single line it covers.
           </span>
         </p>
       ) : null}
@@ -867,7 +883,7 @@ function FixedWithBalance({
           )}
           <p className="text-[11px] text-muted">
             {formatCurrency(row.amount ?? 0)} charged · {formatCurrency(recovered)} recovered by{" "}
-            {item.name}
+            {itemNames}
           </p>
         </>
       ) : null}

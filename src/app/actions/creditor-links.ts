@@ -13,6 +13,20 @@ export type LinkState = { error?: string; ok?: boolean };
 const BALANCE = ["per_sqm", "headcount", "equal", "direct"] as const;
 type Balance = (typeof BALANCE)[number];
 
+/**
+ * The Static items that pre-bill this creditor. A creditor's bill is routinely
+ * covered by several — Yaxxa's by handsets, licences and fibre — and naming
+ * one leaves the overage overstated by all the others, which then gets billed
+ * a second time on the Variable run.
+ */
+function readItemIds(formData: FormData): number[] {
+  const ids = formData
+    .getAll("fixedLineItemIds")
+    .map((v) => Number(v))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  return [...new Set(ids)];
+}
+
 function readBalance(formData: FormData): { method: Balance | null; companyId: number | null } {
   const raw = String(formData.get("balanceMethod") ?? "");
   const method = (BALANCE as readonly string[]).includes(raw) ? (raw as Balance) : null;
@@ -28,9 +42,10 @@ export async function createCreditorLink(
   const actor = await requirePermission("controls.manage");
   const xeroContactId = String(formData.get("xeroContactId") ?? "").trim();
   const xeroContactName = String(formData.get("xeroContactName") ?? "").trim();
-  const fixedLineItemId = Number(formData.get("fixedLineItemId"));
+  const fixedLineItemIds = readItemIds(formData);
   if (!xeroContactId || !xeroContactName) return { error: "Choose a creditor." };
-  if (!fixedLineItemId) return { error: "Choose the Static line item it is billed by." };
+  if (fixedLineItemIds.length === 0)
+    return { error: "Choose at least one Static line item it is billed by." };
 
   const { method, companyId } = readBalance(formData);
   if (method === "direct" && !companyId) return { error: "Choose the company for a direct split." };
@@ -41,7 +56,7 @@ export async function createCreditorLink(
       .values({
         xeroContactId,
         xeroContactName,
-        fixedLineItemId,
+        fixedLineItemIds,
         balanceMethod: method,
         balanceCompanyId: companyId,
       })
@@ -67,9 +82,10 @@ export async function updateCreditorLink(
 ): Promise<LinkState> {
   const actor = await requirePermission("controls.manage");
   const id = Number(formData.get("id"));
-  const fixedLineItemId = Number(formData.get("fixedLineItemId"));
+  const fixedLineItemIds = readItemIds(formData);
   if (!id) return { error: "Missing link id" };
-  if (!fixedLineItemId) return { error: "Choose the Static line item it is billed by." };
+  if (fixedLineItemIds.length === 0)
+    return { error: "Choose at least one Static line item it is billed by." };
 
   const { method, companyId } = readBalance(formData);
   if (method === "direct" && !companyId) return { error: "Choose the company for a direct split." };
@@ -77,7 +93,9 @@ export async function updateCreditorLink(
   await db
     .update(creditorLinks)
     .set({
-      fixedLineItemId,
+      // Cleared so the legacy scalar can never disagree with the array.
+      fixedLineItemId: null,
+      fixedLineItemIds,
       balanceMethod: method,
       balanceCompanyId: companyId,
       updatedAt: new Date(),

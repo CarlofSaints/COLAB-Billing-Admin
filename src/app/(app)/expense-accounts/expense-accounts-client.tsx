@@ -20,13 +20,14 @@ import {
   BALANCE_METHODS,
   UNMAPPED,
   accountTypeLabel,
-  fixedItemLabel,
+  recoversFixedItems,
   type AccountMethod,
   type FixedItemOption,
   type MethodChoice,
   type PercentEntry,
 } from "@/lib/expense-accounts";
 import { PercentCell } from "@/components/percent-split";
+import { RecoveryItemsCell } from "@/components/recovery-items";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +46,7 @@ type AccountRow = {
   missing: boolean; // mapped here, but no longer on the Xero chart of accounts
   method: AccountMethod | null;
   companyId: number | null;
-  fixedLineItemId: number | null;
+  fixedLineItemIds: number[];
   percentages: PercentEntry[] | null;
   sensitive: boolean;
   balanceMethod: AccountMethod | null;
@@ -58,7 +59,7 @@ type CompanyOption = { id: number; name: string };
 type Draft = {
   method: MethodChoice;
   companyId: number | null;
-  fixedLineItemId: number | null;
+  fixedLineItemIds: number[];
   percentages: PercentEntry[] | null;
   sensitive: boolean;
   balanceMethod: MethodChoice;
@@ -68,6 +69,9 @@ type Draft = {
 
 type Filter = "all" | "unmapped" | AccountMethod;
 
+/** True for the methods that recover items before splitting the balance. */
+const recovers = (m: MethodChoice) => m !== UNMAPPED && recoversFixedItems(m);
+
 function toDraft(rows: AccountRow[]): Record<string, Draft> {
   return Object.fromEntries(
     rows.map((r) => [
@@ -75,7 +79,7 @@ function toDraft(rows: AccountRow[]): Record<string, Draft> {
       {
         method: (r.method ?? UNMAPPED) as MethodChoice,
         companyId: r.companyId,
-        fixedLineItemId: r.fixedLineItemId,
+        fixedLineItemIds: r.fixedLineItemIds,
         percentages: r.percentages,
         sensitive: r.sensitive,
         balanceMethod: (r.balanceMethod ?? UNMAPPED) as MethodChoice,
@@ -90,7 +94,10 @@ function sameDraft(a: Draft, b: Draft) {
   return (
     a.method === b.method &&
     a.companyId === b.companyId &&
-    a.fixedLineItemId === b.fixedLineItemId &&
+    // Order is not meaning here — [3,5] and [5,3] recover the same thing, so
+    // sort before comparing or reopening the picker looks like an edit.
+    JSON.stringify([...a.fixedLineItemIds].sort()) ===
+      JSON.stringify([...b.fixedLineItemIds].sort()) &&
     a.sensitive === b.sensitive &&
     a.balanceMethod === b.balanceMethod &&
     a.balanceCompanyId === b.balanceCompanyId &&
@@ -196,11 +203,12 @@ export function ExpenseAccountsClient({
       method,
       // Drop the extra reference when it no longer applies.
       companyId: method === "direct" ? (draft[id]?.companyId ?? null) : null,
-      fixedLineItemId: method === "fixed" ? (draft[id]?.fixedLineItemId ?? null) : null,
+      // Both "fixed" and "controls" keep their recovered items and balance rule.
+      fixedLineItemIds: recovers(method) ? (draft[id]?.fixedLineItemIds ?? []) : [],
       percentages: method === "percent" ? (draft[id]?.percentages ?? null) : null,
-      balanceMethod: method === "fixed" ? (draft[id]?.balanceMethod ?? UNMAPPED) : UNMAPPED,
-      balanceCompanyId: method === "fixed" ? (draft[id]?.balanceCompanyId ?? null) : null,
-      balancePercentages: method === "fixed" ? (draft[id]?.balancePercentages ?? null) : null,
+      balanceMethod: recovers(method) ? (draft[id]?.balanceMethod ?? UNMAPPED) : UNMAPPED,
+      balanceCompanyId: recovers(method) ? (draft[id]?.balanceCompanyId ?? null) : null,
+      balancePercentages: recovers(method) ? (draft[id]?.balancePercentages ?? null) : null,
     });
 
   const changeBalanceMethod = (id: string, method: MethodChoice) =>
@@ -236,11 +244,11 @@ export function ExpenseAccountsClient({
           ...next[id],
           method: bulkMethod,
           companyId: bulkMethod === "direct" ? next[id].companyId : null,
-          fixedLineItemId: bulkMethod === "fixed" ? next[id].fixedLineItemId : null,
+          fixedLineItemIds: recovers(bulkMethod) ? next[id].fixedLineItemIds : [],
           percentages: bulkMethod === "percent" ? next[id].percentages : null,
-          balanceMethod: bulkMethod === "fixed" ? next[id].balanceMethod : UNMAPPED,
-          balanceCompanyId: bulkMethod === "fixed" ? next[id].balanceCompanyId : null,
-          balancePercentages: bulkMethod === "fixed" ? next[id].balancePercentages : null,
+          balanceMethod: recovers(bulkMethod) ? next[id].balanceMethod : UNMAPPED,
+          balanceCompanyId: recovers(bulkMethod) ? next[id].balanceCompanyId : null,
+          balancePercentages: recovers(bulkMethod) ? next[id].balancePercentages : null,
         };
       }
       return next;
@@ -259,7 +267,7 @@ export function ExpenseAccountsClient({
         accountType: r.type,
         method: d.method === UNMAPPED ? null : d.method,
         companyId: d.companyId,
-        fixedLineItemId: d.fixedLineItemId,
+        fixedLineItemIds: d.fixedLineItemIds,
         percentages: d.percentages,
         sensitive: d.sensitive,
         balanceMethod: d.balanceMethod === UNMAPPED ? null : d.balanceMethod,
@@ -581,29 +589,26 @@ export function ExpenseAccountsClient({
                         />
                       ) : def?.needs === "fixedItem" ? (
                         <div className="space-y-1.5">
-                          <Select
-                            value={d?.fixedLineItemId ?? ""}
+                          <RecoveryItemsCell
+                            value={d?.fixedLineItemIds ?? []}
+                            items={fixedItems}
                             disabled={!canManage}
-                            onChange={(e) =>
-                              setRow(r.accountId, {
-                                fixedLineItemId: e.target.value ? Number(e.target.value) : null,
-                              })
+                            emptyLabel={
+                              d?.method === "controls"
+                                ? "All of it — nothing billed here"
+                                : "No items — nothing is recovered"
                             }
-                          >
-                            <option value="">Not linked to an item</option>
-                            {fixedItems.map((f) => (
-                              <option key={f.id} value={f.id}>
-                                {fixedItemLabel(f, formatCurrency)}
-                              </option>
-                            ))}
-                          </Select>
+                            onChange={(ids) =>
+                              setRow(r.accountId, { fixedLineItemIds: ids })
+                            }
+                          />
 
-                          {/* The item rarely recovers the whole account, so the
+                          {/* The items rarely recover the whole account, so the
                               leftover needs a rule too — whatever it comes to. */}
-                          {d?.fixedLineItemId != null && (
+                          {(d?.fixedLineItemIds?.length ?? 0) > 0 && (
                             <div className="space-y-1.5 rounded-md border border-line bg-slate-50 px-2 py-1.5">
                               <p className="text-[11px] text-muted">
-                                Split whatever the item doesn&apos;t cover:
+                                Split whatever those items don&apos;t cover:
                               </p>
                               <Select
                                 value={d?.balanceMethod ?? UNMAPPED}

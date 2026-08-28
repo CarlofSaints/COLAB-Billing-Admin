@@ -9,8 +9,10 @@ import { logEvent } from "@/lib/log";
 import { isPeriod } from "@/lib/periods";
 import {
   isAccountMethod,
+  parseItemIds,
   parsePercentages,
   percentagesValid,
+  recoversFixedItems,
   type AccountMethod,
   type PercentEntry,
 } from "@/lib/expense-accounts";
@@ -25,7 +27,7 @@ type SplitInput = {
   amount: number | null;
   method: AccountMethod | null;
   companyId: number | null;
-  fixedLineItemId: number | null;
+  fixedLineItemIds: number[];
   percentages: PercentEntry[] | null;
   balanceMethod: AccountMethod | null;
   balanceCompanyId: number | null;
@@ -53,6 +55,8 @@ function parsePayload(raw: FormDataEntryValue | null): SplitInput[] | null {
 
     const rawMethod = typeof r.method === "string" ? r.method : "";
     const method = isAccountMethod(rawMethod) ? rawMethod : null;
+    // "fixed" and "controls" both recover named items before splitting the rest.
+    const recoversItems = method != null && recoversFixedItems(method);
     const rawBalance = typeof r.balanceMethod === "string" ? r.balanceMethod : "";
     const num = (v: unknown) => {
       const n = Number(v);
@@ -68,13 +72,12 @@ function parsePayload(raw: FormDataEntryValue | null): SplitInput[] | null {
       amount: Number.isFinite(amount) ? amount : null,
       method,
       companyId: method === "direct" ? num(r.companyId) : null,
-      fixedLineItemId: method === "fixed" ? num(r.fixedLineItemId) : null,
+      fixedLineItemIds: recoversItems ? parseItemIds(r.fixedLineItemIds) : [],
       percentages: method === "percent" ? parsePercentages(r.percentages) : null,
-      balanceMethod: method === "fixed" && isAccountMethod(rawBalance) ? rawBalance : null,
-      balanceCompanyId:
-        method === "fixed" && rawBalance === "direct" ? num(r.balanceCompanyId) : null,
+      balanceMethod: recoversItems && isAccountMethod(rawBalance) ? rawBalance : null,
+      balanceCompanyId: recoversItems && rawBalance === "direct" ? num(r.balanceCompanyId) : null,
       balancePercentages:
-        method === "fixed" && rawBalance === "percent"
+        recoversItems && rawBalance === "percent"
           ? parsePercentages(r.balancePercentages)
           : null,
     });
@@ -152,7 +155,10 @@ export async function saveSupplierSplits(
       accountName: r.accountName,
       method: r.method!,
       companyId: r.companyId,
-      fixedLineItemId: r.fixedLineItemId,
+      // Cleared on every write so the legacy scalar can never disagree with
+      // the array — see the note in `saveAccountMappings`.
+      fixedLineItemId: null,
+      fixedLineItemIds: r.fixedLineItemIds,
       percentages: r.percentages,
       balanceMethod: r.balanceMethod,
       balanceCompanyId: r.balanceCompanyId,
@@ -199,7 +205,7 @@ export async function pinInheritedSplits(
     amount: number | null;
     method: string;
     companyId: number | null;
-    fixedLineItemId: number | null;
+    fixedLineItemIds: number[];
     percentages: PercentEntry[] | null;
     balanceMethod: string | null;
     balanceCompanyId: number | null;
@@ -230,10 +236,13 @@ export async function pinInheritedSplits(
       accountName: r.accountName,
       method: r.method as AccountMethod,
       companyId: r.method === "direct" ? r.companyId : null,
-      fixedLineItemId: r.method === "fixed" ? r.fixedLineItemId : null,
+      fixedLineItemId: null,
+      fixedLineItemIds: recoversFixedItems(r.method as AccountMethod) ? r.fixedLineItemIds : [],
       percentages: r.method === "percent" ? r.percentages : null,
       balanceMethod:
-        r.method === "fixed" && r.balanceMethod && isAccountMethod(r.balanceMethod)
+        recoversFixedItems(r.method as AccountMethod) &&
+        r.balanceMethod &&
+        isAccountMethod(r.balanceMethod)
           ? (r.balanceMethod as AccountMethod)
           : null,
       balanceCompanyId: r.balanceMethod === "direct" ? r.balanceCompanyId : null,

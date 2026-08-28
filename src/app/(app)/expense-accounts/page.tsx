@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { companies, expenseAccountMappings, fixedLineItems } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { fetchExpenseAccounts, xeroStatus } from "@/lib/xero";
-import type { AccountMethod } from "@/lib/expense-accounts";
+import { recoveryItemIds, type AccountMethod } from "@/lib/expense-accounts";
 import { maskAmount, revealState } from "@/lib/sensitive";
 import { PageHeader } from "@/components/ui/page";
 import { RevealToggle } from "@/components/sensitive-amount";
@@ -62,7 +62,9 @@ export default async function ExpenseAccountsPage() {
       missing: a.missing,
       method: (m?.method ?? null) as AccountMethod | null,
       companyId: m?.companyId ?? null,
-      fixedLineItemId: m?.fixedLineItemId ?? null,
+      // Through the helper so a row saved before multi-item recovery still
+      // shows the item it has always recovered.
+      fixedLineItemIds: m ? recoveryItemIds(m) : [],
       percentages: m?.percentages ?? null,
       sensitive: m?.sensitive ?? false,
       balanceMethod: (m?.balanceMethod ?? null) as AccountMethod | null,

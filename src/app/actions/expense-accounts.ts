@@ -8,8 +8,10 @@ import { requirePermission } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import {
   isAccountMethod,
+  parseItemIds,
   parsePercentages,
   percentagesValid,
+  recoversFixedItems,
   METHOD_BY_KEY,
   type AccountMethod,
   type PercentEntry,
@@ -25,7 +27,7 @@ type MappingInput = {
   accountType: string | null;
   method: AccountMethod | null;
   companyId: number | null;
-  fixedLineItemId: number | null;
+  fixedLineItemIds: number[];
   percentages: PercentEntry[] | null;
   sensitive: boolean;
   balanceMethod: AccountMethod | null;
@@ -53,6 +55,8 @@ function parsePayload(raw: FormDataEntryValue | null): MappingInput[] | null {
 
     const rawMethod = typeof r.method === "string" ? r.method : "";
     const method = isAccountMethod(rawMethod) ? rawMethod : null;
+    // "fixed" and "controls" both recover named items before splitting the rest.
+    const recoversItems = method != null && recoversFixedItems(method);
     const rawBalance = typeof r.balanceMethod === "string" ? r.balanceMethod : "";
     const num = (v: unknown) => {
       const n = Number(v);
@@ -67,14 +71,13 @@ function parsePayload(raw: FormDataEntryValue | null): MappingInput[] | null {
       method,
       // Only keep the extra reference the chosen method actually uses.
       companyId: method === "direct" ? num(r.companyId) : null,
-      fixedLineItemId: method === "fixed" ? num(r.fixedLineItemId) : null,
+      fixedLineItemIds: recoversItems ? parseItemIds(r.fixedLineItemIds) : [],
       percentages: method === "percent" ? parsePercentages(r.percentages) : null,
       sensitive: r.sensitive === true,
-      balanceMethod: method === "fixed" && isAccountMethod(rawBalance) ? rawBalance : null,
-      balanceCompanyId:
-        method === "fixed" && rawBalance === "direct" ? num(r.balanceCompanyId) : null,
+      balanceMethod: recoversItems && isAccountMethod(rawBalance) ? rawBalance : null,
+      balanceCompanyId: recoversItems && rawBalance === "direct" ? num(r.balanceCompanyId) : null,
       balancePercentages:
-        method === "fixed" && rawBalance === "percent"
+        recoversItems && rawBalance === "percent"
           ? parsePercentages(r.balancePercentages)
           : null,
     });
@@ -127,7 +130,11 @@ export async function saveAccountMappings(
       accountType: r.accountType,
       method: r.method!,
       companyId: r.companyId,
-      fixedLineItemId: r.fixedLineItemId,
+      // The legacy scalar is cleared on every write so it can never disagree
+      // with the array — `recoveryItemIds` only falls back to it when the
+      // array is empty, which for a saved row means "no items named".
+      fixedLineItemId: null,
+      fixedLineItemIds: r.fixedLineItemIds,
       percentages: r.percentages,
       sensitive: r.sensitive,
       balanceMethod: r.balanceMethod,

@@ -92,8 +92,9 @@ export const METHODS: MethodDef[] = [
     label: "Ignore — split in Controls",
     short: "In Controls",
     description:
-      "Already billed from Controls — rent on the Static invoice, or a fixed line item. Ignored here so it can't go out twice.",
+      "Already billed from Controls — rent on the Static invoice, or fixed line items. Name the items that cover it and anything left over is split here; name none and the whole cost is ignored, so it can't go out twice.",
     tone: "indigo",
+    needs: "fixedItem",
     applies: "Billed from Controls",
   },
   {
@@ -114,6 +115,46 @@ export function isAccountMethod(value: string): value is AccountMethod {
 }
 
 export type PercentEntry = { companyId: number; percent: number };
+
+/**
+ * The two methods that recover fixed line items before splitting what's left.
+ *
+ * They differ only in what "no items named" means: `fixed` without an item
+ * recovers nothing (and warns), while `controls` without an item is the
+ * original "this is billed from Controls, ignore the whole thing" — which is
+ * what rent still uses. With items named they behave identically.
+ */
+export function recoversFixedItems(method: AccountMethod): boolean {
+  return method === "fixed" || method === "controls";
+}
+
+/**
+ * Every fixed line item a rule recovers.
+ *
+ * ⚠️ The ONLY way to read a recovery rule. `fixedLineItemIds` is the source of
+ * truth; the old single `fixedLineItemId` is a fallback so a row written
+ * before the multi-item migration still recovers what it always did. Reading
+ * the scalar directly silently under-recovers a multi-item rule by every item
+ * after the first.
+ */
+export function recoveryItemIds(row: {
+  fixedLineItemIds?: number[] | null;
+  fixedLineItemId?: number | null;
+}): number[] {
+  const many = row.fixedLineItemIds;
+  if (Array.isArray(many) && many.length > 0) {
+    // Deduped: the same item must never be counted twice against one bill.
+    return [...new Set(many.filter((n) => Number.isInteger(n) && n > 0))];
+  }
+  return row.fixedLineItemId != null ? [row.fixedLineItemId] : [];
+}
+
+/** Reads a `number[]` of item ids off an untrusted JSON payload. */
+export function parseItemIds(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const out = value.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  return [...new Set(out)];
+}
 
 /**
  * Methods offered for the leftover balance when a fixed line item recovers

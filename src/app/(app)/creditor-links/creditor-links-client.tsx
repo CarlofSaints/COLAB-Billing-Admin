@@ -23,8 +23,9 @@ type LinkRow = {
   id: number;
   xeroContactId: string;
   xeroContactName: string;
-  fixedLineItemId: number;
-  itemName: string | null;
+  fixedLineItemIds: number[];
+  /** One name per id, in the same order — "item N (missing)" if it's gone. */
+  itemNames: string[];
   balanceMethod: string | null;
   balanceCompanyId: number | null;
   balanceCompanyName: string | null;
@@ -108,17 +109,35 @@ function LinkForm({
         </Field>
       )}
 
-      <Field label="Billed by this Static line item" hint="What already recovers this cost up front.">
-        <Select name="fixedLineItemId" defaultValue={link?.fixedLineItemId ?? ""} required>
-          <option value="" disabled>
-            Choose a Static item…
-          </option>
-          {items.map((i) => (
-            <option key={i.id} value={i.id}>
-              {i.name}
-            </option>
-          ))}
-        </Select>
+      {/* ⚠️ SEVERAL items, not one. One creditor's bill is routinely covered
+          by more than one Static item — Yaxxa's by handsets, licences and
+          fibre — and naming a single one leaves the overage overstated by all
+          the others, which then gets billed a second time. */}
+      <Field
+        label="Billed by these Static line items"
+        hint="Tick everything that already recovers part of this creditor's cost up front."
+      >
+        <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-line p-2">
+          {items.length === 0 ? (
+            <p className="px-2 py-3 text-sm text-muted">No active fixed line items.</p>
+          ) : (
+            items.map((i) => (
+              <label
+                key={i.id}
+                className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-slate-50"
+              >
+                <input
+                  type="checkbox"
+                  name="fixedLineItemIds"
+                  value={i.id}
+                  defaultChecked={link?.fixedLineItemIds.includes(i.id) ?? false}
+                  className="h-4 w-4 shrink-0 rounded border-line"
+                />
+                <span className="text-sm text-slate-700">{i.name}</span>
+              </label>
+            ))
+          )}
+        </div>
       </Field>
 
       <Field
@@ -287,7 +306,15 @@ export function CreditorLinksClient({
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <span className="truncate font-medium text-slate-900">{l.xeroContactName}</span>
                 <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
-                <Badge tone="amber">{l.itemName ?? "—"}</Badge>
+                {l.itemNames.length === 0 ? (
+                  <Badge tone="amber">—</Badge>
+                ) : (
+                  l.itemNames.map((n) => (
+                    <Badge key={n} tone="amber">
+                      {n}
+                    </Badge>
+                  ))
+                )}
                 <Badge tone="neutral">{balanceLabel(l)}</Badge>
               </div>
               {canManage && <RowActions link={l} items={items} subCompanies={subCompanies} />}
