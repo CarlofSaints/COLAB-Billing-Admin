@@ -12,6 +12,7 @@ import {
   Building2,
   Wallet,
   Receipt,
+  ReceiptText,
   Link2,
   FileText,
   Users,
@@ -83,6 +84,11 @@ const SECTIONS: NavSection[] = [
     heading: "Billing",
     items: [
       { href: "/invoices", label: "Invoice Run", icon: FileText, perm: "billing.view" },
+      // Sits directly under Invoice Run because that is what it feeds: a
+      // submitted once-off bill is a line on the Variable run for its month.
+      // Gated on billing.view so Directors can see what has been raised; only
+      // billing.run can add, submit or delete one.
+      { href: "/once-off-bills", label: "Once-off Bills", icon: ReceiptText, perm: "billing.view" },
       { href: "/controls", label: "Controls", icon: SlidersHorizontal, perm: "controls.view" },
       {
         href: "/expense-accounts",

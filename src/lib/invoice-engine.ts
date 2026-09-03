@@ -21,6 +21,7 @@ import { fetchExpenseAccounts } from "./xero";
 import { getMonthCosts } from "./month-costs";
 import { periodLabel } from "./periods";
 import { loadFixedAllocations } from "./tag-billing";
+import { onceOffInvoiceLines } from "./once-off-bills";
 import { METHOD_BY_KEY, recoversFixedItems, recoveryItemIds } from "./expense-accounts";
 import type { AccountMethod, PercentEntry } from "./expense-accounts";
 import type { RunType } from "./run-types";
@@ -198,6 +199,29 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
       }
     }
   } else {
+    // ---- Once-off bills, submitted for this month -------------------
+    // Added BEFORE the Xero read on purpose. They come from this app, not from
+    // Xero, so a Xero outage must not take them down with it — and the
+    // `!costs.ok` branch below returns early, which would silently drop them.
+    const onceOff = await onceOffInvoiceLines(period, basis);
+    for (const line of onceOff) {
+      push(line.companyId, {
+        key: `onceoff-${line.billId}-${line.companyId}`,
+        description: line.description,
+        amount: line.amount,
+        detail: line.detail,
+      });
+    }
+    if (onceOff.length > 0) {
+      const total = round2(onceOff.reduce((s, l) => s + l.amount, 0));
+      warnings.push({
+        level: "info",
+        message: `${formatRand(total)} of once-off bills has been submitted for ${label} and is included below.`,
+        href: `/once-off-bills?period=${period}`,
+        linkLabel: "Review the once-off bills",
+      });
+    }
+
     // ---- Variable: the Xero actuals, split by the mappings ---------
     const [costs, accountList] = await Promise.all([
       getMonthCosts(period),
@@ -209,20 +233,10 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
         level: "warn",
         message: `Couldn't read ${label} from Xero: ${costs.error}`,
       });
-      return {
-        period,
-        runType,
-        companies: companyRows.map((c) => ({
-          companyId: c.id,
-          name: c.name,
-          xeroContactId: c.xeroContactId,
-          xeroContactName: c.xeroContactName,
-          lines: [],
-          total: 0,
-        })),
-        warnings,
-        grandTotal: 0,
-      };
+      // Falls through to the shared assembly below rather than returning an
+      // empty preview: any once-off bills pushed above are real lines that
+      // don't depend on Xero, and they must survive a Xero outage.
+      return assemble();
     }
 
     const accounts = accountList.ok ? accountList.accounts : [];
@@ -693,34 +707,42 @@ export async function buildPreview(period: string, runType: RunType): Promise<In
     }
   }
 
+  return assemble();
+
   // ---- Assemble ----------------------------------------------------
-  const previewCompanies: PreviewCompany[] = companyRows.map((c) => {
-    const lines = linesByCompany.get(c.id) ?? [];
-    return {
-      companyId: c.id,
-      name: c.name,
-      xeroContactId: c.xeroContactId,
-      xeroContactName: c.xeroContactName,
-      lines,
-      total: round2(lines.reduce((s, l) => s + l.amount, 0)),
-    };
-  });
-
-  const missingContact = previewCompanies.filter((c) => c.total > 0 && !c.xeroContactId);
-  if (missingContact.length > 0) {
-    warnings.push({
-      level: "warn",
-      message: `${missingContact.map((c) => c.name).join(", ")} ${missingContact.length === 1 ? "has" : "have"} no Xero contact linked, so no invoice can be created.`,
-      href: "/companies",
-      linkLabel: "Link Xero contacts",
+  // A function declaration, so the Xero-unreachable path above can bail out
+  // through it too. That path used to build its own empty preview, which was
+  // fine while every Variable line came from Xero and became a silent
+  // data-loss bug the moment once-off bills didn't.
+  function assemble(): InvoicePreview {
+    const previewCompanies: PreviewCompany[] = companyRows.map((c) => {
+      const lines = linesByCompany.get(c.id) ?? [];
+      return {
+        companyId: c.id,
+        name: c.name,
+        xeroContactId: c.xeroContactId,
+        xeroContactName: c.xeroContactName,
+        lines,
+        total: round2(lines.reduce((s, l) => s + l.amount, 0)),
+      };
     });
-  }
 
-  return {
-    period,
-    runType,
-    companies: previewCompanies,
-    warnings,
-    grandTotal: round2(previewCompanies.reduce((s, c) => s + c.total, 0)),
-  };
+    const missingContact = previewCompanies.filter((c) => c.total > 0 && !c.xeroContactId);
+    if (missingContact.length > 0) {
+      warnings.push({
+        level: "warn",
+        message: `${missingContact.map((c) => c.name).join(", ")} ${missingContact.length === 1 ? "has" : "have"} no Xero contact linked, so no invoice can be created.`,
+        href: "/companies",
+        linkLabel: "Link Xero contacts",
+      });
+    }
+
+    return {
+      period,
+      runType,
+      companies: previewCompanies,
+      warnings,
+      grandTotal: round2(previewCompanies.reduce((s, c) => s + c.total, 0)),
+    };
+  }
 }

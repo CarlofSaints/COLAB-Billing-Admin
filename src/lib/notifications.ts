@@ -42,7 +42,8 @@ export type NotificationKey =
   | "vehicle_overdue"
   | "vehicle_cancelled"
   | "issue_reported"
-  | "signup_requested";
+  | "signup_requested"
+  | "onceoff_bill_submitted";
 
 export type NotificationType = {
   key: NotificationKey;
@@ -91,6 +92,12 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
     description:
       "Goes to whoever is picked here and nobody else. Pick people who can actually approve it — the email links to Join Requests.",
     soleRecipients: true,
+  },
+  {
+    key: "onceoff_bill_submitted",
+    label: "A once-off bill is submitted to an invoice run",
+    description:
+      "Already goes to whoever created the bill. Pick the group your finance people are in — a live group ruled on a tag keeps itself up to date.",
   },
 ];
 

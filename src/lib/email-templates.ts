@@ -1740,3 +1740,94 @@ export function profileNudgeEmail(input: {
 
   return { subject, html, text };
 }
+
+/**
+ * A once-off bill has been submitted onto a Variable invoice run.
+ *
+ * Goes to whoever created the bill, plus whichever group is chosen for
+ * `onceoff_bill_submitted` on the Notifications page (that is where "everyone
+ * tagged Finance Person" is configured, as a live email group).
+ *
+ * The per-company breakdown is in the message rather than behind the link on
+ * purpose: the whole point of telling finance is that they can see what landed
+ * on which invoice without signing in and hunting for it.
+ */
+export function onceOffBillSubmittedEmail(input: {
+  description: string;
+  periodLabel: string;
+  total: string;
+  /** Company name and what it was charged, already formatted. */
+  breakdown: [string, string][];
+  splitLabel: string;
+  quantity: string | null;
+  unitAmount: string;
+  createdBy: string;
+  submittedBy: string;
+  notes?: string | null;
+  billsUrl: string;
+}) {
+  const {
+    description,
+    periodLabel,
+    total,
+    breakdown,
+    splitLabel,
+    quantity,
+    unitAmount,
+    createdBy,
+    submittedBy,
+    notes,
+    billsUrl,
+  } = input;
+
+  const subject = `Once-off bill submitted: ${description} — ${periodLabel} (${total})`;
+
+  const html = emailShell({
+    preheader: `${submittedBy} put ${description} (${total}) on the ${periodLabel} Variable invoice run.`,
+    eyebrow: "Once-off bill submitted",
+    heading: `${description} — ${total}`,
+    content: [
+      p(
+        `<strong>${escapeHtml(submittedBy)}</strong> has submitted this once-off bill. It is now on the <strong>Variable</strong> invoice run for <strong>${escapeHtml(periodLabel)}</strong> and will be included the next time those invoices are generated.`,
+      ),
+      detailTable([
+        ["Billing month", escapeHtml(periodLabel)],
+        ["Invoice run", "Variable"],
+        ["How it's split", escapeHtml(splitLabel)],
+        ...(quantity ? ([["Quantity", escapeHtml(quantity)]] as [string, string][]) : []),
+        ["Cost per item", escapeHtml(unitAmount)],
+        ["Total", `<strong>${escapeHtml(total)}</strong>`],
+        ["Created by", escapeHtml(createdBy)],
+      ]),
+      p("<strong>What each sub-company is charged:</strong>"),
+      detailTable(breakdown.map(([name, amount]) => [escapeHtml(name), escapeHtml(amount)])),
+      notes ? quote(notes) : "",
+      button(billsUrl, "View once-off bills"),
+      note(
+        "Nothing has been sent to Xero yet. This bill joins the Variable invoice run for its month, and the invoices themselves are still created by hand from the Invoice Run page.",
+      ),
+    ].join(""),
+  });
+
+  const text = [
+    `${submittedBy} has submitted a once-off bill.`,
+    "",
+    `${description}`,
+    `Billing month: ${periodLabel} (Variable invoice run)`,
+    `How it's split: ${splitLabel}`,
+    ...(quantity ? [`Quantity: ${quantity}`] : []),
+    `Cost per item: ${unitAmount}`,
+    `Total: ${total}`,
+    `Created by: ${createdBy}`,
+    "",
+    "What each sub-company is charged:",
+    ...breakdown.map(([name, amount]) => `  ${name}: ${amount}`),
+    ...(notes ? ["", `Notes: ${notes}`] : []),
+    "",
+    `View once-off bills: ${billsUrl}`,
+    "",
+    "Nothing has been sent to Xero yet — this bill joins the Variable invoice run for its month.",
+  ].join("\n");
+
+  return { subject, html, text };
+}

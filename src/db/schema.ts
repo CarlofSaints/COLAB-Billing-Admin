@@ -820,6 +820,81 @@ export const fixedLineAllocations = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Once-off bills                                                     */
+/* ------------------------------------------------------------------ */
+
+// A draft is a working copy and touches no invoice. Submitting is what puts
+// the bill on the Variable run for its month — and it is one-way, because the
+// moment it lands on a preview somebody may push it to Xero.
+export const onceOffBillStatusEnum = pgEnum("once_off_bill_status", ["draft", "submitted"]);
+
+/**
+ * A charge that happens once, in one named month.
+ *
+ * Deliberately the same shape as `fixedLineItems` — same `fixed_split_mode`
+ * enum, same allocation rows — so the split maths in `billing-calc.ts` is
+ * shared rather than copied. A second implementation of "divide this by
+ * headcount" would drift from the one the invoice run uses and the first sign
+ * would be an invoice that disagrees with its own preview.
+ *
+ * The two things a fixed item hasn't got are the whole point:
+ *  - `period` — it bills in that month and no other.
+ *  - `status` — a draft is invisible to billing. Only a submitted bill reaches
+ *    the Variable preview, and only for its own period.
+ */
+export const onceOffBills = pgTable(
+  "once_off_bills",
+  {
+    id: serial("id").primaryKey(),
+    description: text("description").notNull(),
+    /** "YYYY-MM". A repeat next month is a COPY with a new period, not an edit. */
+    period: text("period").notNull(),
+    splitMode: fixedSplitModeEnum("split_mode").notNull().default("quantity"),
+    /** A price each in "quantity" mode; the whole cost in every other mode. */
+    unitAmount: numeric("unit_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+    notes: text("notes"),
+    status: onceOffBillStatusEnum("status").notNull().default("draft"),
+    createdByUserId: integer("created_by_user_id"),
+    createdByName: text("created_by_name"),
+    /**
+     * Snapshotted at creation so "email whoever created it" survives the user
+     * being deactivated. The live address off `users` wins while it exists —
+     * this is the fallback, not the source of truth.
+     */
+    createdByEmail: text("created_by_email"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    submittedByName: text("submitted_by_name"),
+    /** The bill this was copied from, so a monthly repeat is traceable. */
+    copiedFromId: integer("copied_from_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("once_off_bill_period_idx").on(t.period, t.status)],
+);
+
+/** A company's share of a once-off bill. Mirrors `fixedLineAllocations`. */
+export const onceOffBillAllocations = pgTable(
+  "once_off_bill_allocations",
+  {
+    id: serial("id").primaryKey(),
+    onceOffBillId: integer("once_off_bill_id")
+      .notNull()
+      .references(() => onceOffBills.id, { onDelete: "cascade" }),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    /**
+     * Units in "quantity" mode, a percentage in "percent" mode, and 0 for the
+     * derived modes — where the share is worked out at read time, because a
+     * stored copy of today's percentage looks authoritative and is wrong the
+     * moment anyone moves desk.
+     */
+    quantity: numeric("quantity", { precision: 12, scale: 2 }).notNull().default("1"),
+  },
+  (t) => [uniqueIndex("once_off_alloc_unique").on(t.onceOffBillId, t.companyId)],
+);
+
+/* ------------------------------------------------------------------ */
 /* Xero expense account → split method mapping                        */
 /* ------------------------------------------------------------------ */
 
@@ -1630,6 +1705,21 @@ export const fixedLineAllocationsRelations = relations(fixedLineAllocations, ({ 
   }),
   company: one(companies, {
     fields: [fixedLineAllocations.companyId],
+    references: [companies.id],
+  }),
+}));
+
+export const onceOffBillsRelations = relations(onceOffBills, ({ many }) => ({
+  allocations: many(onceOffBillAllocations),
+}));
+
+export const onceOffBillAllocationsRelations = relations(onceOffBillAllocations, ({ one }) => ({
+  bill: one(onceOffBills, {
+    fields: [onceOffBillAllocations.onceOffBillId],
+    references: [onceOffBills.id],
+  }),
+  company: one(companies, {
+    fields: [onceOffBillAllocations.companyId],
     references: [companies.id],
   }),
 }));
