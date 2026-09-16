@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { invoiceRunInvoices, invoiceRuns } from "@/db/schema";
+import { invoiceRunDrafts, invoiceRunInvoices, invoiceRuns } from "@/db/schema";
 import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { buildPreview, type RunType } from "@/lib/invoice-engine";
 import { defaultPeriod, isPeriod, recentPeriods } from "@/lib/periods";
@@ -42,6 +42,12 @@ export default async function InvoicesPage({
           .where(eq(invoiceRunInvoices.runId, runIds[0]))
       : [];
 
+  const [saved] = await db
+    .select()
+    .from(invoiceRunDrafts)
+    .where(and(eq(invoiceRunDrafts.period, period), eq(invoiceRunDrafts.runType, runType)))
+    .limit(1);
+
   return (
     <div>
       <PageHeader
@@ -69,6 +75,16 @@ export default async function InvoicesPage({
             : null
         }
         runCount={runs.length}
+        saved={
+          saved
+            ? {
+                companies: saved.companies,
+                calculatedTotal: Number(saved.calculatedTotal),
+                savedAt: saved.savedAt.toISOString(),
+                savedBy: saved.savedByName ?? "Someone",
+              }
+            : null
+        }
       />
     </div>
   );

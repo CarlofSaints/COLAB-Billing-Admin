@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -16,8 +16,16 @@ import {
   RotateCcw,
   Send,
   Plug,
+  Save,
+  Undo2,
 } from "lucide-react";
-import { generateInvoices, type GenerateResult } from "@/app/actions/invoices";
+import {
+  discardInvoiceDraft,
+  generateInvoices,
+  saveInvoiceDraft,
+  type GenerateResult,
+} from "@/app/actions/invoices";
+import type { SavedInvoiceCompany } from "@/db/schema";
 import type { InvoicePreview, PreviewCompany } from "@/lib/invoice-engine";
 import { RUN_TYPES, RUN_TYPE_LABELS, type RunType } from "@/lib/run-types";
 import { periodLabel } from "@/lib/periods";
@@ -37,16 +45,38 @@ type EditableCompany = {
   lines: EditableLine[];
 };
 
-function toEditable(companies: PreviewCompany[]): EditableCompany[] {
+type SavedDraft = {
+  companies: SavedInvoiceCompany[];
+  calculatedTotal: number;
+  savedAt: string;
+  savedBy: string;
+};
+
+/** A company's saved lines win over its calculated ones; a company with nothing saved keeps its calculation. */
+function toEditable(companies: PreviewCompany[], saved: SavedDraft | null): EditableCompany[] {
+  const savedById = new Map((saved?.companies ?? []).map((c) => [c.companyId, c.lines]));
   return companies.map((c) => ({
     companyId: c.companyId,
     name: c.name,
     xeroContactId: c.xeroContactId,
     xeroContactName: c.xeroContactName,
-    lines: c.lines.map((l) => ({
+    lines: (savedById.get(c.companyId) ?? c.lines).map((l) => ({
       key: l.key,
       description: l.description,
       amount: l.amount.toFixed(2),
+      detail: l.detail,
+    })),
+  }));
+}
+
+/** The editor's full state as it is saved. "Unsaved changes" compares on this too. */
+function toSaved(draft: EditableCompany[]): SavedInvoiceCompany[] {
+  return draft.map((c) => ({
+    companyId: c.companyId,
+    lines: c.lines.map((l) => ({
+      key: l.key,
+      description: l.description,
+      amount: Math.round((Number(l.amount) || 0) * 100) / 100,
       detail: l.detail,
     })),
   }));
@@ -59,6 +89,7 @@ export function InvoiceBuilder({
   xeroConnected,
   previousRun,
   runCount,
+  saved,
 }: {
   preview: InvoicePreview;
   periods: string[];
@@ -72,18 +103,66 @@ export function InvoiceBuilder({
     invoices: { companyName: string; invoiceNumber: string | null; error: string | null }[];
   } | null;
   runCount: number;
+  saved: SavedDraft | null;
 }) {
   const router = useRouter();
   const [state, action] = useActionState<GenerateResult, FormData>(generateInvoices, {});
 
   // Re-seed the editor whenever the server sends a different preview.
   const [seen, setSeen] = useState(preview);
-  const [draft, setDraft] = useState<EditableCompany[]>(() => toEditable(preview.companies));
+  const [draft, setDraft] = useState<EditableCompany[]>(() => toEditable(preview.companies, saved));
+  const [baseline, setBaseline] = useState(() =>
+    JSON.stringify(toSaved(toEditable(preview.companies, saved))),
+  );
   const [expanded, setExpanded] = useState<string | null>(null);
   if (seen !== preview) {
+    const seeded = toEditable(preview.companies, saved);
     setSeen(preview);
-    setDraft(toEditable(preview.companies));
+    setDraft(seeded);
+    setBaseline(JSON.stringify(toSaved(seeded)));
   }
+
+  const dirty = JSON.stringify(toSaved(draft)) !== baseline;
+  const [saving, startSaving] = useTransition();
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // The calculation has moved since the save (a cost added, a split changed),
+  // and the saved lines can't include that.
+  const savedIsStale =
+    saved !== null && Math.abs(saved.calculatedTotal - preview.grandTotal) >= 0.005;
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  const save = () =>
+    startSaving(async () => {
+      setSaveError(null);
+      const res = await saveInvoiceDraft({
+        period: preview.period,
+        runType: preview.runType,
+        companies: toSaved(draft),
+        calculatedTotal: preview.grandTotal,
+      });
+      if (res.error) setSaveError(res.error);
+    });
+
+  const goBackToCalculated = () => {
+    if (!confirm("Throw away the saved changes and go back to the calculated figures?")) return;
+    startSaving(async () => {
+      setSaveError(null);
+      const res = await discardInvoiceDraft({ period: preview.period, runType: preview.runType });
+      if (res.error) setSaveError(res.error);
+    });
+  };
+
+  const undoUnsaved = () => {
+    const seeded = toEditable(preview.companies, saved);
+    setDraft(seeded);
+    setBaseline(JSON.stringify(toSaved(seeded)));
+  };
 
   const totals = useMemo(
     () =>
@@ -122,7 +201,8 @@ export function InvoiceBuilder({
               lines: [
                 ...c.lines,
                 {
-                  key: `manual-${c.companyId}-${c.lines.length}-${c.lines.reduce((s, l) => s + l.key.length, 0)}`,
+                  // Saved and reloaded now, so it must never collide with an earlier added line.
+                  key: `manual-${c.companyId}-${Date.now()}`,
                   description: "",
                   amount: "0.00",
                   detail: ["Added by hand"],
@@ -147,6 +227,9 @@ export function InvoiceBuilder({
   const canSend = canRun && xeroConnected && billable.length > 0 && blocked.length === 0;
 
   const switchTo = (next: { period?: string; run?: RunType }) => {
+    if (dirty && !confirm("You have unsaved changes on this invoice run. Leave without saving them?")) {
+      return;
+    }
     const p = next.period ?? preview.period;
     const r = next.run ?? preview.runType;
     router.push(`/invoices?period=${p}&run=${r}`);
@@ -243,6 +326,41 @@ export function InvoiceBuilder({
         </CardContent>
       </Card>
 
+      {/* Saved changes */}
+      {saved && (
+        <div
+          className={cn(
+            "flex flex-wrap items-start gap-3 rounded-lg border px-4 py-3 text-sm",
+            savedIsStale
+              ? "border-amber-200 bg-amber-50 text-amber-800"
+              : "border-line bg-slate-50 text-slate-600",
+          )}
+        >
+          {savedIsStale ? (
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          ) : (
+            <Save className="mt-0.5 h-4 w-4 shrink-0" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p>
+              Showing changes saved by {saved.savedBy} on {formatDateTime(saved.savedAt)}.
+            </p>
+            {savedIsStale && (
+              <p className="mt-0.5">
+                The calculated total has changed since then ({formatCurrency(saved.calculatedTotal)} to{" "}
+                {formatCurrency(preview.grandTotal)}). Something was added or split differently, and
+                these saved lines don&apos;t include it. Go back to the calculated figures to pick it up.
+              </p>
+            )}
+          </div>
+          {canRun && (
+            <Button variant="ghost" size="sm" onClick={goBackToCalculated} disabled={saving}>
+              <Undo2 className="h-3.5 w-3.5" /> Go back to calculated figures
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Warnings */}
       {preview.warnings.length > 0 && (
         <div className="space-y-2">
@@ -298,8 +416,13 @@ export function InvoiceBuilder({
       )}
 
       {/* Result */}
-      {(state.created?.length || state.failed?.length || state.error) && (
+      {(state.created?.length || state.failed?.length || state.error || saveError) && (
         <div className="space-y-2">
+          {saveError && (
+            <p className="flex items-center gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+              <TriangleAlert className="h-4 w-4" /> {saveError}
+            </p>
+          )}
           {state.error && (
             <p className="flex items-center gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
               <TriangleAlert className="h-4 w-4" /> {state.error}
@@ -444,12 +567,18 @@ export function InvoiceBuilder({
       )}
 
       {/* Send bar */}
-      {canRun && billable.length > 0 && (
+      {canRun && (billable.length > 0 || dirty) && (
         <form action={action}>
           <input type="hidden" name="period" value={preview.period} />
           <input type="hidden" name="runType" value={preview.runType} />
           <input type="hidden" name="invoices" value={payload} />
+          <input type="hidden" name="draft" value={JSON.stringify(toSaved(draft))} />
+          <input type="hidden" name="calculatedTotal" value={preview.grandTotal} />
           <SendBar
+            dirty={dirty}
+            saving={saving}
+            onSave={save}
+            onUndo={undoUnsaved}
             count={billable.length}
             total={grandTotal}
             blocked={blocked.map((c) => c.name)}
@@ -464,6 +593,10 @@ export function InvoiceBuilder({
 }
 
 function SendBar({
+  dirty,
+  saving,
+  onSave,
+  onUndo,
   count,
   total,
   blocked,
@@ -471,6 +604,10 @@ function SendBar({
   period,
   repeat,
 }: {
+  dirty: boolean;
+  saving: boolean;
+  onSave: () => void;
+  onUndo: () => void;
   count: number;
   total: number;
   blocked: string[];
@@ -497,6 +634,23 @@ function SendBar({
             </span>
           )}
         </div>
+        {dirty && (
+          <>
+            <span className="text-sm font-medium text-amber-700">Unsaved changes</span>
+            <Button type="button" variant="ghost" onClick={onUndo} disabled={saving || pending}>
+              <Undo2 className="h-4 w-4" /> Undo changes
+            </Button>
+          </>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onSave}
+          disabled={!dirty || saving || pending}
+        >
+          <Save className="h-4 w-4" />
+          {saving ? "Saving…" : dirty ? "Save changes" : "Saved"}
+        </Button>
         <Button
           type="submit"
           disabled={!canSend || pending}

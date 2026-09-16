@@ -1080,6 +1080,30 @@ export const invoiceRunInvoices = pgTable("invoice_run_invoices", {
   lines: jsonb("lines").$type<{ description: string; amount: number }[]>(),
 });
 
+export type SavedInvoiceLine = { key: string; description: string; amount: number; detail: string[] };
+export type SavedInvoiceCompany = { companyId: number; lines: SavedInvoiceLine[] };
+
+/**
+ * Hand edits to an Invoice Run, saved before it goes to Xero. One per month +
+ * run. While it exists the Invoice Run page shows these lines instead of the
+ * calculated ones, so `calculatedTotal` records what the engine said at save
+ * time — if that moves, the page warns that the saved copy is out of date.
+ */
+export const invoiceRunDrafts = pgTable(
+  "invoice_run_drafts",
+  {
+    id: serial("id").primaryKey(),
+    period: text("period").notNull(), // YYYY-MM
+    runType: invoiceRunTypeEnum("run_type").notNull(),
+    companies: jsonb("companies").$type<SavedInvoiceCompany[]>().notNull(),
+    calculatedTotal: numeric("calculated_total", { precision: 14, scale: 2 }).notNull().default("0"),
+    savedByUserId: integer("saved_by_user_id"),
+    savedByName: text("saved_by_name"),
+    savedAt: timestamp("saved_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("invoice_run_drafts_period_run_unique").on(t.period, t.runType)],
+);
+
 /* ------------------------------------------------------------------ */
 /* Activity / Audit Log                                               */
 /* ------------------------------------------------------------------ */

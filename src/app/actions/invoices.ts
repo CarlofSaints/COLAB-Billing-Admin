@@ -3,8 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { appSettings, companies, invoiceRunInvoices, invoiceRuns } from "@/db/schema";
-import { requirePermission } from "@/lib/auth";
+import {
+  appSettings,
+  companies,
+  invoiceRunDrafts,
+  invoiceRunInvoices,
+  invoiceRuns,
+  type SavedInvoiceCompany,
+} from "@/db/schema";
+import { requirePermission, type SessionUser } from "@/lib/auth";
 import { logEvent } from "@/lib/log";
 import { isPeriod, periodLabel } from "@/lib/periods";
 import { createDraftInvoice } from "@/lib/xero";
@@ -55,6 +62,121 @@ function parseInvoices(raw: FormDataEntryValue | null): SubmittedInvoice[] | nul
   return out;
 }
 
+/**
+ * Reads the editor's full state (keys, blank lines and drill-downs included) so
+ * the saved copy reopens exactly as it was left. Null means malformed.
+ */
+function parseDraft(raw: unknown): SavedInvoiceCompany[] | null {
+  if (!Array.isArray(raw) || raw.length > 200) return null;
+  const out: SavedInvoiceCompany[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") return null;
+    const r = item as Record<string, unknown>;
+    const companyId = Number(r.companyId);
+    if (!Number.isInteger(companyId) || companyId <= 0) return null;
+    if (!Array.isArray(r.lines) || r.lines.length > 500) return null;
+
+    const lines: SavedInvoiceCompany["lines"] = [];
+    for (const l of r.lines) {
+      if (!l || typeof l !== "object") return null;
+      const line = l as Record<string, unknown>;
+      const key = String(line.key ?? "");
+      if (!key) return null;
+      const amount = Number(line.amount);
+      lines.push({
+        key: key.slice(0, 200),
+        description: String(line.description ?? "").slice(0, 1000),
+        amount: Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0,
+        detail: Array.isArray(line.detail) ? line.detail.slice(0, 50).map((d) => String(d).slice(0, 1000)) : [],
+      });
+    }
+    out.push({ companyId, lines });
+  }
+  return out;
+}
+
+async function upsertDraft(
+  period: string,
+  runType: RunType,
+  draft: SavedInvoiceCompany[],
+  calculatedTotal: number,
+  user: SessionUser,
+) {
+  const values = {
+    companies: draft,
+    calculatedTotal: calculatedTotal.toFixed(2),
+    savedByUserId: user.id,
+    savedByName: user.name,
+    savedAt: new Date(),
+  };
+  await db
+    .insert(invoiceRunDrafts)
+    .values({ period, runType, ...values })
+    .onConflictDoUpdate({ target: [invoiceRunDrafts.period, invoiceRunDrafts.runType], set: values });
+}
+
+export type DraftResult = { ok?: boolean; error?: string };
+
+/**
+ * Saves hand edits to an Invoice Run without sending anything to Xero. The page
+ * then reopens on these lines instead of the calculated ones.
+ */
+export async function saveInvoiceDraft(input: {
+  period: string;
+  runType: RunType;
+  companies: unknown;
+  calculatedTotal: number;
+}): Promise<DraftResult> {
+  const user = await requirePermission("billing.run");
+  const { period, runType } = input;
+  if (!isPeriod(period)) return { error: "That billing month isn't valid." };
+  if (runType !== "recurring" && runType !== "month_end") return { error: "Unknown run type." };
+  const draft = parseDraft(input.companies);
+  if (!draft) return { error: "Could not read the invoice lines — reload and try again." };
+  const calculatedTotal = Number(input.calculatedTotal);
+  if (!Number.isFinite(calculatedTotal)) return { error: "Could not read the calculated total." };
+
+  await upsertDraft(period, runType, draft, calculatedTotal, user);
+
+  const total = draft.reduce((s, c) => s + c.lines.reduce((t, l) => t + l.amount, 0), 0);
+  await logEvent({
+    action: "billing.invoice_draft_saved",
+    summary: `Saved changes to the ${RUN_TYPE_LABELS[runType]} invoice run for ${periodLabel(period)} (R${total.toFixed(2)})`,
+    actor: user,
+    entityType: "invoice_run_draft",
+    metadata: { period, runType, total, calculatedTotal },
+  });
+
+  revalidatePath("/invoices");
+  return { ok: true };
+}
+
+/** Throws away saved edits so the page goes back to the calculated figures. */
+export async function discardInvoiceDraft(input: { period: string; runType: RunType }): Promise<DraftResult> {
+  const user = await requirePermission("billing.run");
+  const { period, runType } = input;
+  if (!isPeriod(period)) return { error: "That billing month isn't valid." };
+  if (runType !== "recurring" && runType !== "month_end") return { error: "Unknown run type." };
+
+  const deleted = await db
+    .delete(invoiceRunDrafts)
+    .where(and(eq(invoiceRunDrafts.period, period), eq(invoiceRunDrafts.runType, runType)))
+    .returning({ id: invoiceRunDrafts.id });
+
+  if (deleted.length > 0) {
+    await logEvent({
+      action: "billing.invoice_draft_discarded",
+      summary: `Discarded saved changes to the ${RUN_TYPE_LABELS[runType]} invoice run for ${periodLabel(period)}`,
+      actor: user,
+      entityType: "invoice_run_draft",
+      metadata: { period, runType },
+    });
+  }
+
+  revalidatePath("/invoices");
+  return { ok: true };
+}
+
 /** Last day of the billing month, as YYYY-MM-DD. */
 function periodEnd(period: string): string {
   const [y, m] = period.split("-").map(Number);
@@ -89,6 +211,22 @@ export async function generateInvoices(
   const submitted = parseInvoices(formData.get("invoices"));
   if (!submitted) return { error: "Could not read the invoices — reload and try again." };
   if (submitted.length === 0) return { error: "There are no invoice lines to send." };
+
+  // What went to Xero is kept as the saved copy, so the page doesn't snap back
+  // to the calculated figures when it re-renders after sending.
+  const draftRaw = formData.get("draft");
+  if (typeof draftRaw === "string") {
+    let draft: SavedInvoiceCompany[] | null = null;
+    try {
+      draft = parseDraft(JSON.parse(draftRaw));
+    } catch {
+      draft = null;
+    }
+    const calculatedTotal = Number(formData.get("calculatedTotal"));
+    if (draft && Number.isFinite(calculatedTotal)) {
+      await upsertDraft(period, runType, draft, calculatedTotal, user);
+    }
+  }
 
   const [incomeSetting] = await db
     .select()
