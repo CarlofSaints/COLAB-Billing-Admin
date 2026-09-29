@@ -2,6 +2,7 @@ import { asc, eq, lt } from "drizzle-orm";
 import { db } from "@/db";
 import {
   companies,
+  creditorLinks,
   expenseAccountMappings,
   fixedLineAllocations,
   fixedLineItems,
@@ -49,7 +50,7 @@ export default async function SupplierSplitsPage({
         { ok: false, error: "" } as const,
       ];
 
-  const [subs, items, allocations, thisMonth, earlier, accountDefaults] = await Promise.all([
+  const [subs, items, allocations, thisMonth, earlier, accountDefaults, links] = await Promise.all([
     db.select().from(companies).where(eq(companies.type, "sub")).orderBy(asc(companies.name)),
     db
       .select()
@@ -66,7 +67,9 @@ export default async function SupplierSplitsPage({
       .where(lt(supplierSplits.period, period))
       .orderBy(asc(supplierSplits.period)),
     db.select().from(expenseAccountMappings),
+    db.select().from(creditorLinks),
   ]);
+  const linkByContact = new Map(links.map((l) => [l.xeroContactId, l]));
 
   // Resolved once here so tag-driven and derived items report what they
   // really recover, not what their (empty or placeholder) rows say.
@@ -114,6 +117,7 @@ export default async function SupplierSplitsPage({
       percentages = winner.percentages ?? null;
     }
     if (!own && prior) inheritedFrom = prior.period;
+    const link = linkByContact.get(s.contactId);
 
     return {
       key: s.key,
@@ -135,6 +139,14 @@ export default async function SupplierSplitsPage({
       balancePercentages: (own ?? prior)?.balancePercentages ?? null,
       source,
       inheritedFrom,
+      // The invoice engine checks this BEFORE any split: a linked creditor
+      // with no explicit split this month is reconciled against Static.
+      creditorLink: link
+        ? {
+            itemIds: recoveryItemIds(link),
+            balanceMethod: (link.balanceMethod ?? null) as AccountMethod | null,
+          }
+        : null,
     };
   });
 

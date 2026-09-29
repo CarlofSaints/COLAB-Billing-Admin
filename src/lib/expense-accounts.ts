@@ -234,3 +234,46 @@ export function accountTypeLabel(type: string | null | undefined): string {
   };
   return map[type] ?? type.charAt(0) + type.slice(1).toLowerCase();
 }
+
+/* ------------------------------------------------------------------ */
+/* Which invoice a rule lands on                                        */
+/* ------------------------------------------------------------------ */
+
+/** The two invoice runs, as the screens name them (see lib/run-types.ts). */
+export type InvoiceSide = "static" | "variable";
+
+/**
+ * Which invoice(s) a split rule puts its cost on. Mirrors `buildPreview`:
+ *
+ * - Items named on "Fixed" / "Ignore — split in Controls" are billed on the
+ *   STATIC run, and "In Controls" with no items is billed there whole (rent).
+ * - A leftover balance with a split method goes on the VARIABLE run.
+ * - Every plain split (per m², head, equal, %, direct) is VARIABLE.
+ * - "Not recharged" and an unset rule are on neither.
+ *
+ * A row can be on both: its items went out on Static, its balance goes out on
+ * Variable. That is exactly the row worth seeing from both sides.
+ */
+export function invoiceSides(rule: {
+  method: MethodChoice;
+  balanceMethod: MethodChoice | null;
+}): { static: boolean; variable: boolean } {
+  const { method, balanceMethod } = rule;
+  if (method === UNMAPPED || method === "exclude") return { static: false, variable: false };
+  if (recoversFixedItems(method)) {
+    const splitsBalance =
+      balanceMethod != null &&
+      balanceMethod !== UNMAPPED &&
+      balanceMethod !== "exclude" &&
+      !recoversFixedItems(balanceMethod);
+    return { static: true, variable: splitsBalance };
+  }
+  return { static: false, variable: true };
+}
+
+export function onInvoice(
+  sides: { static: boolean; variable: boolean },
+  filter: InvoiceSide | "all",
+): boolean {
+  return filter === "all" || sides[filter];
+}

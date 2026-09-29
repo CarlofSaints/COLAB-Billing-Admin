@@ -20,12 +20,19 @@ import {
   BALANCE_METHODS,
   UNMAPPED,
   accountTypeLabel,
+  invoiceSides,
+  onInvoice,
   recoversFixedItems,
   type AccountMethod,
   type FixedItemOption,
   type MethodChoice,
   type PercentEntry,
 } from "@/lib/expense-accounts";
+import {
+  InvoiceSideCards,
+  InvoiceSideSwitch,
+  type InvoiceSideFilter,
+} from "@/components/invoice-side";
 import { PercentCell } from "@/components/percent-split";
 import { RecoveryItemsCell } from "@/components/recovery-items";
 import { Button } from "@/components/ui/button";
@@ -126,6 +133,7 @@ export function ExpenseAccountsClient({
   const [draft, setDraft] = useState<Record<string, Draft>>(() => toDraft(rows));
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [invoice, setInvoice] = useState<InvoiceSideFilter>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkMethod, setBulkMethod] = useState<MethodChoice>("per_sqm");
   const [refreshing, setRefreshing] = useState(false);
@@ -163,10 +171,29 @@ export function ExpenseAccountsClient({
     return c;
   }, [rows, draft]);
 
+  // Account defaults only: a supplier split or creditor link can still send a
+  // single supplier on this account to the other invoice.
+  const byInvoice = useMemo(() => {
+    const sides = new Map<string, { static: boolean; variable: boolean }>();
+    const count = { static: 0, variable: 0, both: 0 };
+    for (const r of rows) {
+      const d = draft[r.accountId];
+      if (!d) continue;
+      const s = invoiceSides(d);
+      sides.set(r.accountId, s);
+      if (s.static) count.static += 1;
+      if (s.variable) count.variable += 1;
+      if (s.static && s.variable) count.both += 1;
+    }
+    return { sides, count };
+  }, [rows, draft]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter((r) => {
       const method = draft[r.accountId]?.method ?? UNMAPPED;
+      const sides = byInvoice.sides.get(r.accountId);
+      if (sides && !onInvoice(sides, invoice)) return false;
       if (filter === "unmapped" && method !== UNMAPPED) return false;
       if (filter !== "all" && filter !== "unmapped" && method !== filter) return false;
       if (!q) return true;
@@ -176,7 +203,7 @@ export function ExpenseAccountsClient({
         (r.description ?? "").toLowerCase().includes(q)
       );
     });
-  }, [rows, draft, filter, query]);
+  }, [rows, draft, filter, query, invoice, byInvoice]);
 
   // Xero hands these over in account-code order. Sorting is client-side over
   // the filtered set, so the header you click is the order you get.
@@ -383,6 +410,27 @@ export function ExpenseAccountsClient({
             </p>
           )}
 
+          <InvoiceSideCards
+            filter={invoice}
+            onChange={setInvoice}
+            unit="account"
+            summary={{
+              static: {
+                count: byInvoice.count.static,
+                hint:
+                  byInvoice.count.static === 0
+                    ? "No account is Fixed or In Controls. Static costs are caught per supplier, on Supplier Splits and Creditor Links."
+                    : byInvoice.count.both > 0
+                      ? `Fixed or "In Controls". ${byInvoice.count.both} of these also split a balance onto Variable.`
+                      : `Fixed or "In Controls": already invoiced on Static`,
+              },
+              variable: {
+                count: byInvoice.count.variable,
+                hint: "Split per m², per head, equally, by % or direct, plus any balance left after Static",
+              },
+            }}
+          />
+
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {METHODS.map((m) => (
               <div key={m.key} className="rounded-lg border border-line px-3 py-2">
@@ -407,6 +455,15 @@ export function ExpenseAccountsClient({
                 className="pl-9"
               />
             </div>
+            <InvoiceSideSwitch
+              filter={invoice}
+              onChange={setInvoice}
+              counts={{
+                all: rows.length,
+                static: byInvoice.count.static,
+                variable: byInvoice.count.variable,
+              }}
+            />
             <FilterPill label="All" count={counts.all} active={filter === "all"} onClick={() => setFilter("all")} />
             <FilterPill
               label="Unmapped"

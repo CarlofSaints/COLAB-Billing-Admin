@@ -26,11 +26,19 @@ import {
   METHOD_BY_KEY,
   BALANCE_METHODS,
   UNMAPPED,
+  invoiceSides,
+  onInvoice,
   recoversFixedItems,
   type AccountMethod,
+  type InvoiceSide,
   type MethodChoice,
   type PercentEntry,
 } from "@/lib/expense-accounts";
+import {
+  InvoiceSideCards,
+  InvoiceSideSwitch,
+  type InvoiceSideFilter,
+} from "@/components/invoice-side";
 import { PercentCell } from "@/components/percent-split";
 import { RecoveryItemsCell } from "@/components/recovery-items";
 import { periodLabel } from "@/lib/periods";
@@ -65,6 +73,8 @@ export type SupplierRow = {
   balancePercentages: PercentEntry[] | null;
   source: Source;
   inheritedFrom: string | null;
+  /** Set when this supplier is a linked creditor (Creditor Links page). */
+  creditorLink: { itemIds: number[]; balanceMethod: AccountMethod | null } | null;
 };
 
 type Draft = {
@@ -154,6 +164,7 @@ export function SupplierSplitsClient({
   const [draft, setDraft] = useState(() => toDraft(rows));
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [invoice, setInvoice] = useState<InvoiceSideFilter>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkMethod, setBulkMethod] = useState<MethodChoice>("headcount");
   const [busy, setBusy] = useState(false);
@@ -187,10 +198,17 @@ export function SupplierSplitsClient({
     return c;
   }, [rows, draft]);
 
+  const byInvoice = useMemo(
+    () => splitByInvoice(rows, draft, baseline, fixedItems),
+    [rows, draft, baseline, fixedItems],
+  );
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter((r) => {
       const method = draft[r.key]?.method ?? UNMAPPED;
+      const sides = byInvoice.sides.get(r.key);
+      if (sides && !onInvoice(sides, invoice)) return false;
       if (filter === "unset" && method !== UNMAPPED) return false;
       if (filter === "inherited" && r.source !== "inherited") return false;
       if (filter !== "all" && filter !== "unset" && filter !== "inherited" && method !== filter)
@@ -202,7 +220,7 @@ export function SupplierSplitsClient({
         (r.accountName ?? "").toLowerCase().includes(q)
       );
     });
-  }, [rows, draft, filter, query]);
+  }, [rows, draft, filter, query, invoice, byInvoice]);
 
   const setRow = (key: string, patch: Partial<Draft>) =>
     setDraft((d) => ({ ...d, [key]: { ...d[key], ...patch } }));
@@ -405,6 +423,33 @@ export function SupplierSplitsClient({
             <Stat label="Carried forward" value={String(counts.inherited)} />
           </div>
 
+          <InvoiceSideCards
+            filter={invoice}
+            onChange={setInvoice}
+            unit="supplier line"
+            summary={{
+              static: {
+                count: byInvoice.count.static,
+                amount: formatCurrency(byInvoice.amount.static),
+                hint:
+                  byInvoice.both > 0
+                    ? `Rent, fixed items and linked creditors. ${byInvoice.both} of these also carry a balance onto Variable.`
+                    : "Rent, fixed items and linked creditors: already invoiced",
+              },
+              variable: {
+                count: byInvoice.count.variable,
+                amount: formatCurrency(byInvoice.amount.variable),
+                hint: "Split per m², per head, equally, by % or direct, plus any balance left after Static",
+              },
+            }}
+          />
+          {byInvoice.restricted > 0 && (
+            <p className="text-xs text-muted">
+              {byInvoice.restricted} restricted line{byInvoice.restricted === 1 ? " is" : "s are"}{" "}
+              counted above but left out of the amounts.
+            </p>
+          )}
+
           {hiddenNonExpense > 0 && (
             <p className="text-xs text-muted">
               {hiddenNonExpense} supplier line{hiddenNonExpense === 1 ? "" : "s"} hidden — they hit
@@ -452,6 +497,15 @@ export function SupplierSplitsClient({
                 className="pl-9"
               />
             </div>
+            <InvoiceSideSwitch
+              filter={invoice}
+              onChange={setInvoice}
+              counts={{
+                all: rows.length,
+                static: byInvoice.count.static,
+                variable: byInvoice.count.variable,
+              }}
+            />
             <Pill label="All" count={counts.all} active={filter === "all"} onClick={() => setFilter("all")} />
             <Pill
               label="Not split"
@@ -945,6 +999,118 @@ function SaveBar({
       </div>
     </div>
   );
+}
+
+type Sides = { static: boolean; variable: boolean };
+
+/**
+ * Which invoice each supplier line lands on, and roughly how much of it.
+ *
+ * Follows `buildPreview` in lib/invoice-engine.ts, in its order:
+ * 1. A linked creditor with no explicit split this month is reconciled
+ *    against Static; only an overage (with a split rule) reaches Variable.
+ * 2. A recovery rule set on the supplier recovers its items against that
+ *    line; a rule from the account pools the whole account first.
+ * 3. An item is credited ONCE per run, however many rules name it.
+ * Plain splits are wholly Variable. Unsaved edits count as this month's
+ * explicit split, which is what they become on Save.
+ */
+function splitByInvoice(
+  rows: SupplierRow[],
+  draft: Record<string, Draft>,
+  baseline: Record<string, Draft>,
+  fixedItems: FixedItemOption[],
+) {
+  const sides = new Map<string, Sides>();
+  const amount: Record<InvoiceSide, number> = { static: 0, variable: 0 };
+  const count: Record<InvoiceSide, number> = { static: 0, variable: 0 };
+  let both = 0;
+  let restricted = 0;
+
+  const itemTotal = new Map(fixedItems.map((f) => [f.id, f.allocatedTotal]));
+  const credited = new Set<number>();
+  /** What the named items recover, or null if any of them is restricted. */
+  const recover = (ids: number[]): number | null => {
+    let total = 0;
+    let hidden = false;
+    for (const id of ids) {
+      if (credited.has(id)) continue;
+      credited.add(id);
+      const t = itemTotal.get(id);
+      if (t === null) hidden = true;
+      else total += t ?? 0;
+    }
+    return hidden ? null : total;
+  };
+
+  type Pool = {
+    total: number;
+    hidden: boolean;
+    itemIds: number[];
+    splitsBalance: boolean;
+  };
+  const accountPools = new Map<string, Pool>();
+  const creditorPools = new Map<string, Pool>();
+  const addTo = (pools: Map<string, Pool>, key: string, r: SupplierRow, init: Omit<Pool, "total" | "hidden">) => {
+    const p = pools.get(key) ?? { ...init, total: 0, hidden: false };
+    if (r.amount === null) p.hidden = true;
+    else p.total += r.amount;
+    pools.set(key, p);
+  };
+  const settle = (total: number, recovered: number | null, splitsBalance: boolean) => {
+    if (recovered === null) return; // a restricted item: can't say how it divides
+    const onStatic = Math.min(Math.max(recovered, 0), total);
+    amount.static += onStatic;
+    if (splitsBalance) amount.variable += Math.max(total - onStatic, 0);
+  };
+
+  for (const r of rows) {
+    const d = draft[r.key];
+    if (!d) continue;
+    const dirty = baseline[r.key] ? !same(d, baseline[r.key]) : true;
+    const explicit = r.source === "explicit" || dirty;
+    if (r.amount === null) restricted += 1;
+
+    let s: Sides;
+    if (r.creditorLink && !explicit) {
+      const bm = r.creditorLink.balanceMethod;
+      s = invoiceSides({ method: "controls", balanceMethod: bm });
+      addTo(creditorPools, r.contactId, r, { itemIds: r.creditorLink.itemIds, splitsBalance: s.variable });
+    } else {
+      s = invoiceSides(d);
+      const itemIds = d.method !== UNMAPPED && recoversFixedItems(d.method) ? d.fixedLineItemIds : [];
+      if (d.method === "controls" && itemIds.length === 0) {
+        amount.static += r.amount ?? 0; // billed whole from Controls (rent)
+      } else if (itemIds.length > 0 && !explicit && r.source === "account") {
+        addTo(accountPools, r.accountCode, r, { itemIds, splitsBalance: s.variable });
+      } else if (itemIds.length > 0) {
+        if (r.amount !== null) settle(r.amount, recover(itemIds), s.variable);
+      } else if (s.variable) {
+        amount.variable += r.amount ?? 0;
+      }
+    }
+
+    sides.set(r.key, s);
+    if (s.static) count.static += 1;
+    if (s.variable) count.variable += 1;
+    if (s.static && s.variable) both += 1;
+  }
+
+  for (const pools of [accountPools, creditorPools]) {
+    for (const p of pools.values()) {
+      const recovered = recover(p.itemIds);
+      if (!p.hidden) settle(p.total, recovered, p.splitsBalance);
+    }
+  }
+
+  const round = (n: number) => Math.round(n * 100) / 100;
+  return {
+    sides,
+    count,
+    both,
+    restricted,
+    amount: { static: round(amount.static), variable: round(amount.variable) },
+  };
 }
 
 function Stat({
