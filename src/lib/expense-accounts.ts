@@ -202,6 +202,11 @@ export function parsePercentages(value: unknown): PercentEntry[] | null {
     const usage = Number(r.usage);
     out.push(r.usage != null && Number.isFinite(usage) && usage > 0 ? { companyId, percent, usage } : { companyId, percent });
   }
+  // Usage is what bills, so the percentages shown must come from it, not from the payload.
+  if (out.length > 0 && out.every((e) => e.usage)) {
+    const shares = usagePercentages(out.map((e) => e.usage!))!;
+    out.forEach((e, i) => (e.percent = shares[i]));
+  }
   return out.length > 0 ? out : null;
 }
 

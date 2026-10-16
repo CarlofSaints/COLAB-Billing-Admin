@@ -15,11 +15,21 @@ assert.equal(usagePercentages([0, 0]), null, "nothing to divide");
 assert.equal(usagePercentages([-5, 0]), null, "negative usage is ignored");
 
 // Usage survives the server's parser; junk usage is dropped, the percentage kept.
-assert.deepEqual(parsePercentages([{ companyId: 2, percent: 75, usage: 300 }]), [
-  { companyId: 2, percent: 75, usage: 300 },
+assert.deepEqual(parsePercentages([{ companyId: 2, percent: 100, usage: 300 }]), [
+  { companyId: 2, percent: 100, usage: 300 },
 ]);
 assert.deepEqual(parsePercentages([{ companyId: 2, percent: 100, usage: "x" }]), [
   { companyId: 2, percent: 100 },
 ]);
 
 console.log("OK usagePercentages: 7 checks");
+
+// A payload whose percentages disagree with its usage is corrected to the usage.
+assert.deepEqual(
+  parsePercentages([
+    { companyId: 2, percent: 50, usage: 1 },
+    { companyId: 3, percent: 50, usage: 99 },
+  ])?.map((e) => e.percent),
+  [1, 99],
+);
+console.log("OK usage overrides a mismatched percentage");
