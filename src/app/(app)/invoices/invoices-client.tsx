@@ -18,15 +18,20 @@ import {
   Plug,
   Save,
   Undo2,
+  Lock,
+  LockOpen,
+  BadgeCheck,
 } from "lucide-react";
 import {
   discardInvoiceDraft,
   generateInvoices,
+  reopenInvoiceRun,
   saveInvoiceDraft,
   type GenerateResult,
 } from "@/app/actions/invoices";
 import type { SavedInvoiceCompany } from "@/db/schema";
 import type { InvoicePreview, PreviewCompany } from "@/lib/invoice-engine";
+import { mergeDraft, type LineChange, type MergedLine } from "@/lib/invoice-draft-merge";
 import { RUN_TYPES, RUN_TYPE_LABELS, type RunType } from "@/lib/run-types";
 import { periodLabel } from "@/lib/periods";
 import { Button } from "@/components/ui/button";
@@ -36,7 +41,13 @@ import { Input, Select } from "@/components/ui/field";
 import { EmptyState } from "@/components/ui/page";
 import { formatCurrency, formatDateTime, cn } from "@/lib/utils";
 
-type EditableLine = { key: string; description: string; amount: string; detail: string[] };
+type EditableLine = {
+  key: string;
+  description: string;
+  amount: string;
+  detail: string[];
+  change?: LineChange;
+};
 type EditableCompany = {
   companyId: number;
   name: string;
@@ -50,27 +61,45 @@ type SavedDraft = {
   calculatedTotal: number;
   savedAt: string;
   savedBy: string;
+  finalisedAt: string | null;
+  finalisedBy: string;
 };
 
-/** A company's saved lines win over its calculated ones; a company with nothing saved keeps its calculation. */
+const CHANGE_LABELS: Record<LineChange, string> = {
+  added: "New since the draft was saved",
+  updated: "Updated from the calculation",
+  gone: "No longer in the calculation",
+};
+
+/**
+ * A draft is edits over the live calculation (mergeDraft). A Final run is shown
+ * exactly as it was locked.
+ */
 function toEditable(companies: PreviewCompany[], saved: SavedDraft | null): EditableCompany[] {
-  const savedById = new Map((saved?.companies ?? []).map((c) => [c.companyId, c.lines]));
-  return companies.map((c) => ({
-    companyId: c.companyId,
-    name: c.name,
-    xeroContactId: c.xeroContactId,
-    xeroContactName: c.xeroContactName,
-    lines: (savedById.get(c.companyId) ?? c.lines).map((l) => ({
-      key: l.key,
-      description: l.description,
-      amount: l.amount.toFixed(2),
-      detail: l.detail,
-    })),
-  }));
+  const savedById = new Map((saved?.companies ?? []).map((c) => [c.companyId, c]));
+  return companies.map((c) => {
+    const mine = savedById.get(c.companyId);
+    // A Final run shows only what will be sent; a company it never had stays empty.
+    const lines: MergedLine[] = saved?.finalisedAt ? (mine?.lines ?? []) : mergeDraft(c.lines, mine);
+    return {
+      companyId: c.companyId,
+      name: c.name,
+      xeroContactId: c.xeroContactId,
+      xeroContactName: c.xeroContactName,
+      lines: lines.map((l) => ({
+        key: l.key,
+        description: l.description,
+        amount: l.amount.toFixed(2),
+        detail: l.detail,
+        change: l.change,
+      })),
+    };
+  });
 }
 
 /** The editor's full state as it is saved. "Unsaved changes" compares on this too. */
-function toSaved(draft: EditableCompany[]): SavedInvoiceCompany[] {
+function toSaved(draft: EditableCompany[], calc: PreviewCompany[]): SavedInvoiceCompany[] {
+  const calcById = new Map(calc.map((c) => [c.companyId, c.lines]));
   return draft.map((c) => ({
     companyId: c.companyId,
     lines: c.lines.map((l) => ({
@@ -78,6 +107,11 @@ function toSaved(draft: EditableCompany[]): SavedInvoiceCompany[] {
       description: l.description,
       amount: Math.round((Number(l.amount) || 0) * 100) / 100,
       detail: l.detail,
+    })),
+    calculated: (calcById.get(c.companyId) ?? []).map(({ key, description, amount }) => ({
+      key,
+      description,
+      amount,
     })),
   }));
 }
@@ -112,23 +146,28 @@ export function InvoiceBuilder({
   const [seen, setSeen] = useState(preview);
   const [draft, setDraft] = useState<EditableCompany[]>(() => toEditable(preview.companies, saved));
   const [baseline, setBaseline] = useState(() =>
-    JSON.stringify(toSaved(toEditable(preview.companies, saved))),
+    JSON.stringify(toSaved(toEditable(preview.companies, saved), preview.companies)),
   );
   const [expanded, setExpanded] = useState<string | null>(null);
   if (seen !== preview) {
     const seeded = toEditable(preview.companies, saved);
     setSeen(preview);
     setDraft(seeded);
-    setBaseline(JSON.stringify(toSaved(seeded)));
+    setBaseline(JSON.stringify(toSaved(seeded, preview.companies)));
   }
 
-  const dirty = JSON.stringify(toSaved(draft)) !== baseline;
+  const isFinal = Boolean(saved?.finalisedAt);
+  const editable = canRun && !isFinal;
+  const dirty = JSON.stringify(toSaved(draft, preview.companies)) !== baseline;
   const [saving, startSaving] = useTransition();
   const [saveError, setSaveError] = useState<string | null>(null);
-  // The calculation has moved since the save (a cost added, a split changed),
-  // and the saved lines can't include that.
-  const savedIsStale =
-    saved !== null && Math.abs(saved.calculatedTotal - preview.grandTotal) >= 0.005;
+  // A Final run, or a draft saved before drafts followed the calculation, is
+  // frozen, so a cost added since can't be on it.
+  const drifted = saved !== null && Math.abs(saved.calculatedTotal - preview.grandTotal) >= 0.005;
+  const finalIsStale = isFinal && drifted;
+  const legacyIsStale = !isFinal && drifted && !saved?.companies.some((c) => c.calculated);
+  const changes = draft.flatMap((c) => c.lines.filter((l) => l.change).map((l) => l.change!));
+  const countOf = (k: LineChange) => changes.filter((c) => c === k).length;
 
   useEffect(() => {
     if (!dirty) return;
@@ -137,15 +176,23 @@ export function InvoiceBuilder({
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
-  const save = () =>
+  const save = (final: boolean) =>
     startSaving(async () => {
       setSaveError(null);
       const res = await saveInvoiceDraft({
         period: preview.period,
         runType: preview.runType,
-        companies: toSaved(draft),
+        companies: toSaved(draft, preview.companies),
         calculatedTotal: preview.grandTotal,
+        final,
       });
+      if (res.error) setSaveError(res.error);
+    });
+
+  const reopen = () =>
+    startSaving(async () => {
+      setSaveError(null);
+      const res = await reopenInvoiceRun({ period: preview.period, runType: preview.runType });
       if (res.error) setSaveError(res.error);
     });
 
@@ -161,7 +208,7 @@ export function InvoiceBuilder({
   const undoUnsaved = () => {
     const seeded = toEditable(preview.companies, saved);
     setDraft(seeded);
-    setBaseline(JSON.stringify(toSaved(seeded)));
+    setBaseline(JSON.stringify(toSaved(seeded, preview.companies)));
   };
 
   const totals = useMemo(
@@ -213,18 +260,9 @@ export function InvoiceBuilder({
       ),
     );
 
-  const payload = JSON.stringify(
-    draft.map((c) => ({
-      companyId: c.companyId,
-      lines: c.lines
-        .filter((l) => l.description.trim() && Number(l.amount))
-        .map((l) => ({ description: l.description.trim(), amount: Number(l.amount) })),
-    })),
-  );
-
   const billable = draft.filter((c) => totalFor(c.companyId) !== 0);
   const blocked = billable.filter((c) => !c.xeroContactId);
-  const canSend = canRun && xeroConnected && billable.length > 0 && blocked.length === 0;
+  const canSend = canRun && isFinal && xeroConnected && billable.length > 0 && blocked.length === 0;
 
   const switchTo = (next: { period?: string; run?: RunType }) => {
     if (dirty && !confirm("You have unsaved changes on this invoice run. Leave without saving them?")) {
@@ -327,29 +365,70 @@ export function InvoiceBuilder({
       </Card>
 
       {/* Saved changes */}
-      {saved && (
+      {saved && isFinal && (
         <div
           className={cn(
             "flex flex-wrap items-start gap-3 rounded-lg border px-4 py-3 text-sm",
-            savedIsStale
+            finalIsStale
+              ? "border-amber-200 bg-amber-50 text-amber-800"
+              : "border-emerald-200 bg-emerald-50 text-emerald-800",
+          )}
+        >
+          {finalIsStale ? (
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          ) : (
+            <Lock className="mt-0.5 h-4 w-4 shrink-0" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">
+              Final. Marked by {saved.finalisedBy} on {formatDateTime(saved.finalisedAt!)}. Locked, ready
+              to send to Xero.
+            </p>
+            {finalIsStale && (
+              <p className="mt-0.5">
+                The calculation has changed since then ({formatCurrency(saved.calculatedTotal)} to{" "}
+                {formatCurrency(preview.grandTotal)}), so a cost may be missing. Reopen as a draft to pick
+                it up.
+              </p>
+            )}
+          </div>
+          {canRun && (
+            <Button variant="ghost" size="sm" onClick={reopen} disabled={saving}>
+              <LockOpen className="h-3.5 w-3.5" /> Reopen as draft
+            </Button>
+          )}
+        </div>
+      )}
+      {saved && !isFinal && (
+        <div
+          className={cn(
+            "flex flex-wrap items-start gap-3 rounded-lg border px-4 py-3 text-sm",
+            changes.length > 0 || legacyIsStale
               ? "border-amber-200 bg-amber-50 text-amber-800"
               : "border-line bg-slate-50 text-slate-600",
           )}
         >
-          {savedIsStale ? (
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          ) : (
-            <Save className="mt-0.5 h-4 w-4 shrink-0" />
-          )}
+          <Save className="mt-0.5 h-4 w-4 shrink-0" />
           <div className="min-w-0 flex-1">
             <p>
-              Showing changes saved by {saved.savedBy} on {formatDateTime(saved.savedAt)}.
+              Draft, last saved by {saved.savedBy} on {formatDateTime(saved.savedAt)}. Edits are kept;
+              everything else follows the calculation.
             </p>
-            {savedIsStale && (
+            {changes.length > 0 && (
               <p className="mt-0.5">
-                The calculated total has changed since then ({formatCurrency(saved.calculatedTotal)} to{" "}
-                {formatCurrency(preview.grandTotal)}). Something was added or split differently, and
-                these saved lines don&apos;t include it. Go back to the calculated figures to pick it up.
+                Since then:{" "}
+                {(["added", "updated", "gone"] as const)
+                  .filter((k) => countOf(k) > 0)
+                  .map((k) => `${countOf(k)} ${k === "added" ? "new" : k === "updated" ? "updated" : "no longer calculated"}`)
+                  .join(", ")}
+                . They&apos;re highlighted below. Check them, then save.
+              </p>
+            )}
+            {legacyIsStale && (
+              <p className="mt-0.5">
+                This draft is from before drafts followed the calculation, and the calculated total has
+                changed since ({formatCurrency(saved.calculatedTotal)} to {formatCurrency(preview.grandTotal)}).
+                Go back to the calculated figures to pick it up.
               </p>
             )}
           </div>
@@ -499,7 +578,18 @@ export function InvoiceBuilder({
                     const id = `${c.companyId}:${l.key}`;
                     const open = expanded === id;
                     return (
-                      <div key={l.key} className="rounded-lg border border-line">
+                      <div
+                        key={l.key}
+                        className={cn(
+                          "rounded-lg border",
+                          l.change ? "border-amber-300 bg-amber-50/60" : "border-line",
+                        )}
+                      >
+                        {l.change && (
+                          <p className="px-3 pt-1.5 text-xs font-medium text-amber-700">
+                            {CHANGE_LABELS[l.change]}
+                          </p>
+                        )}
                         <div className="flex items-center gap-2 p-2">
                           <button
                             type="button"
@@ -513,7 +603,7 @@ export function InvoiceBuilder({
                           </button>
                           <Input
                             value={l.description}
-                            disabled={!canRun}
+                            disabled={!editable}
                             placeholder="Description"
                             onChange={(e) =>
                               setLine(c.companyId, l.key, { description: e.target.value })
@@ -524,11 +614,11 @@ export function InvoiceBuilder({
                             type="number"
                             step="0.01"
                             value={l.amount}
-                            disabled={!canRun}
+                            disabled={!editable}
                             onChange={(e) => setLine(c.companyId, l.key, { amount: e.target.value })}
                             className="w-32 text-right tabular-nums"
                           />
-                          {canRun && (
+                          {editable && (
                             <button
                               type="button"
                               onClick={() => removeLine(c.companyId, l.key)}
@@ -549,7 +639,7 @@ export function InvoiceBuilder({
                       </div>
                     );
                   })}
-                  {canRun && (
+                  {editable && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -571,13 +661,24 @@ export function InvoiceBuilder({
         <form action={action}>
           <input type="hidden" name="period" value={preview.period} />
           <input type="hidden" name="runType" value={preview.runType} />
-          <input type="hidden" name="invoices" value={payload} />
-          <input type="hidden" name="draft" value={JSON.stringify(toSaved(draft))} />
-          <input type="hidden" name="calculatedTotal" value={preview.grandTotal} />
           <SendBar
             dirty={dirty}
             saving={saving}
-            onSave={save}
+            isFinal={isFinal}
+            onSave={() => save(false)}
+            onFinalise={() => {
+              const gone = countOf("gone");
+              if (
+                gone > 0 &&
+                !confirm(
+                  `${gone} line${gone === 1 ? " is" : "s are"} no longer in the calculation but will still be billed.\n\nRemove ${gone === 1 ? "it" : "them"} first, or mark as final anyway?`,
+                )
+              ) {
+                return;
+              }
+              save(true);
+            }}
+            onReopen={reopen}
             onUndo={undoUnsaved}
             count={billable.length}
             total={grandTotal}
@@ -595,7 +696,10 @@ export function InvoiceBuilder({
 function SendBar({
   dirty,
   saving,
+  isFinal,
   onSave,
+  onFinalise,
+  onReopen,
   onUndo,
   count,
   total,
@@ -606,7 +710,10 @@ function SendBar({
 }: {
   dirty: boolean;
   saving: boolean;
+  isFinal: boolean;
   onSave: () => void;
+  onFinalise: () => void;
+  onReopen: () => void;
   onUndo: () => void;
   count: number;
   total: number;
@@ -642,18 +749,30 @@ function SendBar({
             </Button>
           </>
         )}
-        <Button
-          type="button"
-          variant="outline"
-          onClick={onSave}
-          disabled={!dirty || saving || pending}
-        >
-          <Save className="h-4 w-4" />
-          {saving ? "Saving…" : dirty ? "Save changes" : "Saved"}
-        </Button>
+        {isFinal ? (
+          <Button type="button" variant="outline" onClick={onReopen} disabled={saving || pending}>
+            <LockOpen className="h-4 w-4" /> Reopen as draft
+          </Button>
+        ) : (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onSave}
+              disabled={!dirty || saving || pending}
+            >
+              <Save className="h-4 w-4" />
+              {saving ? "Saving…" : dirty ? "Save draft" : "Draft saved"}
+            </Button>
+            <Button type="button" onClick={onFinalise} disabled={saving || pending}>
+              <BadgeCheck className="h-4 w-4" /> Mark as final
+            </Button>
+          </>
+        )}
         <Button
           type="submit"
           disabled={!canSend || pending}
+          title={isFinal ? undefined : "Mark the run as final first"}
           onClick={(e) => {
             if (
               repeat &&

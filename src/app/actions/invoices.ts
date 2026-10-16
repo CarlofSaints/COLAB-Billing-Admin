@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appSettings,
@@ -90,7 +90,21 @@ function parseDraft(raw: unknown): SavedInvoiceCompany[] | null {
         detail: Array.isArray(line.detail) ? line.detail.slice(0, 50).map((d) => String(d).slice(0, 1000)) : [],
       });
     }
-    out.push({ companyId, lines });
+    const calculated: NonNullable<SavedInvoiceCompany["calculated"]> = [];
+    if (Array.isArray(r.calculated) && r.calculated.length <= 500) {
+      for (const l of r.calculated) {
+        if (!l || typeof l !== "object") continue;
+        const line = l as Record<string, unknown>;
+        const amount = Number(line.amount);
+        if (!line.key || !Number.isFinite(amount)) continue;
+        calculated.push({
+          key: String(line.key).slice(0, 200),
+          description: String(line.description ?? "").slice(0, 1000),
+          amount: Math.round(amount * 100) / 100,
+        });
+      }
+    }
+    out.push({ companyId, lines, calculated });
   }
   return out;
 }
@@ -101,6 +115,7 @@ async function upsertDraft(
   draft: SavedInvoiceCompany[],
   calculatedTotal: number,
   user: SessionUser,
+  final: boolean,
 ) {
   const values = {
     companies: draft,
@@ -108,44 +123,95 @@ async function upsertDraft(
     savedByUserId: user.id,
     savedByName: user.name,
     savedAt: new Date(),
+    finalisedAt: final ? new Date() : null,
+    finalisedByName: final ? user.name : null,
   };
-  await db
+  // Never overwrites a Final run, even if it was finalised a moment ago by someone else.
+  const written = await db
     .insert(invoiceRunDrafts)
     .values({ period, runType, ...values })
-    .onConflictDoUpdate({ target: [invoiceRunDrafts.period, invoiceRunDrafts.runType], set: values });
+    .onConflictDoUpdate({
+      target: [invoiceRunDrafts.period, invoiceRunDrafts.runType],
+      set: values,
+      setWhere: isNull(invoiceRunDrafts.finalisedAt),
+    })
+    .returning({ id: invoiceRunDrafts.id });
+  return written.length > 0;
 }
 
 export type DraftResult = { ok?: boolean; error?: string };
 
+async function loadDraft(period: string, runType: RunType) {
+  const [row] = await db
+    .select()
+    .from(invoiceRunDrafts)
+    .where(and(eq(invoiceRunDrafts.period, period), eq(invoiceRunDrafts.runType, runType)))
+    .limit(1);
+  return row;
+}
+
+const FINAL_LOCKED = "This invoice run is marked Final. Reopen it as a draft to change it.";
+
 /**
- * Saves hand edits to an Invoice Run without sending anything to Xero. The page
- * then reopens on these lines instead of the calculated ones.
+ * Saves hand edits as a DRAFT, or locks them as FINAL (`final: true`). A draft
+ * keeps following the calculation underneath (invoice-draft-merge.ts); Final is
+ * what goes to Xero, exactly as it stands.
  */
 export async function saveInvoiceDraft(input: {
   period: string;
   runType: RunType;
   companies: unknown;
   calculatedTotal: number;
+  final?: boolean;
 }): Promise<DraftResult> {
   const user = await requirePermission("billing.run");
   const { period, runType } = input;
+  const final = input.final === true;
   if (!isPeriod(period)) return { error: "That billing month isn't valid." };
   if (runType !== "recurring" && runType !== "month_end") return { error: "Unknown run type." };
   const draft = parseDraft(input.companies);
   if (!draft) return { error: "Could not read the invoice lines — reload and try again." };
   const calculatedTotal = Number(input.calculatedTotal);
   if (!Number.isFinite(calculatedTotal)) return { error: "Could not read the calculated total." };
-
-  await upsertDraft(period, runType, draft, calculatedTotal, user);
+  if (!(await upsertDraft(period, runType, draft, calculatedTotal, user, final))) {
+    return { error: FINAL_LOCKED };
+  }
 
   const total = draft.reduce((s, c) => s + c.lines.reduce((t, l) => t + l.amount, 0), 0);
   await logEvent({
-    action: "billing.invoice_draft_saved",
-    summary: `Saved changes to the ${RUN_TYPE_LABELS[runType]} invoice run for ${periodLabel(period)} (R${total.toFixed(2)})`,
+    action: final ? "billing.invoice_run_finalised" : "billing.invoice_draft_saved",
+    summary: `${final ? "Marked Final" : "Saved draft of"} the ${RUN_TYPE_LABELS[runType]} invoice run for ${periodLabel(period)} (R${total.toFixed(2)})`,
     actor: user,
     entityType: "invoice_run_draft",
     metadata: { period, runType, total, calculatedTotal },
   });
+
+  revalidatePath("/invoices");
+  return { ok: true };
+}
+
+/** Unlocks a Final run back to a draft, keeping every edit. */
+export async function reopenInvoiceRun(input: { period: string; runType: RunType }): Promise<DraftResult> {
+  const user = await requirePermission("billing.run");
+  const { period, runType } = input;
+  if (!isPeriod(period)) return { error: "That billing month isn't valid." };
+  if (runType !== "recurring" && runType !== "month_end") return { error: "Unknown run type." };
+
+  const reopened = await db
+    .update(invoiceRunDrafts)
+    .set({ finalisedAt: null, finalisedByName: null })
+    .where(and(eq(invoiceRunDrafts.period, period), eq(invoiceRunDrafts.runType, runType)))
+    .returning({ id: invoiceRunDrafts.id });
+
+  if (reopened.length > 0) {
+    await logEvent({
+      action: "billing.invoice_run_reopened",
+      summary: `Reopened the ${RUN_TYPE_LABELS[runType]} invoice run for ${periodLabel(period)} as a draft`,
+      actor: user,
+      entityType: "invoice_run_draft",
+      metadata: { period, runType },
+    });
+  }
 
   revalidatePath("/invoices");
   return { ok: true };
@@ -157,6 +223,7 @@ export async function discardInvoiceDraft(input: { period: string; runType: RunT
   const { period, runType } = input;
   if (!isPeriod(period)) return { error: "That billing month isn't valid." };
   if (runType !== "recurring" && runType !== "month_end") return { error: "Unknown run type." };
+  if ((await loadDraft(period, runType))?.finalisedAt) return { error: FINAL_LOCKED };
 
   const deleted = await db
     .delete(invoiceRunDrafts)
@@ -208,25 +275,12 @@ export async function generateInvoices(
     return { error: "Unknown run type." };
   }
 
-  const submitted = parseInvoices(formData.get("invoices"));
-  if (!submitted) return { error: "Could not read the invoices — reload and try again." };
+  // Only a Final run goes, and it goes as saved, not as whatever the browser holds.
+  const saved = await loadDraft(period, runType);
+  if (!saved?.finalisedAt) return { error: "Mark the invoice run as Final before sending it to Xero." };
+  const submitted = parseInvoices(JSON.stringify(saved.companies));
+  if (!submitted) return { error: "Could not read the saved invoices — reopen and save again." };
   if (submitted.length === 0) return { error: "There are no invoice lines to send." };
-
-  // What went to Xero is kept as the saved copy, so the page doesn't snap back
-  // to the calculated figures when it re-renders after sending.
-  const draftRaw = formData.get("draft");
-  if (typeof draftRaw === "string") {
-    let draft: SavedInvoiceCompany[] | null = null;
-    try {
-      draft = parseDraft(JSON.parse(draftRaw));
-    } catch {
-      draft = null;
-    }
-    const calculatedTotal = Number(formData.get("calculatedTotal"));
-    if (draft && Number.isFinite(calculatedTotal)) {
-      await upsertDraft(period, runType, draft, calculatedTotal, user);
-    }
-  }
 
   const [incomeSetting] = await db
     .select()

@@ -97,7 +97,12 @@ function allocate(
       return out;
     }
     case "percent": {
-      for (const p of opts.percentages ?? []) out[p.companyId] = (p.percent / 100) * amount;
+      const entries = opts.percentages ?? [];
+      // Worked out from usage: bill by the exact usage, not the 2-decimal percentage.
+      const totalUsage = entries.reduce((s, p) => s + (p.usage ?? 0), 0);
+      const byUsage = entries.length > 0 && entries.every((p) => (p.usage ?? 0) > 0);
+      for (const p of entries)
+        out[p.companyId] = byUsage ? (p.usage! / totalUsage) * amount : (p.percent / 100) * amount;
       return out;
     }
     case "direct": {
