@@ -79,7 +79,8 @@ function toEditable(companies: PreviewCompany[], saved: SavedDraft | null): Edit
   const savedById = new Map((saved?.companies ?? []).map((c) => [c.companyId, c]));
   return companies.map((c) => {
     const mine = savedById.get(c.companyId);
-    const lines: MergedLine[] = saved?.finalisedAt ? (mine?.lines ?? c.lines) : mergeDraft(c.lines, mine);
+    // A Final run shows only what will be sent; a company it never had stays empty.
+    const lines: MergedLine[] = saved?.finalisedAt ? (mine?.lines ?? []) : mergeDraft(c.lines, mine);
     return {
       companyId: c.companyId,
       name: c.name,
@@ -160,9 +161,11 @@ export function InvoiceBuilder({
   const dirty = JSON.stringify(toSaved(draft, preview.companies)) !== baseline;
   const [saving, startSaving] = useTransition();
   const [saveError, setSaveError] = useState<string | null>(null);
-  // A Final run is frozen, so a cost added since can't be on it.
-  const finalIsStale =
-    isFinal && saved !== null && Math.abs(saved.calculatedTotal - preview.grandTotal) >= 0.005;
+  // A Final run, or a draft saved before drafts followed the calculation, is
+  // frozen, so a cost added since can't be on it.
+  const drifted = saved !== null && Math.abs(saved.calculatedTotal - preview.grandTotal) >= 0.005;
+  const finalIsStale = isFinal && drifted;
+  const legacyIsStale = !isFinal && drifted && !saved?.companies.some((c) => c.calculated);
   const changes = draft.flatMap((c) => c.lines.filter((l) => l.change).map((l) => l.change!));
   const countOf = (k: LineChange) => changes.filter((c) => c === k).length;
 
@@ -400,7 +403,7 @@ export function InvoiceBuilder({
         <div
           className={cn(
             "flex flex-wrap items-start gap-3 rounded-lg border px-4 py-3 text-sm",
-            changes.length > 0
+            changes.length > 0 || legacyIsStale
               ? "border-amber-200 bg-amber-50 text-amber-800"
               : "border-line bg-slate-50 text-slate-600",
           )}
@@ -419,6 +422,13 @@ export function InvoiceBuilder({
                   .map((k) => `${countOf(k)} ${k === "added" ? "new" : k === "updated" ? "updated" : "no longer calculated"}`)
                   .join(", ")}
                 . They&apos;re highlighted below. Check them, then save.
+              </p>
+            )}
+            {legacyIsStale && (
+              <p className="mt-0.5">
+                This draft is from before drafts followed the calculation, and the calculated total has
+                changed since ({formatCurrency(saved.calculatedTotal)} to {formatCurrency(preview.grandTotal)}).
+                Go back to the calculated figures to pick it up.
               </p>
             )}
           </div>
@@ -656,7 +666,18 @@ export function InvoiceBuilder({
             saving={saving}
             isFinal={isFinal}
             onSave={() => save(false)}
-            onFinalise={() => save(true)}
+            onFinalise={() => {
+              const gone = countOf("gone");
+              if (
+                gone > 0 &&
+                !confirm(
+                  `${gone} line${gone === 1 ? " is" : "s are"} no longer in the calculation but will still be billed.\n\nRemove ${gone === 1 ? "it" : "them"} first, or mark as final anyway?`,
+                )
+              ) {
+                return;
+              }
+              save(true);
+            }}
             onReopen={reopen}
             onUndo={undoUnsaved}
             count={billable.length}

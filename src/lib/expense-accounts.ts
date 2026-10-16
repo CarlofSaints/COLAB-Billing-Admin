@@ -114,7 +114,30 @@ export function isAccountMethod(value: string): value is AccountMethod {
   return (ACCOUNT_METHODS as readonly string[]).includes(value);
 }
 
-export type PercentEntry = { companyId: number; percent: number };
+/** `usage` (e.g. pages printed) is set when the percentages were worked out from it. */
+export type PercentEntry = { companyId: number; percent: number; usage?: number };
+
+/**
+ * Percentages to 2 decimals from each company's usage, by largest remainder so
+ * they always total exactly 100. Null when there is no usage to divide.
+ */
+export function usagePercentages(usage: number[]): number[] | null {
+  const safe = usage.map((u) => (Number.isFinite(u) && u > 0 ? u : 0));
+  const total = safe.reduce((s, u) => s + u, 0);
+  if (total <= 0) return null;
+  const exact = safe.map((u) => (u / total) * 10000);
+  const out = exact.map(Math.floor);
+  let left = 10000 - out.reduce((s, v) => s + v, 0);
+  const order = exact
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  for (const { i } of order) {
+    if (left <= 0) break;
+    out[i] += 1;
+    left -= 1;
+  }
+  return out.map((v) => v / 100);
+}
 
 /**
  * The two methods that recover fixed line items before splitting what's left.
@@ -176,7 +199,8 @@ export function parsePercentages(value: unknown): PercentEntry[] | null {
     const percent = Number(r.percent);
     if (!Number.isInteger(companyId) || companyId <= 0) continue;
     if (!Number.isFinite(percent) || percent <= 0) continue;
-    out.push({ companyId, percent });
+    const usage = Number(r.usage);
+    out.push(r.usage != null && Number.isFinite(usage) && usage > 0 ? { companyId, percent, usage } : { companyId, percent });
   }
   return out.length > 0 ? out : null;
 }
@@ -195,7 +219,7 @@ export function percentSummary(
   if (!entries || entries.length === 0) return "";
   return entries
     .filter((e) => e.percent > 0)
-    .map((e) => `${companyName(e.companyId)} ${e.percent}%`)
+    .map((e) => `${companyName(e.companyId)} ${e.percent}%${e.usage ? ` (${e.usage})` : ""}`)
     .join(" · ");
 }
 

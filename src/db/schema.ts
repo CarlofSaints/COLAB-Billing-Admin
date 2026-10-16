@@ -91,7 +91,7 @@ export const accountMethodEnum = pgEnum("account_method", [
 ]);
 
 /** Per-company percentages for the "percent" method. Must total 100. */
-export type PercentSplit = { companyId: number; percent: number };
+export type PercentSplit = { companyId: number; percent: number; usage?: number };
 
 /* ------------------------------------------------------------------ */
 /* Companies (COLAB + the 4 sub-companies)                            */

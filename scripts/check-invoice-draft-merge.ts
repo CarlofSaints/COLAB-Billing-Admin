@@ -39,16 +39,11 @@ const gone = mergeDraft([L("acct-1", 110)], saved);
 assert.equal(gone.find((l) => l.key === "acct-2")?.change, "gone");
 assert.equal(gone.find((l) => l.key === "manual-1-1")?.change, undefined, "hand-added lines are never 'gone'");
 
-// A draft saved before `calculated` existed: anything missing counts as new.
+// A draft saved before `calculated` existed stays exactly as saved (the page warns on drift).
 const legacy = mergeDraft(now, { companyId: 1, lines: [L("acct-1", 150)] });
-assert.deepEqual(legacy.map((l) => [l.key, l.change]), [
-  ["acct-1", undefined],
-  ["acct-2", "added"],
-  ["acct-3", "added"],
-  ["onceoff-13-1", "added"],
-]);
+assert.deepEqual(legacy, [L("acct-1", 150)]);
 
 // No saved draft: the calculation, untouched.
 assert.deepEqual(mergeDraft(now, undefined), now);
 
-console.log("OK mergeDraft: 14 checks");
+console.log("OK mergeDraft: 12 checks");

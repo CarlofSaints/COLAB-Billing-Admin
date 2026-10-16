@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appSettings,
@@ -126,10 +126,17 @@ async function upsertDraft(
     finalisedAt: final ? new Date() : null,
     finalisedByName: final ? user.name : null,
   };
-  await db
+  // Never overwrites a Final run, even if it was finalised a moment ago by someone else.
+  const written = await db
     .insert(invoiceRunDrafts)
     .values({ period, runType, ...values })
-    .onConflictDoUpdate({ target: [invoiceRunDrafts.period, invoiceRunDrafts.runType], set: values });
+    .onConflictDoUpdate({
+      target: [invoiceRunDrafts.period, invoiceRunDrafts.runType],
+      set: values,
+      setWhere: isNull(invoiceRunDrafts.finalisedAt),
+    })
+    .returning({ id: invoiceRunDrafts.id });
+  return written.length > 0;
 }
 
 export type DraftResult = { ok?: boolean; error?: string };
@@ -166,9 +173,9 @@ export async function saveInvoiceDraft(input: {
   if (!draft) return { error: "Could not read the invoice lines — reload and try again." };
   const calculatedTotal = Number(input.calculatedTotal);
   if (!Number.isFinite(calculatedTotal)) return { error: "Could not read the calculated total." };
-  if ((await loadDraft(period, runType))?.finalisedAt) return { error: FINAL_LOCKED };
-
-  await upsertDraft(period, runType, draft, calculatedTotal, user, final);
+  if (!(await upsertDraft(period, runType, draft, calculatedTotal, user, final))) {
+    return { error: FINAL_LOCKED };
+  }
 
   const total = draft.reduce((s, c) => s + c.lines.reduce((t, l) => t + l.amount, 0), 0);
   await logEvent({

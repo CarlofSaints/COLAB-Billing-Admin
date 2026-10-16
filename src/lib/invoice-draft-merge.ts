@@ -19,13 +19,15 @@ const same = (a: number, b: number) => Math.abs(a - b) < 0.005;
  * and hand-added lines keep their edits, everything else follows the calculation.
  * `saved.calculated` is what the engine said at save time; it is how an untouched
  * line is told from an edited one, and a line deleted on purpose from a new one.
- * Drafts saved before it existed have none, so every missing line counts as new.
+ * Drafts saved before it existed have none and stay frozen as saved: without it a
+ * line deleted on purpose can't be told from a new one, and re-adding it double-bills.
  */
 export function mergeDraft(
   calc: SavedInvoiceLine[],
   saved: SavedInvoiceCompany | undefined,
 ): MergedLine[] {
   if (!saved) return calc;
+  if (!saved.calculated) return saved.lines;
   const now = new Map(calc.map((l) => [l.key, l]));
   const then = new Map((saved.calculated ?? []).map((l) => [l.key, l]));
 

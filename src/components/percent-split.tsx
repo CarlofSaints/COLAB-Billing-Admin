@@ -5,7 +5,12 @@ import { Percent } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/field";
-import { percentagesValid, percentSummary, type PercentEntry } from "@/lib/expense-accounts";
+import {
+  percentagesValid,
+  percentSummary,
+  usagePercentages,
+  type PercentEntry,
+} from "@/lib/expense-accounts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -83,6 +88,27 @@ function PercentForm({
     ),
   );
 
+  const [usage, setUsage] = useState<Record<number, string>>(
+    Object.fromEntries(
+      companies.map((c) => [c.id, (value?.find((v) => v.companyId === c.id)?.usage ?? "").toString()]),
+    ),
+  );
+
+  // Typing usage (e.g. pages printed) fills the percentages in.
+  const setUsageFor = (id: number, raw: string) => {
+    const next = { ...usage, [id]: raw };
+    setUsage(next);
+    const shares = usagePercentages(companies.map((c) => Number(next[c.id]) || 0));
+    if (shares) setPcts(Object.fromEntries(companies.map((c, i) => [c.id, String(shares[i])])));
+  };
+
+  // A typed percentage no longer follows the usage, so the usage is cleared
+  // rather than saved beside figures it doesn't match.
+  const setPctFor = (id: number, raw: string) => {
+    setPcts((s) => ({ ...s, [id]: raw }));
+    setUsage({});
+  };
+
   const sum = companies.reduce((s, c) => s + (Number(pcts[c.id]) || 0), 0);
   const balanced = Math.abs(sum - 100) < 0.01;
 
@@ -95,18 +121,34 @@ function PercentForm({
       next[c.id] = String(Math.round(v * 100) / 100);
     });
     setPcts(next);
+    setUsage({});
   };
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted">
-        Set the share each sub-company carries. The total must come to 100%.
+        Set the share each sub-company carries. The total must come to 100%. Or type each one&apos;s
+        usage (e.g. pages printed) and the percentages work themselves out.
       </p>
 
       <div className="space-y-2 rounded-lg border border-line p-3">
+        <div className="flex items-center justify-end gap-3 text-xs text-muted">
+          <span className="w-24 text-right">Usage</span>
+          <span className="w-28 pr-4 text-right">Share</span>
+        </div>
         {companies.map((c) => (
           <div key={c.id} className="flex items-center justify-between gap-3">
-            <span className="text-sm text-slate-700">{c.name}</span>
+            <span className="flex-1 text-sm text-slate-700">{c.name}</span>
+            <Input
+              type="number"
+              step="any"
+              min="0"
+              aria-label={`${c.name} usage`}
+              placeholder="Usage"
+              className="w-24 text-right"
+              value={usage[c.id] ?? ""}
+              onChange={(e) => setUsageFor(c.id, e.target.value)}
+            />
             <div className="flex items-center gap-1">
               <Input
                 type="number"
@@ -114,8 +156,9 @@ function PercentForm({
                 min="0"
                 max="100"
                 className="w-24 text-right"
+                aria-label={`${c.name} percentage`}
                 value={pcts[c.id] ?? ""}
-                onChange={(e) => setPcts((s) => ({ ...s, [c.id]: e.target.value }))}
+                onChange={(e) => setPctFor(c.id, e.target.value)}
               />
               <span className="text-sm text-muted">%</span>
             </div>
@@ -146,7 +189,11 @@ function PercentForm({
             onClick={() =>
               onSave(
                 companies
-                  .map((c) => ({ companyId: c.id, percent: Number(pcts[c.id]) || 0 }))
+                  .map((c) => {
+                    const u = Number(usage[c.id]) || 0;
+                    const percent = Number(pcts[c.id]) || 0;
+                    return u > 0 ? { companyId: c.id, percent, usage: u } : { companyId: c.id, percent };
+                  })
                   .filter((e) => e.percent > 0),
               )
             }
