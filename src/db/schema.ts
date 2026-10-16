@@ -1081,7 +1081,12 @@ export const invoiceRunInvoices = pgTable("invoice_run_invoices", {
 });
 
 export type SavedInvoiceLine = { key: string; description: string; amount: number; detail: string[] };
-export type SavedInvoiceCompany = { companyId: number; lines: SavedInvoiceLine[] };
+export type SavedInvoiceCompany = {
+  companyId: number;
+  lines: SavedInvoiceLine[];
+  /** The engine's lines at save time, so later costs can be merged in (see invoice-draft-merge.ts). */
+  calculated?: { key: string; description: string; amount: number }[];
+};
 
 /**
  * Hand edits to an Invoice Run, saved before it goes to Xero. One per month +
@@ -1100,6 +1105,9 @@ export const invoiceRunDrafts = pgTable(
     savedByUserId: integer("saved_by_user_id"),
     savedByName: text("saved_by_name"),
     savedAt: timestamp("saved_at", { withTimezone: true }).notNull().defaultNow(),
+    // Set = Final: locked, stops following the calculation, and only now can it go to Xero.
+    finalisedAt: timestamp("finalised_at", { withTimezone: true }),
+    finalisedByName: text("finalised_by_name"),
   },
   (t) => [uniqueIndex("invoice_run_drafts_period_run_unique").on(t.period, t.runType)],
 );

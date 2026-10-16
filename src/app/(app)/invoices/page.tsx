@@ -82,6 +82,8 @@ export default async function InvoicesPage({
                 calculatedTotal: Number(saved.calculatedTotal),
                 savedAt: saved.savedAt.toISOString(),
                 savedBy: saved.savedByName ?? "Someone",
+                finalisedAt: saved.finalisedAt?.toISOString() ?? null,
+                finalisedBy: saved.finalisedByName ?? "Someone",
               }
             : null
         }
