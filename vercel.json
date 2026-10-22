@@ -7,7 +7,7 @@
     },
     {
       "path": "/api/cron/vehicles",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 */2 * * *"
     }
   ]
 }

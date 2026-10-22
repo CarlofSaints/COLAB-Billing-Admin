@@ -6,7 +6,7 @@ import { logEvent } from "@/lib/log";
  *
  * Its own schedule, separate from the daily dispatcher and from the reception
  * rota: expected return times are typed by hand and can be any minute of any
- * day, so unlike reception this genuinely has to poll. Every 15 minutes (see
+ * day, so unlike reception this genuinely has to poll. Every 2 hours (see
  * vercel.json); most ticks find nothing and return in milliseconds.
  */
 export const dynamic = "force-dynamic";
@@ -29,7 +29,7 @@ export async function GET(req: Request) {
 
   const result = await runVehicleOverdueReminders();
 
-  // Only a real send is logged. At 96 ticks a day, logging the quiet ones would
+  // Only a real send is logged. At 12 ticks a day, logging the quiet ones would
   // bury every other event in the activity log.
   if (result.sent > 0) {
     await logEvent({
