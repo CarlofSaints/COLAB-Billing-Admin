@@ -12,8 +12,8 @@ import { formatDateTime, overdueLabel } from "@/lib/vehicle-bookings";
  *
  * Cadence is Carl's: one email the moment it goes overdue, then one a day while
  * the vehicle is still out. `overdue_reminded_at` is what enforces that — the
- * cron ticks every 15 minutes, so without it a late vehicle would email its
- * driver ninety-six times a day.
+ * cron ticks every 2 hours, so without it a late vehicle would email its
+ * driver twelve times a day.
  *
  * Correctness deliberately does NOT depend on a tick landing near the expected
  * return time. Expected returns are typed by hand and can be any minute of any
