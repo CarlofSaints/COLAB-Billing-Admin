@@ -43,6 +43,10 @@ export function verifyPassword(plain: string, hash: string): Promise<boolean> {
 /* ------------------------------------------------------------------ */
 
 export async function createSession(userId: number) {
+  // Here, not at each sign-in route: the reset link signs people in too, and
+  // "never signed in" nudges read this column.
+  await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId));
+
   const token = await new SignJWT({ uid: userId })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
