@@ -97,7 +97,6 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
     return { error: "Invalid email or password." };
   }
 
-  await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
   await createSession(user.id);
 
   await logEvent({
