@@ -5,22 +5,42 @@ import { requirePermission, getCurrentUser, hasPermission } from "@/lib/auth";
 import { fetchExpenseAccounts, xeroStatus } from "@/lib/xero";
 import { recoveryItemIds, type AccountMethod } from "@/lib/expense-accounts";
 import { maskAmount, revealState } from "@/lib/sensitive";
+import { getMonthCosts } from "@/lib/month-costs";
+import { isPeriod, periodOf, recentPeriods } from "@/lib/periods";
 import { PageHeader } from "@/components/ui/page";
 import { RevealToggle } from "@/components/sensitive-amount";
 import { ExpenseAccountsClient } from "./expense-accounts-client";
 
 export const metadata = { title: "Expense Accounts — COLAB" };
 
-export default async function ExpenseAccountsPage() {
+export default async function ExpenseAccountsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>;
+}) {
   await requirePermission("controls.view");
+  const { period: requested } = await searchParams;
+  // A double check while setting rules, so it opens on the month in progress.
+  const period = requested && isPeriod(requested) ? requested : periodOf(new Date());
   const user = await getCurrentUser();
   const canManage = user ? hasPermission(user, "controls.manage") : false;
   const reveal = await revealState();
 
   const xero = await xeroStatus();
-  const result = xero.connected
-    ? await fetchExpenseAccounts()
-    : ({ ok: false, error: "Not connected to Xero." } as const);
+  const [result, costs] = xero.connected
+    ? await Promise.all([fetchExpenseAccounts(), getMonthCosts(period)])
+    : ([
+        { ok: false, error: "Not connected to Xero." } as const,
+        { ok: false, rows: [], error: "Not connected to Xero." } as const,
+      ] as const);
+
+  // Same rows Supplier Splits and the invoice run read (journals included).
+  const spendByCode = new Map<string, { supplierName: string; amount: number; documents: number }[]>();
+  for (const s of costs.rows) {
+    const list = spendByCode.get(s.accountCode) ?? [];
+    list.push({ supplierName: s.supplierName, amount: s.amount, documents: s.documents });
+    spendByCode.set(s.accountCode, list);
+  }
 
   const [subs, items, mappings] = await Promise.all([
     db.select().from(companies).where(eq(companies.type, "sub")).orderBy(asc(companies.name)),
@@ -53,6 +73,8 @@ export default async function ExpenseAccountsPage() {
     ...(result.ok ? orphans : []),
   ].map((a) => {
     const m = mapped.get(a.accountId);
+    const sensitive = m?.sensitive ?? false;
+    const lines = (a.code ? spendByCode.get(a.code) : undefined) ?? [];
     return {
       accountId: a.accountId,
       code: a.code,
@@ -70,6 +92,15 @@ export default async function ExpenseAccountsPage() {
       balanceMethod: (m?.balanceMethod ?? null) as AccountMethod | null,
       balanceCompanyId: m?.balanceCompanyId ?? null,
       balancePercentages: m?.balancePercentages ?? null,
+      // Restricted accounts (salaries) never send their figures out.
+      amount: maskAmount(
+        lines.reduce((t, l) => t + l.amount, 0),
+        sensitive,
+        reveal.unlocked,
+      ),
+      spend: lines
+        .sort((x, y) => y.amount - x.amount)
+        .map((l) => ({ ...l, amount: maskAmount(l.amount, sensitive, reveal.unlocked) })),
     };
   });
 
@@ -82,6 +113,9 @@ export default async function ExpenseAccountsPage() {
       />
       <ExpenseAccountsClient
         rows={rows}
+        period={period}
+        periods={recentPeriods()}
+        spendError={costs.ok ? null : (costs.error ?? null)}
         companies={subs.map((c) => ({ id: c.id, name: c.name }))}
         fixedItems={items.map((i) => ({
           id: i.id,

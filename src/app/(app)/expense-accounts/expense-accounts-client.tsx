@@ -43,6 +43,8 @@ import { Table, THead, TH, SortableTH, TR, TD } from "@/components/ui/table";
 import { useTableSort } from "@/lib/use-table-sort";
 import { EmptyState } from "@/components/ui/page";
 import { formatCurrency, cn } from "@/lib/utils";
+import { periodLabel } from "@/lib/periods";
+import { SensitiveAmount } from "@/components/sensitive-amount";
 
 type AccountRow = {
   accountId: string;
@@ -59,6 +61,9 @@ type AccountRow = {
   balanceMethod: AccountMethod | null;
   balanceCompanyId: number | null;
   balancePercentages: PercentEntry[] | null;
+  /** Spend for the selected month, ex VAT. null = restricted. */
+  amount: number | null;
+  spend: { supplierName: string; amount: number | null; documents: number }[];
 };
 
 type CompanyOption = { id: number; name: string };
@@ -115,6 +120,9 @@ function sameDraft(a: Draft, b: Draft) {
 
 export function ExpenseAccountsClient({
   rows,
+  period,
+  periods,
+  spendError,
   companies,
   fixedItems,
   canManage,
@@ -122,6 +130,9 @@ export function ExpenseAccountsClient({
   xero,
 }: {
   rows: AccountRow[];
+  period: string;
+  periods: string[];
+  spendError: string | null;
   companies: CompanyOption[];
   fixedItems: FixedItemOption[];
   canManage: boolean;
@@ -218,6 +229,7 @@ export function ExpenseAccountsClient({
         // value rather than falling to the bottom with the blanks.
         return m === UNMAPPED ? "— Not set —" : (METHOD_BY_KEY[m]?.label ?? m);
       },
+      amount: (r) => r.amount ?? -1,
     },
     { key: "code", dir: "asc" },
   );
@@ -342,6 +354,18 @@ export function ExpenseAccountsClient({
     );
   }
 
+  const changeMonth = (next: string) => {
+    // A new month re-sends the rows, which resets the drafts.
+    if (
+      dirtyIds.length > 0 &&
+      !window.confirm(`You have ${dirtyIds.length} unsaved change(s). Switch month and lose them?`)
+    )
+      return;
+    router.push(`/expense-accounts?period=${next}`);
+  };
+  const visibleTotal = visible.reduce((t, r) => t + (r.amount ?? 0), 0);
+  const visibleMasked = visible.some((r) => r.amount === null);
+
   const mappedCount = rows.length - counts.unmapped;
   const coverage = rows.length > 0 ? (mappedCount / rows.length) * 100 : 0;
 
@@ -446,6 +470,22 @@ export function ExpenseAccountsClient({
       <Card>
         <CardHeader className="flex-col items-stretch gap-3">
           <div className="flex flex-wrap items-center gap-2">
+            <Select
+              value={period}
+              onChange={(e) => changeMonth(e.target.value)}
+              className="w-44"
+              aria-label="Month to show amounts for"
+            >
+              {periods.map((p) => (
+                <option key={p} value={p}>
+                  {periodLabel(p)}
+                </option>
+              ))}
+            </Select>
+            <span className="text-sm text-slate-600 tabular-nums" title="Total of the accounts shown below">
+              {formatCurrency(visibleTotal)}
+              {visibleMasked ? " + restricted" : ""}
+            </span>
             <div className="relative min-w-[220px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
@@ -482,6 +522,13 @@ export function ExpenseAccountsClient({
               />
             ))}
           </div>
+
+          {spendError && (
+            <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              Couldn&apos;t read {periodLabel(period)} amounts from Xero ({spendError}).
+            </p>
+          )}
 
           {canManage && selected.size > 0 && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2">
@@ -535,12 +582,15 @@ export function ExpenseAccountsClient({
                 Split method
               </SortableTH>
               <TH className="w-64">Applies to</TH>
+              <SortableTH sortKey="amount" sort={sort} onSort={toggle} align="right" className="w-48">
+                Amount (ex VAT)
+              </SortableTH>
             </tr>
           </THead>
           <tbody>
             {visible.length === 0 ? (
               <tr>
-                <TD colSpan={canManage ? 5 : 4} className="py-10 text-center text-sm text-muted">
+                <TD colSpan={canManage ? 6 : 5} className="py-10 text-center text-sm text-muted">
                   No accounts match this search or filter.
                 </TD>
               </tr>
@@ -722,6 +772,33 @@ export function ExpenseAccountsClient({
                         </div>
                       ) : (
                         <span className="text-sm text-muted">{def?.applies ?? "—"}</span>
+                      )}
+                    </TD>
+                    <TD className="text-right align-top tabular-nums">
+                      {r.spend.length === 0 ? (
+                        <span className="text-sm text-muted">—</span>
+                      ) : (
+                        <details>
+                          <summary className="cursor-pointer list-none text-sm font-medium text-slate-900">
+                            <SensitiveAmount amount={r.amount} canUnlock={canUnlock} />
+                            <span className="ml-1 text-[11px] font-normal text-muted">
+                              ({r.spend.length})
+                            </span>
+                          </summary>
+                          <ul className="mt-1.5 space-y-1 text-xs text-slate-600">
+                            {r.spend.map((l, i) => (
+                              <li key={i} className="flex justify-between gap-2">
+                                <span className="truncate text-left" title={l.supplierName}>
+                                  {l.supplierName}
+                                  {l.documents > 1 && (
+                                    <span className="text-muted"> ×{l.documents}</span>
+                                  )}
+                                </span>
+                                <SensitiveAmount amount={l.amount} canUnlock={canUnlock} />
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
                       )}
                     </TD>
                   </TR>
