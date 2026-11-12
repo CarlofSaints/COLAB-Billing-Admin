@@ -61,9 +61,9 @@ type AccountRow = {
   balanceMethod: AccountMethod | null;
   balanceCompanyId: number | null;
   balancePercentages: PercentEntry[] | null;
-  /** Spend for the selected month, ex VAT. null = restricted. */
+  /** Spend for the selected month, ex VAT. null = restricted (spend is then empty). */
   amount: number | null;
-  spend: { supplierName: string; amount: number | null; documents: number }[];
+  spend: { supplierName: string; amount: number; documents: number }[];
 };
 
 type CompanyOption = { id: number; name: string };
@@ -156,9 +156,15 @@ export function ExpenseAccountsClient({
   const [seenRows, setSeenRows] = useState(rows);
   if (seenRows !== rows) {
     const fresh = toDraft(rows);
+    // Rules aren't per month: carry unsaved edits across a month switch or an
+    // unlock refresh. After a save they already equal the fresh rows.
+    const kept = { ...fresh };
+    for (const id of Object.keys(draft)) {
+      if (kept[id] && baseline[id] && !sameDraft(draft[id], baseline[id])) kept[id] = draft[id];
+    }
     setSeenRows(rows);
     setBaseline(fresh);
-    setDraft(fresh);
+    setDraft(kept);
     setSelected(new Set());
     setRefreshing(false);
   }
@@ -229,7 +235,8 @@ export function ExpenseAccountsClient({
         // value rather than falling to the bottom with the blanks.
         return m === UNMAPPED ? "— Not set —" : (METHOD_BY_KEY[m]?.label ?? m);
       },
-      amount: (r) => r.amount ?? -1,
+      // Restricted sorts below every real figure, credits included.
+      amount: (r) => r.amount ?? Number.NEGATIVE_INFINITY,
     },
     { key: "code", dir: "asc" },
   );
@@ -354,15 +361,6 @@ export function ExpenseAccountsClient({
     );
   }
 
-  const changeMonth = (next: string) => {
-    // A new month re-sends the rows, which resets the drafts.
-    if (
-      dirtyIds.length > 0 &&
-      !window.confirm(`You have ${dirtyIds.length} unsaved change(s). Switch month and lose them?`)
-    )
-      return;
-    router.push(`/expense-accounts?period=${next}`);
-  };
   const visibleTotal = visible.reduce((t, r) => t + (r.amount ?? 0), 0);
   const visibleMasked = visible.some((r) => r.amount === null);
 
@@ -472,7 +470,7 @@ export function ExpenseAccountsClient({
           <div className="flex flex-wrap items-center gap-2">
             <Select
               value={period}
-              onChange={(e) => changeMonth(e.target.value)}
+              onChange={(e) => router.push(`/expense-accounts?period=${e.target.value}`)}
               className="w-44"
               aria-label="Month to show amounts for"
             >
@@ -526,7 +524,8 @@ export function ExpenseAccountsClient({
           {spendError && (
             <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              Couldn&apos;t read {periodLabel(period)} amounts from Xero ({spendError}).
+              {periodLabel(period)} amounts may be incomplete: Xero said &quot;{spendError}&quot;.
+              Journals (payroll) are missing if the P&amp;L couldn&apos;t be read.
             </p>
           )}
 
@@ -775,12 +774,14 @@ export function ExpenseAccountsClient({
                       )}
                     </TD>
                     <TD className="text-right align-top tabular-nums">
-                      {r.spend.length === 0 ? (
+                      {r.amount === null ? (
+                        <SensitiveAmount amount={null} canUnlock={canUnlock} className="text-sm" />
+                      ) : r.spend.length === 0 ? (
                         <span className="text-sm text-muted">—</span>
                       ) : (
                         <details>
                           <summary className="cursor-pointer list-none text-sm font-medium text-slate-900">
-                            <SensitiveAmount amount={r.amount} canUnlock={canUnlock} />
+                            {formatCurrency(r.amount)}
                             <span className="ml-1 text-[11px] font-normal text-muted">
                               ({r.spend.length})
                             </span>
@@ -794,7 +795,7 @@ export function ExpenseAccountsClient({
                                     <span className="text-muted"> ×{l.documents}</span>
                                   )}
                                 </span>
-                                <SensitiveAmount amount={l.amount} canUnlock={canUnlock} />
+                                <span>{formatCurrency(l.amount)}</span>
                               </li>
                             ))}
                           </ul>

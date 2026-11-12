@@ -21,7 +21,12 @@ export default async function ExpenseAccountsPage({
   await requirePermission("controls.view");
   const { period: requested } = await searchParams;
   // A double check while setting rules, so it opens on the month in progress.
-  const period = requested && isPeriod(requested) ? requested : periodOf(new Date());
+  // SAST is UTC+2 all year, so 00:30 on the 1st is already the new month.
+  const sast = new Date();
+  sast.setUTCHours(sast.getUTCHours() + 2);
+  const thisMonth = periodOf(sast);
+  const periods = recentPeriods(15, sast);
+  const period = requested && isPeriod(requested) && periods.includes(requested) ? requested : thisMonth;
   const user = await getCurrentUser();
   const canManage = user ? hasPermission(user, "controls.manage") : false;
   const reveal = await revealState();
@@ -93,14 +98,11 @@ export default async function ExpenseAccountsPage({
       balanceCompanyId: m?.balanceCompanyId ?? null,
       balancePercentages: m?.balancePercentages ?? null,
       // Restricted accounts (salaries) never send their figures out.
-      amount: maskAmount(
-        lines.reduce((t, l) => t + l.amount, 0),
-        sensitive,
-        reveal.unlocked,
-      ),
-      spend: lines
-        .sort((x, y) => y.amount - x.amount)
-        .map((l) => ({ ...l, amount: maskAmount(l.amount, sensitive, reveal.unlocked) })),
+      // null = restricted, and then the supplier names stay on the server too.
+      amount: lines.length
+        ? maskAmount(lines.reduce((t, l) => t + l.amount, 0), sensitive, reveal.unlocked)
+        : 0,
+      spend: sensitive && !reveal.unlocked ? [] : lines.sort((x, y) => y.amount - x.amount),
     };
   });
 
@@ -114,8 +116,9 @@ export default async function ExpenseAccountsPage({
       <ExpenseAccountsClient
         rows={rows}
         period={period}
-        periods={recentPeriods()}
-        spendError={costs.ok ? null : (costs.error ?? null)}
+        periods={periods}
+        // Also set when only the P&L failed: then the journal (payroll) gap is missing.
+        spendError={costs.error ?? null}
         companies={subs.map((c) => ({ id: c.id, name: c.name }))}
         fixedItems={items.map((i) => ({
           id: i.id,
